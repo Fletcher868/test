@@ -1,0 +1,321 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FAQ - KryptNote | Secure Encrypted Notes</title>
+      <!-- Favicon -->
+  <link rel="icon" type="image/png" href="/favicon/favicon-96x96.png" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg" />
+  <link rel="shortcut icon" href="/favicon/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png" />
+  <link rel="manifest" href="/favicon/site.webmanifest" />
+    <style>
+        /* --- CSS VARIABLES (Theming) --- */
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --bg-body: #f8fafc;
+            --bg-card: #ffffff;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --accent-green: #22c55e;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+            --radius: 1rem;
+            --container: 1200px;
+        }
+
+        /* --- RESET & TYPOGRAPHY --- */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-body);
+            color: var(--text-main);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* --- LAYOUT UTILITIES --- */
+        .container { max-width: var(--container); margin: 0 auto; padding: 0 1.5rem; }
+        .flex { display: flex; }
+        .items-center { align-items: center; }
+        .justify-between { justify-content: space-between; }
+        .grid-2 { display: grid; grid-template-columns: 1fr; gap: 2rem; }
+        .text-center { text-align: center; }
+        .hidden-mobile { display: none; }
+        
+        @media (min-width: 768px) {
+            .grid-2 { grid-template-columns: 1fr 1fr; }
+            .hidden-mobile { display: flex; }
+            .mobile-menu-btn { display: none; }
+        }
+
+        /* --- NAVIGATION (Replicated from Pricing.html) --- */
+        nav {
+            position: fixed; top: 0; left: 0; right: 0;
+            height: 64px;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            z-index: 100;
+            display: flex; align-items: center;
+        }
+        .nav-inner { width: 100%; display: flex; justify-content: space-between; align-items: center; }
+        
+        /* --- COMPLEX LOGO STYLES (Copied from index.html) --- */
+        .logo-link {
+          text-decoration: none;
+          color: inherit;
+          display: inline-block;
+        }
+
+        .logo-container {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 4px 4px 6px 4px;
+          border-radius: 10px;
+          background: #ffffff;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+          transition: all 0.2s ease;
+          max-width: 180px;
+        }
+
+        /* Hover effect */
+        .logo-container:hover {
+          border-color: #3b82f6;
+          box-shadow: 0 4px 10px rgba(59, 130, 246, 0.12);
+          transform: translateY(-1px);
+        }
+
+        /* Logo Icon - Smaller */
+        .logo-icon-complex {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
+          background: linear-gradient(135deg, #3b82f6, #2563eb);
+          border-radius: 8px;
+          color: white;
+          flex-shrink: 0;
+        }
+
+        /* Logo Text - Compact */
+        .logo-text {
+          display: flex;
+          align-items: baseline;
+          gap: 3px;
+          min-width: 0;
+        }
+
+        .logo-name {
+          font-size: 17px;
+          font-weight: 700;
+          color: var(--text-main);
+          letter-spacing: -0.01em;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 60px;
+        }
+
+        .logo-subtitle {
+          font-size: 14px;
+          font-weight: 500;
+          color: #3b82f6;
+          letter-spacing: -0.01em;
+          position: relative;
+          padding-left: 6px;
+          white-space: nowrap;
+        }
+
+        /* Vertical separator */
+        .logo-subtitle::before {
+          content: '';
+          position: absolute;
+          left: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 1.5px;
+          height: 12px;
+          background: linear-gradient(to bottom, #60a5fa, #3b82f6);
+          border-radius: 1px;
+          opacity: 0.7;
+        }
+        .logo-icon-complex svg {
+            stroke: white;
+            stroke-width: 2;
+            fill: none;
+        }
+        /* --- END COMPLEX LOGO STYLES --- */
+
+        .nav-links { gap: 2rem; }
+        .nav-links a { text-decoration: none; color: var(--text-muted); font-weight: 500; font-size: 0.95rem; transition: color 0.2s; }
+        .nav-links a:hover, .nav-links a.active { color: #3b82f6; }
+        .btn-nav { background: #3b82f6; color: white !important; padding: 0.5rem 1rem; border-radius: 99px; }
+        .btn-nav:hover { background: var(--primary-hover); }
+
+        /* --- HERO --- */
+        header { padding-top: 140px; padding-bottom: 60px; max-width: 800px; margin: 0 auto; text-align: center; }
+        h1 { font-size: 2.5rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 1rem; color: var(--text-main); }
+        @media(min-width: 768px) { h1 { font-size: 3.75rem; } }
+        header p { font-size: 1.25rem; color: var(--text-muted); max-width: 600px; margin: 0 auto; }
+        .highlight { color: #3b82f6; }
+
+        /* --- FAQ SECTION (Replicated from Pricing.html) --- */
+        .faq-section { max-width: 800px; margin: 0 auto 6rem; }
+        
+        .faq-section h2 { 
+            font-size: 1.5rem; font-weight: 700; 
+            color: #3b82f6; 
+            border-bottom: 2px solid #e0e7ff; /* Light blue underline */
+            padding-bottom: 0.5rem;
+            margin-bottom: 2rem;
+            text-align: left;
+        }
+        
+        details { 
+            background: white; border: 1px solid var(--border); 
+            border-radius: 0.75rem; margin-bottom: 1rem; 
+            overflow: hidden; transition: all 0.3s;
+        }
+        details:hover { border-color: #cbd5e1; }
+        summary { 
+            padding: 1.25rem; font-weight: 500; cursor: pointer; 
+            list-style: none; display: flex; justify-content: space-between; align-items: center;
+        }
+        summary::-webkit-details-marker { display: none; }
+        summary::after { content: "+"; font-size: 1.5rem; color: var(--text-muted); font-weight: 300; }
+        details[open] summary::after { content: "-"; }
+        .faq-content { 
+            padding: 0 1.25rem 1.25rem; color: var(--text-muted); line-height: 1.6; 
+            border-top: 1px solid #f1f5f9; padding-top: 1rem; 
+        }
+        
+        /* Smooth Animation */
+        details[open] .faq-content { animation: slideDown 0.2s ease-out; }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* --- FOOTER --- */
+        footer { border-top: 1px solid var(--border); background: white; padding: 4rem 0 2rem; text-align: center; }
+        .copyright { color: #94a3b8; font-size: 0.875rem; }
+        
+    </style>
+</head>
+<body>
+
+    <!-- Navigation -->
+    <nav>
+        <div class="container nav-inner">
+            <a href="index.html" class="logo-link">
+                <div class="logo-container">
+                    <div class="logo-icon-complex">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                            <path d="M12 4L4 8V16L12 20L20 16V8L12 4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M12 12L8 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <path d="M12 12L16 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <path d="M8 14L12 16L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                    <div class="logo-text">
+                        <span class="logo-name">Krypt</span>
+                        <span class="logo-subtitle">Note</span>
+                    </div>
+                </div>
+            </a>
+            
+            <div class="nav-links hidden-mobile items-center">
+                <a href="index.html">Home</a>
+                <a href="Pricing.html">Pricing</a>
+                <a href="contact.html">Contact</a>
+                <a href="#" class="active">FAQ</a>
+                <a href="index.html" class="btn-nav">Back to Notes</a>
+            </div>
+
+            <div class="mobile-menu-btn">
+                <svg width="24" height="24" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Header -->
+    <div class="container">
+        <header>
+            <h1>Commonly Asked <span class="highlight">Questions</span></h1>
+            <p>Find quick answers about security, features, and your KryptNote account.</p>
+        </header>
+    </div>
+
+    <!-- FAQ -->
+    <section class="container faq-section">
+        
+        <!-- SECTION: GENERAL -->
+        <h2 id="general">General</h2>
+        <details>
+            <summary>What is KryptNote?</summary>
+            <div class="faq-content">KryptNote is a secure, end-to-end encrypted note-taking application. It is designed with a zero-knowledge architecture, meaning only you can read your notes, even we cannot access them.</div>
+        </details>
+        
+        <details>
+            <summary>Is KryptNote truly free to use?</summary>
+            <div class="faq-content">Yes. Our Free plan allows you to create unlimited notes, access 7 days of version history, and use end-to-end encryption forever. The Pro plan unlocks unlimited version history and advanced AI features.</div>
+        </details>
+        
+        <details>
+            <summary>Do you have a mobile app?</summary>
+            <div class="faq-content">KryptNote is primarily a web application optimized for mobile browsers. Dedicated mobile apps for iOS and Android are planned for future development and will be available to all users.</div>
+        </details>
+
+        <!-- SECTION: ACCOUNT & SECURITY -->
+        <h2 id="security">Account & Security</h2>
+        <details>
+            <summary>How is my data protected?</summary>
+            <div class="faq-content">We use AES-GCM 256-bit end-to-end encryption. Your password is used to derive a Master Key, which then unlocks your Data Key. Your notes are encrypted locally in your browser *before* being sent to our servers. We never store your password or unencrypted notes.</div>
+        </details>
+        
+        <details>
+            <summary>What if I forget my password?</summary>
+            <div class="faq-content">Due to the zero-knowledge nature of the service, we cannot recover your password. If you forget your password, your notes will be permanently inaccessible. We strongly recommend using a password manager.</div>
+        </details>
+        
+        <details>
+            <summary>Can I export my data?</summary>
+            <div class="faq-content">Yes. You can export all your notes as a single,encrypted text file or as an JSON file from the settings menu. This ensures you always have a personal backup.</div>
+        </details>
+
+        <!-- SECTION: USAGE & FEATURES -->
+        <h2 id="usage">Usage & Features</h2>
+        <details>
+            <summary>How does the Version History work?</summary>
+            <div class="faq-content">Version History automatically saves snapshots of your note when you navigate away from the editor or switch notes. The Free plan keeps versions for the last 7 days. The Pro plan keeps all versions indefinitely.</div>
+        </details>
+        
+        <details>
+            <summary>What are the "Advanced AI Features" in the Pro plan?</summary>
+            <div class="faq-content">The Pro plan's AI features include tools like automatic summarization, grammar and spelling correction, and text expansion, all running on encrypted data where possible, ensuring privacy is maintained.</div>
+        </details>
+
+        <details>
+            <summary>Can I use KryptNote offline?</summary>
+            <div class="faq-content">When logged in, KryptNote uses local storage to cache your encrypted notes. This allows you to view and edit existing notes even without an internet connection. Changes are synced once you come back online.</div>
+        </details>
+        
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div style="display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 700; color: var(--text-main); margin-bottom: 1rem;">
+                KryptNote
+            </div>
+            <p class="copyright">© 2026 KryptNote. All rights reserved.</p>
+        </div>
+    </footer>
+
+</body>
+</html>

@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pricing - KryptNote</title>
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="/favicon/favicon-96x96.png" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg" />
+  <link rel="shortcut icon" href="/favicon/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png" />
+  <link rel="manifest" href="/favicon/site.webmanifest" />
+    <style>
+        /* --- CSS VARIABLES (Theming) --- */
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --bg-body: #f8fafc;
+            --bg-card: #ffffff;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --accent-green: #22c55e;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+            --radius: 1rem;
+            --container: 1200px;
+        }
+
+        /* --- RESET & TYPOGRAPHY --- */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-body);
+            color: var(--text-main);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* --- LAYOUT UTILITIES --- */
+        .container { max-width: var(--container); margin: 0 auto; padding: 0 1.5rem; }
+        .flex { display: flex; }
+        .items-center { align-items: center; }
+        .justify-between { justify-content: space-between; }
+        .grid-2 { display: grid; grid-template-columns: 1fr; gap: 2rem; }
+        .text-center { text-align: center; }
+        .hidden-mobile { display: none; }
+        
+        @media (min-width: 768px) {
+            .grid-2 { grid-template-columns: 1fr 1fr; }
+            .hidden-mobile { display: flex; }
+            .mobile-menu-btn { display: none; }
+        }
+
+        /* --- NAVIGATION --- */
+        nav {
+            position: fixed; top: 0; left: 0; right: 0;
+            height: 64px;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            z-index: 100;
+            display: flex; align-items: center;
+        }
+        .nav-inner { width: 100%; display: flex; justify-content: space-between; align-items: center; }
+              .nav-links { gap: 2rem; }
+        .nav-links a { text-decoration: none; color: var(--text-muted); font-weight: 500; font-size: 0.95rem; transition: color 0.2s; }
+        .nav-links a:hover, .nav-links a.active { color: #3b82f6; }
+        .btn-nav { background: #3b82f6; color: white !important; padding: 0.5rem 1rem; border-radius: 99px; }
+        .btn-nav:hover { background: #1b6aec; }
+
+        /* --- HERO --- */
+        header { padding-top: 140px; padding-bottom: 60px; max-width: 800px; margin: 0 auto; text-align: center; }
+        h1 { font-size: 2.5rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 1rem; color: var(--text-main); }
+        @media(min-width: 768px) { h1 { font-size: 3.75rem; } }
+        header p { font-size: 1.25rem; color: var(--text-muted); max-width: 600px; margin: 0 auto; }
+        .highlight { color: #3b82f6; }
+
+        /* --- PRICING CARDS --- */
+        .pricing-section { max-width: 1000px; margin: 0 auto 6rem; }
+        .card {
+            background: var(--bg-card);
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+            padding: 2rem;
+            position: relative;
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: flex; flex-direction: column;
+        }
+        .card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); }
+        
+        /* Pro Card Special Styles */
+        .card.pro { border-color: #c7d2fe; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.1); }
+        .popular-tag {
+            position: absolute; top: -12px; right: 24px;
+            background: #3b82f6; color: white;
+            font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+            padding: 4px 12px; border-radius: 99px;
+            letter-spacing: 0.05em;
+        }
+
+        .plan-name { font-size: 1.125rem; font-weight: 600; margin-bottom: 0.5rem; }
+        .pro .plan-name { color: #3b82f6; }
+        .price { font-size: 2.25rem; font-weight: 800; color: var(--text-main); }
+        .period { color: var(--text-muted); font-size: 1rem; font-weight: 500; }
+        
+        .features { list-style: none; margin: 2rem 0; flex: 1; }
+        .features li { display: flex; align-items: start; margin-bottom: 1rem; color: #334155; font-size: 0.95rem; }
+        .check-icon { color: var(--accent-green); margin-right: 0.75rem; width: 20px; height: 20px; flex-shrink: 0; }
+        .pro .check-icon { color: #3b82f6; }
+
+        .btn {
+            width: 100%; padding: 0.875rem; border-radius: 0.75rem;
+            font-weight: 600; cursor: pointer; text-align: center;
+            transition: all 0.2s; border: none; font-size: 1rem;
+        }
+        .btn-outline { background: white; border: 2px solid var(--border); color: #334155; }
+        .btn-outline:hover { border-color: #cbd5e1; background: #f1f5f9; }
+        .btn-filled { background: #3b82f6; color: white; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.3); }
+        .btn-filled:hover { background: var(--primary-hover); }
+
+        /* --- COMPARISON TABLE --- */
+        .table-container { 
+            max-width: 900px; margin: 0 auto 6rem; 
+            border: 1px solid var(--border); border-radius: var(--radius); 
+            overflow: hidden; background: white; 
+            box-shadow: var(--shadow-sm);
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #f8fafc; text-align: left; padding: 1rem 1.5rem; font-size: 0.875rem; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+        td { padding: 1rem 1.5rem; border-bottom: 1px solid #f1f5f9; color: var(--text-main); }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: #f8fafc; }
+        .col-center { text-align: center; }
+
+        /* --- FAQ --- */
+        .faq-section { max-width: 700px; margin: 0 auto 6rem; }
+        details { 
+            background: white; border: 1px solid var(--border); 
+            border-radius: 0.75rem; margin-bottom: 1rem; 
+            overflow: hidden; transition: all 0.3s;
+        }
+        details:hover { border-color: #cbd5e1; }
+        summary { 
+            padding: 1.25rem; font-weight: 500; cursor: pointer; 
+            list-style: none; display: flex; justify-content: space-between; align-items: center;
+        }
+        summary::-webkit-details-marker { display: none; }
+        summary::after { content: "+"; font-size: 1.5rem; color: var(--text-muted); font-weight: 300; }
+        details[open] summary::after { content: "-"; }
+        .faq-content { padding: 0 1.25rem 1.25rem; color: var(--text-muted); line-height: 1.6; border-top: 1px solid #f1f5f9; padding-top: 1rem; }
+        
+        /* Smooth Animation */
+        details[open] .faq-content { animation: slideDown 0.2s ease-out; }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* --- FOOTER --- */
+        footer { border-top: 1px solid var(--border); background: white; padding: 4rem 0 2rem; text-align: center; }
+        .footer-links { display: flex; justify-content: center; gap: 1.5rem; margin: 2rem 0; font-size: 0.9rem; }
+        .footer-links a { color: var(--text-muted); text-decoration: none; }
+        .footer-links a:hover { color: #3b82f6; }
+        .copyright { color: #94a3b8; font-size: 0.875rem; }
+
+        /* --- TOGGLE SWITCH --- */
+        .billing-toggle-container { 
+            display: flex; align-items: center; justify-content: center; 
+            gap: 1rem; margin-bottom: 3rem; 
+        }
+        .switch { position: relative; display: inline-block; width: 52px; height: 28px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { 
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; 
+            background-color: #cbd5e1; transition: .3s; border-radius: 34px; 
+        }
+        .slider:before { 
+            position: absolute; content: ""; height: 22px; width: 22px; left: 3px; bottom: 3px; 
+            background-color: white; transition: .3s; border-radius: 50%; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
+        }
+        input:checked + .slider { background-color: #3b82f6; }
+        input:checked + .slider:before { transform: translateX(24px); }
+
+        .billing-label { font-weight: 500; color: var(--text-muted); font-size: 0.95rem; }
+        .billing-label.active { color: var(--text-main); font-weight: 700; }
+        .save-badge { 
+            background: #d1fae5; color: #047857; font-size: 0.75rem; 
+            padding: 2px 8px; border-radius: 99px; margin-left: 0.5rem; font-weight: 700; 
+        }
+
+        .paypal-button-wrapper { margin-top: auto; width: 100%; min-height: 50px; }
+        
+        /* PROCESSING OVERLAY STYLES */
+        .processing-overlay {
+            position: fixed; inset: 0;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(5px);
+            z-index: 9999;
+            display: flex; align-items: center; justify-content: center;
+            opacity: 1; transition: opacity 0.3s ease;
+        }
+        .processing-overlay.hidden { 
+            opacity: 0; pointer-events: none; visibility: hidden; 
+        }
+        .processing-card {
+            background: white;
+            padding: 2.5rem;
+            border-radius: 1rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            border: 1px solid #e2e8f0;
+            text-align: center;
+            max-width: 400px;
+        }
+        .spinner {
+            width: 40px; height: 40px;
+            border: 4px solid #e2e8f0;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            margin: 0 auto 1.5rem;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .processing-card h3 { color: var(--text-main); margin-bottom: 0.5rem; }
+        .processing-card p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.5; }
+
+        /* =========================================
+   COMPACT LOGO DESIGN
+   ========================================= */
+
+.logo-link {
+  text-decoration: none;
+  color: inherit;
+  display: inline-block;
+}
+
+.logo-container {
+  display: flex;
+  align-items: center;
+  gap: 8px; /* Reduced from 10px */
+  padding: 4px 4px 6px 4px;
+  border-radius: 10px; /* Reduced from 12px */
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s ease;
+  max-width: 180px; /* Limit maximum width */
+}
+
+/* Hover effect */
+.logo-container:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.12);
+  transform: translateY(-1px);
+}
+
+/* Logo Icon - Smaller */
+.logo-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px; /* Reduced from 36px */
+  height: 32px; /* Reduced from 36px */
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  border-radius: 8px; /* Reduced from 9px */
+  color: white;
+  flex-shrink: 0;
+}
+
+/* Logo Text - Compact */
+.logo-text {
+  display: flex;
+  align-items: baseline;
+  gap: 3px; /* Reduced from 4px */
+  min-width: 0; /* Allow text to shrink */
+}
+
+.logo-name {
+  font-size: 17px; /* Reduced from 20px */
+  font-weight: 700; /* Changed from 800 */
+  color: #1e293b;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60px; /* Limit width */
+}
+
+.logo-subtitle {
+  font-size: 14px; /* Reduced from 16px */
+  font-weight: 500;
+  color: #3b82f6;
+  letter-spacing: -0.01em;
+  position: relative;
+  padding-left: 6px; /* Reduced from 8px */
+  white-space: nowrap;
+}
+
+/* Vertical separator - Smaller */
+.logo-subtitle::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.5px; /* Reduced from 2px */
+  height: 12px; /* Reduced from 14px */
+  background: linear-gradient(to bottom, #60a5fa, #3b82f6);
+  border-radius: 1px;
+  opacity: 0.7;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .logo-container {
+    padding: 6px 10px;
+    gap: 6px;
+  }
+  
+  .logo-icon {
+    width: 28px;
+    height: 28px;
+  }
+  
+  .logo-name {
+    font-size: 15px;
+    max-width: 50px;
+  }
+  
+  .logo-subtitle {
+    font-size: 13px;
+    padding-left: 5px;
+  }
+}
+    </style>
+</head>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+    const toggle = document.getElementById('billing-toggle');
+    const monthlyLabel = document.getElementById('monthly-label');
+    const yearlyLabel = document.getElementById('yearly-label');
+    
+    // Select the Price and Period specifically inside the Pro card
+    const priceDisplay = document.querySelector('.card.pro .price');
+    const periodDisplay = document.querySelector('.card.pro .period');
+
+    toggle.addEventListener('change', () => {
+        if (toggle.checked) {
+            priceDisplay.textContent = '$84';
+            periodDisplay.textContent = '/ year';
+            monthlyLabel.classList.remove('active');
+            yearlyLabel.classList.add('active');
+        } else {
+            priceDisplay.textContent = '$9'; 
+            periodDisplay.textContent = '/ month';
+            yearlyLabel.classList.remove('active');
+            monthlyLabel.classList.add('active');
+        }
+    });
+});
+</script>
+<body>
+
+    <!-- Navigation -->
+    <nav>
+        <div class="container nav-inner">
+       <a href="/" class="logo-link">
+          <div class="logo-container">
+            <div class="logo-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M12 4L4 8V16L12 20L20 16V8L12 4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M12 12L8 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M12 12L16 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M8 14L12 16L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="logo-text">
+              <span class="logo-name">Krypt</span>
+              <span class="logo-subtitle">Note</span>
+            </div>
+          </div>
+        </a>
+            
+<div class="nav-links hidden-mobile items-center">
+    <a href="index.html">Home</a>
+    <a href="#" class="active">Pricing</a>
+    <!-- NEW: Added link to Contact page -->
+    <a href="contact.html">Contact</a>
+    <a href="faq.html">FAQ</a>
+    <a href="index.html" class="btn-nav">Back to Notes</a>
+</div>
+
+            <div class="mobile-menu-btn">
+                <svg width="24" height="24" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Header -->
+    <div class="container">
+        <header>
+            <h1>Simple, transparent <span class="highlight">pricing</span></h1>
+            <p>Start organizing your life today. No credit card required for free plan.</p>
+        </header>
+    </div>
+
+    <!-- Billing Toggle -->
+    <div class="billing-toggle-container">
+        <span id="monthly-label" class="billing-label active">Monthly</span>
+        <label class="switch">
+            <input type="checkbox" id="billing-toggle">
+            <span class="slider"></span>
+        </label>
+        <span id="yearly-label" class="billing-label">Yearly <span class="save-badge">Save 20%</span></span>
+    </div>
+
+    <!-- Pricing Cards -->
+    <section class="container pricing-section">
+        <div class="grid-2">
+            <!-- Free Plan -->
+            <div class="card">
+                <div>
+                    <h3 class="plan-name">Free</h3>
+                    <p style="color:var(--text-muted); font-size:0.9rem;">Essential note-taking for individuals.</p>
+                </div>
+                <div style="margin: 1.5rem 0;">
+                    <span class="price">$0</span>
+                    <span class="period">/ forever</span>
+                </div>
+                <ul class="features">
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Unlimited notes</li>
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> 7 days version history</li>
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> End-to-end encryption</li>
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Mobile & web access</li>
+                </ul>
+                <button class="btn btn-outline" onclick="window.location.href='index.html'">Get Started Free</button>
+            </div>
+
+            <!-- Pro Plan -->
+            <div class="card pro">
+                <div class="popular-tag">Most Popular</div>
+                <div>
+                    <h3 class="plan-name">Pro</h3>
+                    <p style="color:var(--text-muted); font-size:0.9rem;">Advanced features for power users.</p>
+                </div>
+                <div style="margin: 1.5rem 0;">
+                    <span class="price">$9</span>
+                    <span class="period">/ month</span>
+                </div>
+                <ul class="features">
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> <strong>Everything in Free</strong></li>
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Unlimited version history</li>
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Advanced AI features</li>
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Priority Support</li>
+                </ul>
+                
+                <!-- PayPal Button Wrapper -->
+                <div class="paypal-button-wrapper">
+                    <button id="login-redirect-btn" class="btn btn-filled" style="display:none;">Log in to Upgrade</button>
+                    <div id="paypal-button-container"></div>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- Comparison Table -->
+    <section class="container">
+        <h2 class="text-center" style="margin-bottom: 2.5rem; color: var(--text-main);">Compare Features</h2>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 40%">Feature</th>
+                        <th class="col-center" style="width: 30%; color: var(--text-main); font-weight: 700;">Free</th>
+                        <th class="col-center" style="width: 30%; color: #3b82f6; font-weight: 700;">Pro</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Unlimited Notes</td>
+                        <td class="col-center" style="color:var(--accent-green)">✓</td>
+                        <td class="col-center" style="color:#3b82f6">✓</td>
+                    </tr>
+                    <tr>
+                        <td>Version History</td>
+                        <td class="col-center">7 days</td>
+                        <td class="col-center" style="font-weight:600">Unlimited</td>
+                    </tr>
+                    <tr>
+                        <td>AI Features</td>
+                        <td class="col-center" style="color:#cbd5e1">—</td>
+                        <td class="col-center" style="color:#3b82f6">✓</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq" class="container faq-section">
+        <h2 class="text-center" style="margin-bottom: 3rem;">Frequently Asked Questions</h2>
+        
+        <details>
+            <summary>Can I switch between plans anytime?</summary>
+            <div class="faq-content">Yes, you can upgrade or downgrade your plan at any time from your account settings. Changes take effect immediately.</div>
+        </details>
+        
+        <details>
+            <summary>Is my data secure with encryption?</summary>
+            <div class="faq-content">Absolutely. We use industry-standard end-to-end encryption to ensure your notes remain private and secure.</div>
+        </details>
+        
+        <details>
+            <summary>What happens if I cancel Pro?</summary>
+            <div class="faq-content">Your account will revert to the Free plan. You will keep all your notes, but premium features like AI and unlimited history will be locked.</div>
+        </details>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div style="display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 700; color: var(--text-main); margin-bottom: 1rem;">
+                KryptNote
+            </div>
+            <p class="copyright">© 2026 KryptNote.</p>
+        </div>
+    </footer>
+
+    <!-- Payment Processing Overlay -->
+    <div id="processing-overlay" class="processing-overlay hidden">
+        <div class="processing-card">
+            <div class="spinner"></div>
+            <h3 id="process-title">Confirming Payment...</h3>
+            <p id="process-text">Please wait while we activate your Premium Plan.<br>This usually takes a few seconds.</p>
+        </div>
+    </div>
+
+    <!-- PayPal SDK -->
+    <script src="https://www.paypal.com/sdk/js?client-id=AZ1FwPWxMIw_G1FmfV6ERfmMGXNWgLW9oY5zNeOgUtuz4zd2BgYrb62uWn7F3uPslGTtv31-yY5GNVBG&vault=true&intent=subscription"></script>
+    
+    <!-- Integration Script -->
+<!-- Integration Script -->
+    <script type="module">
+        import PocketBase from './pocketbase.es.mjs';
+
+        const PB_URL = 'http://127.0.0.1:8090';
+        const pb = new PocketBase(PB_URL);
+
+        const container = document.getElementById('paypal-button-container');
+        const loginBtn = document.getElementById('login-redirect-btn');
+        const billingToggle = document.getElementById('billing-toggle');
+        const overlay = document.getElementById('processing-overlay');
+
+        // --- PLAN IDS ---
+        const PLAN_MONTHLY = 'P-13C81424AE992050NNEW6Q4Y'; 
+        const PLAN_YEARLY  = 'P-8EL806812V1740904NEXUFOI'; 
+
+        function setProcessing(show, title, text) {
+            if(show) {
+                overlay.classList.remove('hidden');
+                if(title) document.getElementById('process-title').textContent = title;
+                if(text) document.getElementById('process-text').innerHTML = text;
+            } else {
+                overlay.classList.add('hidden');
+            }
+        }
+
+        // --- NEW POLLING FUNCTION ---
+        // Accepts 'oldExpiryStr' so we can compare against the previous date
+        async function waitForUpgrade(userId, oldExpiryStr) {
+            let attempts = 0;
+            const maxAttempts = 20; // Wait up to 40 seconds
+            
+            // Convert old date to timestamp (0 if null/empty)
+            const oldTime = oldExpiryStr ? new Date(oldExpiryStr).getTime() : 0;
+
+            console.log(`⏳ Waiting for date to change from: ${oldExpiryStr || 'None'}`);
+
+            const interval = setInterval(async () => {
+                attempts++;
+                try {
+                    // Fetch fresh user data
+                    const user = await pb.collection('users').getOne(userId, { requestKey: null });
+                    
+                    // Convert new date to timestamp
+                    const newTime = user.plan_expires ? new Date(user.plan_expires).getTime() : 0;
+
+                    console.log(`   Attempt ${attempts}: Current Expiry in DB = ${user.plan_expires}`);
+
+                    // SUCCESS LOGIC:
+                    // The new date must be GREATER than the old date.
+                    // This proves the webhook actually processed the update.
+                    if (newTime > oldTime) {
+                        clearInterval(interval);
+                        
+                        setProcessing(true, "Upgrade Complete!", "Redirecting you back to your notes...");
+                        setTimeout(() => {
+                            window.location.href = 'index.html?upgrade_success=true';
+                        }, 1500);
+                        
+                    } else if (attempts >= maxAttempts) {
+                        clearInterval(interval);
+                        setProcessing(true, "Payment Received", "PayPal accepted the payment, but our system is still syncing.<br>Check your profile in a few minutes.");
+                        setTimeout(() => {
+                            window.location.href = 'index.html';
+                        }, 4000);
+                    }
+                } catch (err) {
+                    console.error("Polling error:", err);
+                }
+            }, 2000); 
+        }
+
+        if (!pb.authStore.isValid) {
+            container.style.display = 'none';
+            loginBtn.style.display = 'block';
+            loginBtn.onclick = () => { window.location.href = 'index.html'; };
+        } else {
+            const currentUserId = pb.authStore.model.id;
+            if (window.paypal) {
+                initPayPal(currentUserId);
+            } else {
+                const checkPayPal = setInterval(() => {
+                    if (window.paypal) {
+                        clearInterval(checkPayPal);
+                        initPayPal(currentUserId);
+                    }
+                }, 100);
+            }
+        }
+
+        function initPayPal(userId) {
+            container.innerHTML = '';
+
+            paypal.Buttons({
+                style: {
+                    shape: 'rect', color: 'gold', layout: 'vertical', label: 'subscribe', height: 48
+                },
+                createSubscription: function(data, actions) {
+                    const isYearly = billingToggle.checked;
+                    const selectedPlanId = isYearly ? PLAN_YEARLY : PLAN_MONTHLY;
+                    return actions.subscription.create({
+                        plan_id: selectedPlanId,
+                        custom_id: userId 
+                    });
+                },
+                onApprove: async function(data) {
+                    // 1. Show the Loading Screen immediately
+                    setProcessing(true);
+
+                    // 2. SNAPSHOT: Get the CURRENT expiration date BEFORE the webhook updates it.
+                    // We need this to know when it changes.
+                    try {
+                        const currentUser = await pb.collection('users').getOne(userId);
+                        const oldExpiry = currentUser.plan_expires;
+                        
+                        console.log('✅ PayPal Approved. ID:', data.subscriptionID);
+                        console.log('📸 Snapshot taken. Old Expiry:', oldExpiry);
+
+                        // 3. Start waiting for the change
+                        waitForUpgrade(userId, oldExpiry);
+
+                    } catch (err) {
+                        console.error("Could not fetch user snapshot", err);
+                        // Fallback: If snapshot fails, just wait blindly (less accurate but works)
+                        waitForUpgrade(userId, null);
+                    }
+                },
+                onError: function(err) {
+                    console.error('PayPal Error:', err);
+                    alert('Payment could not be processed. Please try again.');
+                    setProcessing(false);
+                }
+            }).render('#paypal-button-container');
+        }
+    </script>
+</body>
+</html>
