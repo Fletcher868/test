@@ -19,7 +19,7 @@ const GUEST_STORAGE_KEY = 'kryptNoteLocalData';
 let previewMode = false;        
 let previewVersion = null;      
 let originalBeforePreview = ''; 
-const PB_URL = 'http://127.0.0.1:8090';
+const PB_URL = 'https://repeatedly-pleasant-elk.ngrok-free.app/';
 let pb = null, 
     // UPDATE: Added categories and set default active category
     state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK }, 
