@@ -1,4 +1,4 @@
-import PocketBase from './pocketbase.es.mjs';
+import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.es.mjs';
 import { 
   deriveMasterKey, generateDataKey, wrapDataKey, unwrapDataKey, 
   exportKeyToString, storeDataKeyInSession, loadDataKeyFromSession, 
