@@ -9,6 +9,7 @@ import { encryptBlob, decryptBlob, arrayToB64, b64ToArray } from './crypto.js';
  * @param {PocketBase} pb 
  * @param {CryptoKey} derivedKey 
  * @param {string} fileId 
+ * 
  * @param {string} content 
  */
 export async function createVersionSnapshot(pb, derivedKey, fileId, content) {
@@ -35,13 +36,16 @@ export async function createVersionSnapshot(pb, derivedKey, fileId, content) {
  * @param {PocketBase} pb 
  * @param {CryptoKey} derivedKey 
  * @param {string} fileId 
+ * @param {AbortSignal} signal // ADDED signal parameter
  * @returns {Array<{id:string, created:string, content:string}>}
  */
-export async function getVersions(pb, derivedKey, fileId) {
+export async function getVersions(pb, derivedKey, fileId, signal) {
   try {
     const records = await pb.collection('versions').getFullList({
       filter: `file = "${fileId}"`,
       sort: '-created',
+      // CRITICAL FIX: Pass the signal to enable cancellation
+      signal: signal, 
     });
 
     return await Promise.all(
@@ -67,6 +71,12 @@ export async function getVersions(pb, derivedKey, fileId) {
       })
     );
   } catch (err) {
+    // CRITICAL FIX: PocketBase SDK often wraps AbortError in ClientResponseError (status 0).
+    // Check for AbortError, the SDK's internal 'isAbort' flag, or the specific autocancel message.
+    if (err.name === 'AbortError' || err.isAbort || (err.status === 0 && err.message.includes('autocancelled'))) {
+        throw err; // Re-throw the error so script.js can handle the intentional abort silently
+    }
+    
     console.error('Failed to load versions:', err);
     return [];
   }
