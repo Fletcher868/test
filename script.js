@@ -362,7 +362,44 @@ function setupRealtimeSubscription() {
 // ===================================================================
 // 2. LOAD & SELECT NOTES/CATEGORIES
 // ===================================================================
+/**
+ * Creates the default categories in PocketBase for a new user.
+ */
+async function createDefaultCategories() {
+    if (!pb.authStore.isValid) return [];
+    
+    const defaultCategories = [
+        // CRITICAL: Removed PERSONAL
+        { name: 'Work', localId: DEFAULT_CATEGORY_IDS.WORK, iconName: 'icon-work', sortOrder: 1 },
+        { name: 'Trash', localId: DEFAULT_CATEGORY_IDS.TRASH, iconName: 'icon-delete', sortOrder: 3 },
+    ];
+    
+    const user = pb.authStore.model.id;
+    const createdCategories = [];
 
+    for (const cat of defaultCategories) {
+        try {
+            const record = await pb.collection('categories').create({
+                name: cat.name,
+                user: user,
+                sortOrder: cat.sortOrder,
+                iconName: cat.iconName
+            });
+            // CRITICAL: Push the PB record with the original localId property
+            createdCategories.push({ 
+                id: record.id, 
+                name: record.name,
+                localId: cat.localId, // Store the hardcoded string ID
+                iconName: record.iconName, 
+                sortOrder: record.sortOrder,
+            }); 
+        } catch (e) {
+            console.error(`Failed to create default category ${cat.name}:`, e);
+        }
+    }
+    
+    return createdCategories;
+}
 
 // UPDATED loadUserFiles function
 async function loadUserFiles() {
