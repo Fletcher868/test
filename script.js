@@ -241,6 +241,8 @@ function logout() {
   setupExport(pb, derivedKey, showToast);
 }
 
+// From script.js
+
 function setupRealtimeSubscription() {
   if (!pb.authStore.isValid || !derivedKey) {
     return;
@@ -250,7 +252,7 @@ function setupRealtimeSubscription() {
   pb.realtime.unsubscribe('categories'); 
   
   // Helper to decrypt the record
-  const decryptRecord = async (r) => { 
+  const decryptRecord = async (r, retries = 2) => { 
       let plaintext = '';
       if (r.iv && r.authTag && r.encryptedBlob) {
           try {
@@ -258,8 +260,16 @@ function setupRealtimeSubscription() {
                   { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
                   derivedKey
               );
-          } catch (err) {
-              console.error("Realtime decryption failed:", err);
+          } catch (decErr) {
+              if (retries > 0) {
+                  // Wait a short period and try again for transient network/crypto errors
+                  console.warn(`Realtime decryption failed. Retrying in 100ms... (Retries left: ${retries - 1})`);
+                  await new Promise(resolve => setTimeout(resolve, 100));
+                  return decryptRecord(r, retries - 1);
+              }
+              
+              // Final failure log
+              console.error("Realtime decryption failed after all retries:", decErr);
               plaintext = '[ERROR: Decryption Failed]';
           }
       }
@@ -274,10 +284,9 @@ function setupRealtimeSubscription() {
   };
 
   pb.realtime.subscribe('files', async function (e) {
-    console.log(`[REALTIME] Event received: ${e.action}`);
     
     if (e.record.user !== pb.authStore.model.id) return;
-    if (isFinalizingUI) return console.log('[REALTIME] Skipping update due to active UI finalization.');
+    if (isFinalizingUI) return;
     
     const record = e.record;
     
@@ -301,11 +310,16 @@ function setupRealtimeSubscription() {
       
       // a. Check for local 'temp' file replacement (Creation success event)
       const tempFile = state.files.find(f => f.id.startsWith('temp_') && f.name === record.name);
+      
       if (e.action === 'create' && tempFile && recentlySavedLocally.has(tempFile.id)) {
-          console.log(`[REALTIME] Local 'create' success. Replacing temp ID ${tempFile.id} with permanent ID ${record.id}`);
+          // Case A: Local Optimistic Create Confirmation
           
           const tempIndex = state.files.findIndex(f => f.id === tempFile.id);
+          
           if (tempIndex !== -1) {
+              // Preserve the client's newest 'updated' time from the temporary file.
+              newFile.updated = state.files[tempIndex].updated; 
+              
               state.files.splice(tempIndex, 1, newFile); // Replace temporary file
           }
 
@@ -316,49 +330,115 @@ function setupRealtimeSubscription() {
           showToast(`Note created: ${newFile.name}`, 2000);
           
       } else {
-        // b. Handle Update of existing file (Local save or Remote update)
+        // b. Handle Update of an existing permanent file or remote create
         const fileIndex = state.files.findIndex(f => f.id === record.id);
         
         if (fileIndex !== -1) {
-          // Replace the old file object with the new decrypted one
-          state.files.splice(fileIndex, 1, newFile); 
+          // Case B: Update of an existing permanent file
           
-          if (!isLocalAction) {
-            // Remote Update
-            showToast(`Note updated: ${newFile.name}`, 2000);
+          if (isLocalAction) { 
+              // If we are the originating device, IGNORE the immediate server-confirmation Realtime event.
+              return; 
+          } 
             
-            // If active note content changed remotely, force reload/exit preview
-            if (state.activeId === newFile.id) {
-                if (previewMode) exitPreviewMode();
-                if (document.getElementById('textEditor').value !== newFile.content) {
-                    loadActiveToEditor(); 
-                    showToast(`Active note content synced!`, 2500);
-                }
-            }
-          } else {
-            recentlySavedLocally.delete(newFile.id); // Clear the local update flag
+          // If we reach here, it is a remote update from another device.
+          
+          // CRITICAL FIX: The receiving device must apply a new local timestamp to force the note to the top.
+          newFile.updated = new Date().toISOString(); 
+          
+          // Remove old file and unshift the new one.
+          state.files.splice(fileIndex, 1); // Remove old file
+          state.files.unshift(newFile);    // Insert new file at the top
+          
+          // Remote Update Toast/UI
+          showToast(`Note updated: ${newFile.name}`, 2000);
+          
+          // If active note content changed remotely, force reload/exit preview
+          if (state.activeId === newFile.id) {
+              if (previewMode) exitPreviewMode();
+              if (document.getElementById('textEditor').value !== newFile.content) {
+                  loadActiveToEditor(); 
+                  showToast(`Active note content synced!`, 2500);
+              }
           }
         } 
         // c. Handle Remote Create (If file was not created optimistically on this client)
         else if (e.action === 'create' && !isLocalAction) {
-          state.files.unshift(newFile);
-          showToast(`New note created: ${newFile.name}`, 3000);
+          // Case C: Remote Create (Synched Device)
+          // Force a full fetch from server
+          await loadUserFiles(); 
+          showToast(`New note created: ${newFile.name} (full sync)`, 3000);
+          return; // Exit here, loadUserFiles already calls finalizeUIUpdate
         }
       }
     }
-    
-    // CRITICAL: Always sort after any operation
-    state.files.sort((a, b) => new Date(b.updated) - new Date(a.updated));
     
     finalizeUIUpdate();
     
   });
   
-  // ... (Category subscription logic remains unchanged) ...
+  // CRITICAL FIX: Subscribe to Categories for deletion and creation/update events
+  pb.realtime.subscribe('categories', async function (e) {
+      if (e.record.user !== pb.authStore.model.id) return;
+
+      const record = e.record;
+      
+      if (e.action === 'delete') {
+          // Remove the category from local state
+          const categoryId = record.id;
+          state.categories = state.categories.filter(c => c.id !== categoryId);
+          
+          // Re-evaluate active category if the deleted one was active
+          if (state.activeCategoryId === categoryId) {
+              selectCategory(DEFAULT_CATEGORY_IDS.WORK, true); 
+          }
+          
+          showToast(`Category deleted: ${record.name}`, 3000);
+
+      } else if (e.action === 'create' || e.action === 'update') {
+          // New or updated category record
+          
+          // NEW: Suppression check for originating client
+          // Suppress the Realtime event if the category was just created by this client
+          if (e.action === 'create' && recentlySavedLocally.has(record.id)) {
+              return; 
+          }
+          
+          const index = state.categories.findIndex(c => c.id === record.id);
+          
+          // CRITICAL FIX: If we receive a 'create' event and the permanent ID already exists in the state,
+          // it means this is the originating device's event, and the state was already updated in createCategory().
+          /* OLD CODE:
+          if (e.action === 'create' && index !== -1) {
+              return; // Suppress the redundant create event on the originating device
+          }
+          */
+          
+          // Ensure localId is preserved/updated for default categories
+          const localId = state.categories[index]?.localId;
+
+          const newCategory = { 
+              ...record, 
+              localId: localId || record.id // Use existing localId or set to PB ID if custom
+          };
+          
+          if (index !== -1) {
+              // Update
+              state.categories.splice(index, 1, newCategory);
+          } else {
+              // Create (should only happen for remote creations OR if the synchronous update was too slow)
+              state.categories.push(newCategory);
+          }
+          
+          // Sort categories by sortOrder
+          state.categories.sort((a,b) => a.sortOrder - b.sortOrder);
+      }
+      
+      finalizeUIUpdate();
+  });
 
   console.log('PocketBase Realtime subscription established for files and categories collections.');
 }
-
 // ===================================================================
 // 2. LOAD & SELECT NOTES/CATEGORIES
 // ===================================================================
@@ -401,12 +481,11 @@ async function createDefaultCategories() {
     return createdCategories;
 }
 
-// UPDATED loadUserFiles function
 async function loadUserFiles() {
   state.files = [];
   state.categories = [];
   state.activeId = null;
-  state.activeCategoryId = DEFAULT_CATEGORY_IDS.WORK;
+  state.activeCategoryId = DEFAULT_CATEGORY_IDS.WORK; // Set default active category
 
   if (pb.authStore.isValid && derivedKey) {
     // ── LOGGED IN: Load from PocketBase ──
@@ -469,13 +548,30 @@ async function loadUserFiles() {
     });
   }
 
-  selectCategory(state.activeCategoryId, true); 
-
-  if (state.files.length === 0 || !state.activeId) {
+  // CRITICAL: Only call createFile if no files are loaded.
+  if (state.files.length === 0) {
+    // createFile adds the new file to state.files and sets state.activeId
     await createFile();
-    return;
   }
   
+  // This call now runs *after* file creation (if needed) and selects the most recent file (the new one).
+  selectCategory(state.activeCategoryId, true); 
+  
+  // NEW: Sort the state files list before the final UI update for consistency.
+  // This is a stable sort: primary by 'updated' (desc), secondary by 'id' (desc string comparison).
+  state.files.sort((a, b) => {
+      const dateA = new Date(a.updated).getTime();
+      const dateB = new Date(b.updated).getTime();
+      
+      // Primary Sort: descending by date
+      if (dateB !== dateA) return dateB - dateA;
+      
+      // Secondary Sort (Tie-breaker): descending by ID string
+      // Ensures a stable order when timestamps are the same.
+      return b.id.localeCompare(a.id);
+  });
+  
+  // This is the single, final, authoritative UI update call for the load process.
   updateOriginalContent();
   finalizeUIUpdate(); 
 }
@@ -488,18 +584,25 @@ async function loadUserFiles() {
 function selectCategory(categoryIdentifier, shouldSelectFile = true) {
     state.activeCategoryId = categoryIdentifier;
     
-    let fileFilterId = categoryIdentifier;
+    // CRITICAL FIX: Get both the PB ID and the Local/Temporary Identifier
+    let pbCategoryId = categoryIdentifier; 
+    let localCategoryIdentifier = categoryIdentifier; 
+
     if (pb.authStore.isValid) {
-        // CRITICAL: Find the actual PB ID that matches the identifier (localId or PB ID)
+        // Find the PB Category Record
         const activeCategoryObject = state.categories.find(c => c.localId === categoryIdentifier || c.id === categoryIdentifier);
-        fileFilterId = activeCategoryObject?.id;
+        if (activeCategoryObject) {
+            pbCategoryId = activeCategoryObject.id;
+            // Ensure localCategoryIdentifier is either the localId ('work') or the PB ID if no localId exists
+            localCategoryIdentifier = activeCategoryObject.localId || activeCategoryObject.id;
+        }
     }
     
-    // Fallback if the category object wasn't found (e.g., custom ID for guest)
-    if (!fileFilterId) fileFilterId = categoryIdentifier;
-
+    // Filter by BOTH the permanent PB ID and the temporary Local ID
+    // Notes created via createFile have categoryId as the local identifier (e.g., 'work').
+    // Synced notes have categoryId as the PB ID.
     const notesInCategory = state.files
-        .filter(f => f.categoryId === fileFilterId)
+        .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier) 
         .sort((a, b) => new Date(b.updated) - new Date(a.updated));
 
     if (shouldSelectFile) {
@@ -548,21 +651,23 @@ async function createFile() {
       }
   }
 
-  // CRITICAL: Ensure the new note's timestamp is newer than any existing note
+  // --- BEGIN Monotonically Increasing Timestamp Logic ---
   const now = new Date();
-  let newestTimestamp = now.toISOString();
   
-  // If there are existing files, ensure our timestamp is newer
-  if (state.files.length > 0) {
-    const latestFile = [...state.files].sort((a, b) => new Date(b.updated) - new Date(a.updated))[0];
-    const latestTimestamp = new Date(latestFile.updated).getTime();
-    const nowTime = now.getTime();
-    
-    // If current time is not newer, add 1 second
-    if (nowTime <= latestTimestamp) {
-      newestTimestamp = new Date(latestTimestamp + 1000).toISOString();
-    }
-  }
+  // CRITICAL FIX: Sort before getting the latest time
+  state.files.sort((a, b) => new Date(b.updated) - new Date(a.updated));
+  
+  // Get the most recent updated timestamp from existing files, if any
+  const latestExistingTimestamp = state.files.length > 0 
+      ? new Date(state.files[0].updated).getTime() 
+      : 0;
+
+  const nowTime = now.getTime();
+  const guaranteedUniqueTime = Math.max(nowTime, latestExistingTimestamp + 1);
+
+  const newestTimestamp = new Date(guaranteedUniqueTime).toISOString();
+  // --- END Monotonically Increasing Timestamp Logic ---
+
 
   // CRITICAL: Create a temporary ID for optimistic UI
   const tempId = `temp_${Date.now()}`; 
@@ -570,21 +675,17 @@ async function createFile() {
     id: tempId,
     name,
     content: '',
-    created: newestTimestamp,
-    updated: newestTimestamp,
+    created: newestTimestamp, // Use the guaranteed unique timestamp
+    updated: newestTimestamp, // Use the guaranteed unique timestamp
     categoryId: targetCategoryId 
   };
 
-  // IMMEDIATE UI UPDATE: Add to state and render
-  state.files.unshift(newFile);
+  // Insert at the sorted position (index 0)
+  state.files.splice(0, 0, newFile); 
+  
   state.activeId = tempId;
   
-  // IMMEDIATE UI RENDER: Don't wait for anything
-  renderFiles(); 
-  loadActiveToEditor();
-  updateSidebarInfo(newFile);
-  
-  // Set focus instantly
+  // Set focus instantly (this is a non-rendering UI task, safe to keep)
   setTimeout(() => document.getElementById('textEditor').focus(), 0);
 
   // HANDLE NETWORK CALLS IN BACKGROUND (only for logged-in users)
@@ -601,11 +702,13 @@ async function createFile() {
 // NEW FUNCTION: Handle server creation in background
 async function createFileOnServer(tempId, name, targetCategoryId, timestamp) {
   try {
-    const activeCatObj = state.categories.find(c => c.localId === targetCategoryId || c.id === targetCategoryId);
+    // CRITICAL FIX: Look up the category ID again, relying on createCategory to have updated the state
+    const activeCatObj = state.categories.find(c => c.id === targetCategoryId || c.localId === targetCategoryId);
     const pbCategoryId = activeCatObj?.id;
 
-    if (!pbCategoryId) {
-      console.error("PocketBase Category ID not found. Aborting server create.");
+    if (!pbCategoryId || pbCategoryId.startsWith('cat_temp_')) {
+      // This should now only catch genuine errors or temporary IDs that somehow slipped through
+      console.error("PocketBase Category ID not found or is temporary. Aborting server create.");
       // Remove the temporary file on error
       const tempIndex = state.files.findIndex(f => f.id === tempId);
       if (tempIndex !== -1) {
@@ -637,7 +740,6 @@ async function createFileOnServer(tempId, name, targetCategoryId, timestamp) {
     });
     
     // Note: The realtime subscription will handle replacing tempId with permanent ID
-    // No need for additional UI updates here
     
   } catch (e) {
     console.error('Create failed on server:', e);
@@ -658,13 +760,14 @@ async function createFileOnServer(tempId, name, targetCategoryId, timestamp) {
     showToast('Failed to create note on server. Try again.', 3000);
   }
 }
-// NEW: Function to create a category
+
+
 async function createCategory(name) {
     if (!name?.trim()) return;
     const trimmedName = name.trim();
     const now = new Date().toISOString();
     
-    const tempId = `cat_temp_${Date.now()}_${Math.random().toString(36).substr(2,6)}`;
+    const tempId = `cat_temp_${Date.now()}`; 
     
     const newCategory = {
         id: tempId,
@@ -672,17 +775,21 @@ async function createCategory(name) {
         iconName: 'icon-folder',
         sortOrder: state.categories.length + 1,
         created: now,
-        updated: now
+        updated: now,
+        localId: tempId // Use tempId as localId for consistency
     };
     
-    // Optimistic UI update (will be corrected by Realtime event)
+    // Optimistic UI update (Add temp record to state)
     state.categories.push(newCategory);
     state.categories.sort((a,b) => a.sortOrder - b.sortOrder);
-    renderFiles();
+    
+    // IMPORTANT: Update UI immediately to show the temp category
+    finalizeUIUpdate();
     
     let finalCategoryId = newCategory.id; // Default to tempId
 
     if (pb.authStore.isValid) {
+        
         try {
             const record = await pb.collection('categories').create({
                 name: trimmedName,
@@ -691,13 +798,24 @@ async function createCategory(name) {
                 iconName: newCategory.iconName,
             });
             
-            // CRITICAL FIX: Remove the temporary optimistic record.
-            // The subsequent Realtime event for this creation will correctly add 
-            // the permanent record, preventing duplication in the list.
-            const idx = state.categories.findIndex(c => c.id === tempId);
-            if (idx !== -1) {
-                state.categories.splice(idx, 1); 
-            }
+            const permanentCategory = { 
+                id: record.id, 
+                name: record.name,
+                localId: record.id, // IMPORTANT: Use permanent ID as localId
+                iconName: record.iconName, 
+                sortOrder: record.sortOrder,
+                created: record.created,
+                updated: record.updated,
+            };
+
+            // CRITICAL FIX: Remove ALL instances of the temporary category
+            state.categories = state.categories.filter(c => c.id !== tempId && c.localId !== tempId);
+            
+            // Add the permanent record
+            state.categories.push(permanentCategory);
+            state.categories.sort((a,b) => a.sortOrder - b.sortOrder);
+
+            recentlySavedLocally.add(record.id); // Add to suppression set for Realtime event
             
             finalCategoryId = record.id; // Set final ID to the permanent PB ID
             showToast(`Category "${trimmedName}" created!`, 2000);
@@ -706,24 +824,33 @@ async function createCategory(name) {
             console.error('Category creation failed:', e);
             showToast('Failed to create category.', 3000);
             // Revert local state on server failure
-            state.categories = state.categories.filter(c => c.id !== tempId);
+            state.categories = state.categories.filter(c => c.id !== tempId && c.localId !== tempId);
             finalizeUIUpdate();
             return; 
+        } finally {
+             // Ensure the suppression flag is cleared
+             setTimeout(() => {
+                recentlySavedLocally.delete(finalCategoryId);
+            }, 200);
         }
+        
+        // Update UI with permanent category
+        finalizeUIUpdate();
+        
     } else {
+        // For guest mode, just update the ID and save
         newCategory.id = `cat_guest_${Date.now()}`;
-        finalCategoryId = newCategory.id; // Set final ID to the permanent guest ID
+        newCategory.localId = newCategory.id;
+        finalCategoryId = newCategory.id;
         guestStorage.saveData({ categories: state.categories, files: state.files });
         showToast(`Category "${trimmedName}" created locally!`, 2000);
+        finalizeUIUpdate();
     }
     
-    // NEW LOGIC: Select the new category and create a first note inside it
+    // Select the new category and create a first note inside it
     state.activeCategoryId = finalCategoryId;
     await createFile();
-    
-    // Note: createFile() calls finalizeUIUpdate(), so we don't need it here.
 }
-
 async function saveFile(file) {
   // CRITICAL: Always use current time for updates
   file.updated = new Date().toISOString();
@@ -1061,18 +1188,38 @@ if (isCategoriesExpanded) {
       return acc;
   }, {});
   
-  // Utility function to get the correct count based on whether we use PB ID or localId
-  const getNoteCount = (cat) => {
-      const id = pb.authStore.isValid ? cat.id : cat.localId || cat.id;
-      return categoryMap[id] || 0;
-  };
+// Utility function to get the correct count based on whether we use PB ID or localId
+const getNoteCount = (cat) => {
+    // CRITICAL FIX: Base the count on the PB ID only, as files use the PB ID once synced.
+    // The single initial note uses the PB ID after createCategory updates state.
+    const pbId = cat.id;
+    
+    // Fallback: If it's a default category, check the localId as well to catch temporary notes (like on the main client before sync)
+    // NOTE: This fallback logic is necessary for Work/Trash categories
+    const localId = cat.localId;
+    
+    // Start with the count for the permanent PB ID
+    let count = categoryMap[pbId] || 0;
+    
+    // If the category has a distinct localId (like 'work' or 'trash') and it's not the same as the PB ID,
+    // we also count the files under the localId. This handles optimistic files/guest files.
+    if (localId && localId !== pbId) {
+        count += categoryMap[localId] || 0;
+    }
+    
+    return count;
+};
   
   const trashCategory = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
   
-  let sortedCategories = state.categories
-      // Filter out trash for sorting, using either localId or PB ID for comparison
-      .filter(c => c.localId !== trashIdentifier && (pb.authStore.isValid ? c.id !== trashCategory?.id : c.id !== trashIdentifier))
-      .sort((a,b) => a.sortOrder - b.sortOrder);
+let sortedCategories = state.categories
+    // Filter out trash for sorting, using either localId or PB ID for comparison
+    .filter(c => c.localId !== trashIdentifier && (pb.authStore.isValid ? c.id !== trashCategory?.id : c.id !== trashIdentifier))
+    // NEW: Remove duplicates by ID
+    .filter((category, index, self) => 
+        index === self.findIndex((c) => c.id === category.id)
+    )
+    .sort((a,b) => a.sortOrder - b.sortOrder);
   
   if (trashCategory) {
       sortedCategories.push(trashCategory); // Add Trash back at the end
@@ -1144,14 +1291,19 @@ list.appendChild(notesHeader);
   // RENDER DYNAMIC NOTES (FILTERED BY ACTIVE CATEGORY)
   // ==========================
   
-  // CRITICAL: Determine the filter ID based on logged-in state
-  let fileFilterId = state.activeCategoryId;
+  // CRITICAL FIX: Determine both the PB ID and the Local/Temporary ID for filtering
+  let pbCategoryId = state.activeCategoryId; 
+  let localCategoryIdentifier = state.activeCategoryId; 
+
   if (pb.authStore.isValid && activeCategory) {
-      fileFilterId = activeCategory.id; // Use PB ID for filtering if logged in
+      pbCategoryId = activeCategory.id;
+      // Ensure localCategoryIdentifier is either the localId ('work') or the PB ID if no localId exists
+      localCategoryIdentifier = activeCategory.localId || activeCategory.id;
   }
   
   const filteredFiles = state.files
-    .filter(f => f.categoryId === fileFilterId)
+    // CRITICAL: Filter notes by EITHER the PB ID OR the Local ID (to catch new 'temp_' notes)
+    .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier)
     .sort((a, b) => new Date(b.updated) - new Date(a.updated));
 
   if (filteredFiles.length === 0) {
@@ -1268,20 +1420,24 @@ async function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
   // 1. Clear Trash (Only for Trash Category)
   if (isTrash) {
     menu.querySelector('.ctx-clear-trash').onclick = () => {
-      clearTrash();
+      // CRITICAL FIX: Remove menu immediately upon action start
       menu.remove();
+      clearTrash();
     };
   } 
   
   // 2. Rename Category (For Work and Custom Categories)
   if (!isTrash) {
     menu.querySelector('.ctx-rename').onclick = async () => {
+        // CRITICAL FIX: Remove menu immediately upon action start
+        menu.remove();
+        
         const newName = prompt(`Rename category "${name}" to:`, name);
-        if (!newName?.trim() || newName.trim() === name) { menu.remove(); return; }
+        if (!newName?.trim() || newName.trim() === name) { return; }
 
         const trimmedName = newName.trim();
         const category = state.categories.find(c => c.id === id || c.localId === id);
-        if (!category) { menu.remove(); return; }
+        if (!category) { return; }
         
         const oldName = category.name;
         category.name = trimmedName;
@@ -1297,8 +1453,7 @@ async function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
                 showToast('Category rename failed', 3000); 
             }
         } else if (!pb.authStore.isValid || category.localId === DEFAULT_CATEGORY_IDS.WORK) {
-            // Guest mode or renaming the default 'Work' category (which is only local for guests, or not allowed to change PB record for default)
-            // Note: The structure doesn't prevent renaming of the PB 'Work' record. I'll rely on Pocketbase rules or implicitly trust the client-side logic for now.
+            // Guest mode or renaming the default 'Work' category
              if (!pb.authStore.isValid) {
                  guestStorage.saveData({ categories: state.categories, files: state.files });
              }
@@ -1312,20 +1467,22 @@ async function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
         }
         
         finalizeUIUpdate();
-        menu.remove();
     };
   }
 
   // 3. Delete Category (Only for Custom Categories)
   if (isDeletable) {
     menu.querySelector('.ctx-delete-category').onclick = async () => {
+        
         if (!confirm(`Are you sure you want to delete category "${name}"? All notes in it will be moved to Trash.`)) {
-            menu.remove();
             return;
         }
+
+        // CRITICAL FIX: Remove menu immediately upon action start
+        menu.remove();
         
         const categoryToDelete = state.categories.find(c => c.id === id || c.localId === id);
-        if (!categoryToDelete) { menu.remove(); return; }
+        if (!categoryToDelete) { return; }
         
         // CRITICAL: Determine the ID used by files for the category being deleted
         const categoryToDeleteId = pb.authStore.isValid ? categoryToDelete.id : categoryToDelete.localId || categoryToDelete.id;
@@ -1338,7 +1495,6 @@ async function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
         
         if (!trashCategoryId) {
             showToast('Cannot delete: Trash category not found.', 4000);
-            menu.remove();
             return;
         }
 
@@ -1380,7 +1536,6 @@ async function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
 
         showToast(`Category "${name}" deleted. ${filesToMove.length} notes moved to Trash.`, 4000);
         finalizeUIUpdate();
-        menu.remove();
     };
   }
 
@@ -1521,8 +1676,17 @@ function showFileMenu(btn, id, name) {
 function loadActiveToEditor() {
   const f = state.files.find(x => x.id === state.activeId);
   const editor = document.getElementById('textEditor');
-  editor.value = f ? f.content : '';
-  updateOriginalContent();
+  
+  const newContent = f ? f.content : '';
+  
+  // Only update the editor if the value has actually changed.
+  if (editor.value !== newContent) {
+    editor.value = newContent;
+  }
+  
+  // CRITICAL FIX: Ensure originalContent is set based on the editor's actual value
+  // This is the content that *should* be in the file, preventing an immediate save on blur/next tick.
+  originalContent = newContent;
 }
 
 function openSidebarTab(tabName) {
@@ -1639,7 +1803,9 @@ async function saveVersionIfChanged() {
  */
 function updateOriginalContent() {
   const file = state.files.find(f => f.id === state.activeId);
-  originalContent = file ? file.content : '';
+  // CRITICAL FIX: Ensure originalContent is set based on the editor's current value
+  // after loadActiveToEditor has set it, making it the perfect match for the active file.
+  originalContent = document.getElementById('textEditor').value;
 }
 
 
@@ -1983,8 +2149,18 @@ function finalizeUIUpdate() {
     try {
       const file = state.files.find(f => f.id === state.activeId);
       
-      // CRITICAL: Sort files before rendering
-      state.files.sort((a, b) => new Date(b.updated) - new Date(a.updated));
+      // CRITICAL FIX: Robust sort with fallback for identical timestamps
+      state.files.sort((a, b) => {
+        const timeA = new Date(a.updated).getTime();
+        const timeB = new Date(b.updated).getTime();
+
+        if (timeA !== timeB) {
+          return timeB - timeA; // Sort newest first
+        }
+        
+        // Secondary sort by name (ascending) for identical timestamps
+        return a.name.localeCompare(b.name);
+      });
       
       renderFiles();
 
@@ -2003,7 +2179,7 @@ function finalizeUIUpdate() {
     } finally {
       isFinalizingUI = false;
     }
-  }, 50); // Reduced timeout for faster UI updates
+  }, 0); // Changed to 0ms delay for immediate post-load execution
 }
 
 
