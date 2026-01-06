@@ -1815,7 +1815,7 @@ html, body, #app {
   width: 18px; /* Space for the chevron */
   height: 18px;
   flex-shrink: 0;
-  margin-right: 6px; /* Gap before the title */
+  margin-right: 1px; /* Gap before the title */
 }
 
 /* Chevron Icon Styling */
