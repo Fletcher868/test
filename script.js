@@ -27,7 +27,7 @@ let pb = null,
 let originalContent = '';
 let isSavingVersion = false;
 let recentlySavedLocally = new Set(); 
-let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') !== 'true'; // Default to colapsed
+let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') === 'true'; // Default to collapsed
 let finalizeUIUpdateTimeout = null;
 let isFinalizingUI = false;
 let versionHistoryController = null;
@@ -283,7 +283,7 @@ function setupRealtimeSubscription() {
       };
   };
 
-  pb.realtime.subscribe('files', async function (e) {
+pb.realtime.subscribe('files', async function (e) {
     
     if (e.record.user !== pb.authStore.model.id) return;
     if (isFinalizingUI) return;
@@ -306,6 +306,14 @@ function setupRealtimeSubscription() {
     else if (e.action === 'create' || e.action === 'update') {
       
       const newFile = await decryptRecord(record);
+      
+      // CRITICAL: Map category ID - check if we have a local temp ID that matches this PB ID
+      const category = state.categories.find(c => c.id === newFile.categoryId);
+      if (category && category.localId && category.localId !== category.id) {
+        // This is a sync from another device, update the local file's categoryId to the localId
+        newFile.categoryId = category.localId;
+      }
+      
       const isLocalAction = recentlySavedLocally.has(newFile.id); // Checks for local saves/renames
       
       // a. Check for local 'temp' file replacement (Creation success event)
@@ -319,6 +327,12 @@ function setupRealtimeSubscription() {
           if (tempIndex !== -1) {
               // Preserve the client's newest 'updated' time from the temporary file.
               newFile.updated = state.files[tempIndex].updated; 
+              
+              // CRITICAL: Also preserve the categoryId mapping
+              const tempCategoryId = state.files[tempIndex].categoryId;
+              if (tempCategoryId && tempCategoryId.startsWith('cat_temp_')) {
+                newFile.categoryId = tempCategoryId;
+              }
               
               state.files.splice(tempIndex, 1, newFile); // Replace temporary file
           }
@@ -696,6 +710,9 @@ async function createFile() {
     // Guest mode: just save locally
     guestStorage.saveData({ categories: state.categories, files: state.files });
     showToast(`Note created: ${name}`, 2000);
+    
+    // CRITICAL FIX: Update UI immediately for guest mode
+    finalizeUIUpdate(); // ADD THIS LINE
   }
 }
 
@@ -703,23 +720,45 @@ async function createFile() {
 async function createFileOnServer(tempId, name, targetCategoryId, timestamp) {
   try {
     // CRITICAL FIX: Look up the category ID again, relying on createCategory to have updated the state
-    const activeCatObj = state.categories.find(c => c.id === targetCategoryId || c.localId === targetCategoryId);
-    const pbCategoryId = activeCatObj?.id;
+    const activeCatObj = state.categories.find(c => 
+      c.id === targetCategoryId || 
+      c.localId === targetCategoryId ||
+      c.localId === `cat_temp_${targetCategoryId.split('_').pop()}` // Handle temp category IDs
+    );
+    
+    let pbCategoryId = activeCatObj?.id;
 
+    // If we can't find a permanent category ID yet, wait a bit and retry
     if (!pbCategoryId || pbCategoryId.startsWith('cat_temp_')) {
-      // This should now only catch genuine errors or temporary IDs that somehow slipped through
-      console.error("PocketBase Category ID not found or is temporary. Aborting server create.");
-      // Remove the temporary file on error
-      const tempIndex = state.files.findIndex(f => f.id === tempId);
-      if (tempIndex !== -1) {
-        state.files.splice(tempIndex, 1);
+      console.log('Waiting for category creation to complete...');
+      
+      // Wait up to 2 seconds for the category to be created
+      for (let i = 0; i < 20; i++) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const updatedCatObj = state.categories.find(c => 
+          c.localId === targetCategoryId || 
+          c.id === targetCategoryId
+        );
+        if (updatedCatObj && !updatedCatObj.id.startsWith('cat_temp_')) {
+          pbCategoryId = updatedCatObj.id;
+          break;
+        }
       }
-      if (state.activeId === tempId) {
-        state.activeId = state.files[0]?.id || null;
+      
+      if (!pbCategoryId || pbCategoryId.startsWith('cat_temp_')) {
+        console.error("Permanent Category ID not found after waiting. Aborting server create.");
+        // Remove the temporary file on error
+        const tempIndex = state.files.findIndex(f => f.id === tempId);
+        if (tempIndex !== -1) {
+          state.files.splice(tempIndex, 1);
+        }
+        if (state.activeId === tempId) {
+          state.activeId = state.files[0]?.id || null;
+        }
+        finalizeUIUpdate();
+        showToast('Error: Category creation not completed. Please refresh.', 3000);
+        return;
       }
-      finalizeUIUpdate();
-      showToast('Error: Category not found. Please refresh.', 3000);
-      return;
     }
 
     // Add the temporary ID to the suppression set
@@ -729,7 +768,7 @@ async function createFileOnServer(tempId, name, targetCategoryId, timestamp) {
     const { ciphertext, iv, authTag } = await encryptBlob('', derivedKey);
 
     // API call with the timestamp
-    await pb.collection('files').create({
+    const result = await pb.collection('files').create({
       name,
       user: pb.authStore.model.id,
       category: pbCategoryId,
@@ -739,7 +778,17 @@ async function createFileOnServer(tempId, name, targetCategoryId, timestamp) {
       updated: timestamp
     });
     
-    // Note: The realtime subscription will handle replacing tempId with permanent ID
+    // CRITICAL: Update the local file with the permanent category ID immediately
+    const tempFileIndex = state.files.findIndex(f => f.id === tempId);
+    if (tempFileIndex !== -1) {
+      state.files[tempFileIndex].categoryId = pbCategoryId;
+      state.files[tempFileIndex].id = result.id; // Also update the ID
+      recentlySavedLocally.add(result.id); // Add permanent ID to suppression set
+      recentlySavedLocally.delete(tempId); // Remove temp ID
+    }
+    
+    // Force UI update to reflect the permanent IDs
+    finalizeUIUpdate();
     
   } catch (e) {
     console.error('Create failed on server:', e);
@@ -820,6 +869,13 @@ async function createCategory(name) {
             finalCategoryId = record.id; // Set final ID to the permanent PB ID
             showToast(`Category "${trimmedName}" created!`, 2000);
             
+            // CRITICAL: Update the UI with permanent category BEFORE creating the note
+            finalizeUIUpdate();
+            
+            // Now create the note with the permanent category ID
+            state.activeCategoryId = finalCategoryId;
+            await createFile();
+            
         } catch (e) {
             console.error('Category creation failed:', e);
             showToast('Failed to create category.', 3000);
@@ -834,9 +890,6 @@ async function createCategory(name) {
             }, 200);
         }
         
-        // Update UI with permanent category
-        finalizeUIUpdate();
-        
     } else {
         // For guest mode, just update the ID and save
         newCategory.id = `cat_guest_${Date.now()}`;
@@ -845,11 +898,11 @@ async function createCategory(name) {
         guestStorage.saveData({ categories: state.categories, files: state.files });
         showToast(`Category "${trimmedName}" created locally!`, 2000);
         finalizeUIUpdate();
+        
+        // Create note in guest mode
+        state.activeCategoryId = finalCategoryId;
+        await createFile();
     }
-    
-    // Select the new category and create a first note inside it
-    state.activeCategoryId = finalCategoryId;
-    await createFile();
 }
 async function saveFile(file) {
   // CRITICAL: Always use current time for updates
@@ -900,9 +953,10 @@ async function saveFile(file) {
   } else {
     // Guest mode
     guestStorage.saveData({ categories: state.categories, files: state.files });
+    // CRITICAL FIX: Ensure UI updates for guest mode
+    finalizeUIUpdate(); // ADD THIS LINE
   }
 }
-
 async function clearTrash() {
   if (!confirm('Are you sure you want to permanently delete ALL notes in the Trash? This action cannot be undone.')) {
     return;
@@ -1142,8 +1196,8 @@ function renderFiles() {
   addFolderBtn.textContent = '+';
   addFolderBtn.title = 'New category';
 
-  // Only show the button if categories are expanded AND we are logged in
-  if (isCategoriesExpanded && pb.authStore.isValid) {
+// Show for both logged-in users AND guest users when categories are expanded
+if (isCategoriesExpanded) {
     addFolderBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const name = prompt('New category name:');
@@ -1156,15 +1210,15 @@ function renderFiles() {
     addFolderBtn.style.pointerEvents = 'none';
   }
 
-  categoriesHeader.addEventListener('click', (e) => {
-    // Only toggle if the click is not on the '+' button area
-    if (!e.target.closest('.new-note-btn-small')) {
-      isCategoriesExpanded = !isCategoriesExpanded;
-      // Save the preference to localStorage
-      localStorage.setItem('kryptNote_categoriesExpanded', isCategoriesExpanded);
-      renderFiles();
-    }
-  });
+categoriesHeader.addEventListener('click', (e) => {
+  // Only toggle if the click is not on the '+' button area
+  if (!e.target.closest('.new-note-btn-small')) {
+    isCategoriesExpanded = !isCategoriesExpanded;
+    // Save the preference to localStorage (use string 'true' or 'false')
+    localStorage.setItem('kryptNote_categoriesExpanded', isCategoriesExpanded.toString());
+    renderFiles();
+  }
+});
 
   categoriesHeader.appendChild(chevron);
   categoriesHeader.appendChild(title);
