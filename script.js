@@ -5,7 +5,7 @@ import {
   encryptBlob, decryptBlob, randomSalt, arrayToB64, b64ToArray 
 } from './crypto.js';
 import { initSettings } from './settings.js'; 
-import { createVersionSnapshot, getVersions, deleteFileVersions } from './versions.js';
+import { createVersionSnapshot, getVersions } from './versions.js';
 import { setupExport } from './export.js'; 
 
 // NEW: PocketBase default category IDs for new user initialization
@@ -592,40 +592,39 @@ async function loadUserFiles() {
 
 /**
  * Sets the active category, finds the first note in it, and selects it.
- * @param {string} categoryIdentifier - The ID of the category (PB_ID or localId like 'work').
- * @param {boolean} [shouldSelectFile=true] - If true, selects the first note in the category.
  */
 function selectCategory(categoryIdentifier, shouldSelectFile = true) {
     state.activeCategoryId = categoryIdentifier;
     
-    // CRITICAL FIX: Get both the PB ID and the Local/Temporary Identifier
+    // Resolve IDs
     let pbCategoryId = categoryIdentifier; 
     let localCategoryIdentifier = categoryIdentifier; 
 
     if (pb.authStore.isValid) {
-        // Find the PB Category Record
         const activeCategoryObject = state.categories.find(c => c.localId === categoryIdentifier || c.id === categoryIdentifier);
         if (activeCategoryObject) {
             pbCategoryId = activeCategoryObject.id;
-            // Ensure localCategoryIdentifier is either the localId ('work') or the PB ID if no localId exists
             localCategoryIdentifier = activeCategoryObject.localId || activeCategoryObject.id;
         }
     }
     
-    // Filter by BOTH the permanent PB ID and the temporary Local ID
-    // Notes created via createFile have categoryId as the local identifier (e.g., 'work').
-    // Synced notes have categoryId as the PB ID.
+    // Filter notes
     const notesInCategory = state.files
         .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier) 
         .sort((a, b) => new Date(b.updated) - new Date(a.updated));
 
     if (shouldSelectFile) {
         if (notesInCategory.length > 0) {
+            // CRITICAL: Always select the first file in the filtered list
             state.activeId = notesInCategory[0].id;
-            if (notesInCategory[0].content !== document.getElementById('textEditor').value) {
+            
+            // Only update editor if content is different (prevents cursor jumping)
+            const currentEditorVal = document.getElementById('textEditor').value;
+            if (notesInCategory[0].content !== currentEditorVal) {
                 loadActiveToEditor();
             }
         } else {
+            // No notes left? Clear everything
             state.activeId = null;
             document.getElementById('textEditor').value = '';
         }
@@ -656,157 +655,115 @@ async function createFile() {
   })) + 1 : 0;
   const name = nextNum === 0 ? baseName : `${baseName}_${nextNum}`;
   
-  // CRITICAL FIX: Flush any pending auto-save immediately before creating the new note
   if (saveTimeout) {
       clearTimeout(saveTimeout);
       const activeFile = state.files.find(f => f.id === state.activeId);
-      if (activeFile) {
-        await saveFile(activeFile);
-      }
+      if (activeFile) await saveFile(activeFile);
   }
 
-  // --- BEGIN Monotonically Increasing Timestamp Logic ---
   const now = new Date();
-  
-  // CRITICAL FIX: Sort before getting the latest time
   state.files.sort((a, b) => new Date(b.updated) - new Date(a.updated));
-  
-  // Get the most recent updated timestamp from existing files, if any
-  const latestExistingTimestamp = state.files.length > 0 
-      ? new Date(state.files[0].updated).getTime() 
-      : 0;
-
+  const latestExistingTimestamp = state.files.length > 0 ? new Date(state.files[0].updated).getTime() : 0;
   const nowTime = now.getTime();
   const guaranteedUniqueTime = Math.max(nowTime, latestExistingTimestamp + 1);
-
   const newestTimestamp = new Date(guaranteedUniqueTime).toISOString();
-  // --- END Monotonically Increasing Timestamp Logic ---
 
-
-  // CRITICAL: Create a temporary ID for optimistic UI
   const tempId = `temp_${Date.now()}`; 
   const newFile = {
     id: tempId,
     name,
     content: '',
-    created: newestTimestamp, // Use the guaranteed unique timestamp
-    updated: newestTimestamp, // Use the guaranteed unique timestamp
+    created: newestTimestamp,
+    updated: newestTimestamp,
     categoryId: targetCategoryId 
   };
 
-  // Insert at the sorted position (index 0)
+  // Optimistic Insert
   state.files.splice(0, 0, newFile); 
   
+  // Set Active ID immediately
   state.activeId = tempId;
   
-  // Set focus instantly (this is a non-rendering UI task, safe to keep)
+  // FORCE UI update immediately
+  finalizeUIUpdate(); 
+  
   setTimeout(() => document.getElementById('textEditor').focus(), 0);
 
-  // HANDLE NETWORK CALLS IN BACKGROUND (only for logged-in users)
   if (pb.authStore.isValid && derivedKey) {
-    // Start network operation in the background without awaiting
     createFileOnServer(tempId, name, targetCategoryId, newestTimestamp);
   } else {
-    // Guest mode: just save locally
     guestStorage.saveData({ categories: state.categories, files: state.files });
-    showToast(`Note created: ${name}`, 2000);
-    
-    // CRITICAL FIX: Update UI immediately for guest mode
-    finalizeUIUpdate(); // ADD THIS LINE
   }
 }
 
-// NEW FUNCTION: Handle server creation in background
 async function createFileOnServer(tempId, name, targetCategoryId, timestamp) {
   try {
-    // CRITICAL FIX: Look up the category ID again, relying on createCategory to have updated the state
     const activeCatObj = state.categories.find(c => 
       c.id === targetCategoryId || 
       c.localId === targetCategoryId ||
-      c.localId === `cat_temp_${targetCategoryId.split('_').pop()}` // Handle temp category IDs
+      c.localId === `cat_temp_${targetCategoryId.split('_').pop()}` 
     );
     
     let pbCategoryId = activeCatObj?.id;
 
-    // If we can't find a permanent category ID yet, wait a bit and retry
     if (!pbCategoryId || pbCategoryId.startsWith('cat_temp_')) {
-      console.log('Waiting for category creation to complete...');
-      
-      // Wait up to 2 seconds for the category to be created
       for (let i = 0; i < 20; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
         const updatedCatObj = state.categories.find(c => 
-          c.localId === targetCategoryId || 
-          c.id === targetCategoryId
+          c.localId === targetCategoryId || c.id === targetCategoryId
         );
         if (updatedCatObj && !updatedCatObj.id.startsWith('cat_temp_')) {
           pbCategoryId = updatedCatObj.id;
           break;
         }
       }
-      
-      if (!pbCategoryId || pbCategoryId.startsWith('cat_temp_')) {
-        console.error("Permanent Category ID not found after waiting. Aborting server create.");
-        // Remove the temporary file on error
-        const tempIndex = state.files.findIndex(f => f.id === tempId);
-        if (tempIndex !== -1) {
-          state.files.splice(tempIndex, 1);
-        }
-        if (state.activeId === tempId) {
-          state.activeId = state.files[0]?.id || null;
-        }
-        finalizeUIUpdate();
-        showToast('Error: Category creation not completed. Please refresh.', 3000);
-        return;
-      }
     }
 
-    // Add the temporary ID to the suppression set
     recentlySavedLocally.add(tempId);
 
-    // Encrypt empty content
     const { ciphertext, iv, authTag } = await encryptBlob('', derivedKey);
 
-    // API call with the timestamp
+    // Disable auto-cancellation
     const result = await pb.collection('files').create({
       name,
       user: pb.authStore.model.id,
       category: pbCategoryId,
       iv: arrayToB64(iv),
       authTag: arrayToB64(authTag),
-      encryptedBlob: arrayToB64(ciphertext),
-      updated: timestamp
-    });
+      encryptedBlob: arrayToB64(ciphertext)
+    }, { requestKey: null }); 
     
-    // CRITICAL: Update the local file with the permanent category ID immediately
     const tempFileIndex = state.files.findIndex(f => f.id === tempId);
     if (tempFileIndex !== -1) {
       state.files[tempFileIndex].categoryId = pbCategoryId;
-      state.files[tempFileIndex].id = result.id; // Also update the ID
-      recentlySavedLocally.add(result.id); // Add permanent ID to suppression set
-      recentlySavedLocally.delete(tempId); // Remove temp ID
+      state.files[tempFileIndex].id = result.id; 
+      state.files[tempFileIndex].created = result.created;
+      state.files[tempFileIndex].updated = result.updated;
+
+      // CRITICAL FIX: Keep selection on this file when ID changes
+      if (state.activeId === tempId) {
+          state.activeId = result.id;
+      }
+
+      recentlySavedLocally.add(result.id); 
+      recentlySavedLocally.delete(tempId); 
     }
     
-    // Force UI update to reflect the permanent IDs
     finalizeUIUpdate();
     
   } catch (e) {
-    console.error('Create failed on server:', e);
+    if (e.status !== 0) {
+        console.error('Create failed on server:', e);
+        showToast('Failed to create note on server.', 3000);
+    }
     
-    // On API failure, remove the optimistic temporary file
     const tempIndex = state.files.findIndex(f => f.id === tempId);
     if (tempIndex !== -1) {
       state.files.splice(tempIndex, 1);
+      if (state.activeId === tempId) state.activeId = null;
     }
-    if (state.activeId === tempId) {
-      state.activeId = state.files[0]?.id || null;
-    }
-    
     recentlySavedLocally.delete(tempId);
-    
-    // Update UI to remove the failed note
     finalizeUIUpdate();
-    showToast('Failed to create note on server. Try again.', 3000);
   }
 }
 
@@ -905,124 +862,159 @@ async function createCategory(name) {
     }
 }
 async function saveFile(file) {
-  // CRITICAL: Always use current time for updates
+  // 1. Optimistic Local Update
   file.updated = new Date().toISOString();
   
-  // 1. Update local state and UI immediately (Optimistic update)
-  // Remove and re-add to the start of the list to visually reorder it to the top
+  // Reorder list locally
   state.files = state.files.filter(f => f.id !== file.id);
   state.files.unshift(file); 
   
   renderFiles();
   updateSidebarInfo(file);
 
-  // 2. Handle temporary files (for optimistic creates that haven't hit PB yet)
+  // 2. Skip server save for temporary files
   if (file.id.startsWith('temp_')) {
-    // No server save for temp files, UI is already updated above.
     return;
   }
   
-  // 3. Save to PocketBase (Logged In)
+  // 3. Save to PocketBase
   if (pb.authStore.isValid && derivedKey) {
     recentlySavedLocally.add(file.id);
 
-    const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
-    const updatePayload = {
-      name: file.name,
-      category: file.categoryId, 
-      iv: arrayToB64(iv),
-      authTag: arrayToB64(authTag),
-      encryptedBlob: arrayToB64(ciphertext),
-      updated: file.updated
-    };
-    
-    // Run server update in background without blocking UI
-    pb.collection('files').update(file.id, updatePayload)
-      .catch(e => {
-        console.error('Save failed on server:', e);
-        showToast('Failed to save changes to server.', 3000);
-      })
-      .finally(() => {
-        // Clear the local flag after a short delay to allow realtime to register first 
-        // if another client is watching. Although for updates it's mostly for toast suppression.
-        setTimeout(() => {
-          recentlySavedLocally.delete(file.id);
-        }, 200);
-      });
+    try {
+        const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
+        
+        // --- Resolve Category ID ---
+        let finalCategoryId = file.categoryId;
+        const categoryRecord = state.categories.find(c => 
+            c.localId === file.categoryId || c.id === file.categoryId
+        );
+
+        if (categoryRecord && categoryRecord.id && !categoryRecord.id.startsWith('cat_temp_')) {
+            finalCategoryId = categoryRecord.id;
+        }
+        
+        // Fallback safety
+        if (finalCategoryId === 'work' || finalCategoryId === 'trash') {
+             const defaultCat = state.categories.find(c => c.localId === finalCategoryId);
+             if (defaultCat && defaultCat.id) finalCategoryId = defaultCat.id;
+        }
+
+        const updatePayload = {
+          name: file.name,
+          category: finalCategoryId, 
+          iv: arrayToB64(iv),
+          authTag: arrayToB64(authTag),
+          encryptedBlob: arrayToB64(ciphertext)
+        };
+        
+        // Run server update (No await, let it run in background)
+        pb.collection('files').update(file.id, updatePayload)
+          .then((record) => {
+             // Sync local state
+             const localFile = state.files.find(f => f.id === file.id);
+             if (localFile) {
+                 localFile.updated = record.updated;
+                 if (localFile.categoryId !== record.category) {
+                     localFile.categoryId = record.category;
+                 }
+             }
+          })
+          .catch(e => {
+            console.error('Save failed on server:', e);
+          })
+          .finally(() => {
+             setTimeout(() => recentlySavedLocally.delete(file.id), 200);
+          });
+
+    } catch (e) {
+        console.error('Encryption error:', e);
+        recentlySavedLocally.delete(file.id);
+    }
 
   } else {
     // Guest mode
     guestStorage.saveData({ categories: state.categories, files: state.files });
-    // CRITICAL FIX: Ensure UI updates for guest mode
-    finalizeUIUpdate(); // ADD THIS LINE
+    finalizeUIUpdate();
   }
 }
+
 async function clearTrash() {
   if (!confirm('Are you sure you want to permanently delete ALL notes in the Trash? This action cannot be undone.')) {
     return;
   }
   
-  const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH;
-  let fileFilterId = trashIdentifier;
-  const currentActiveId = state.activeId; 
-  const wasActiveInCategory = state.activeCategoryId === trashIdentifier; // Check if Trash was the active category
-
-  // 1. Determine the actual ID for the Trash category
-  if (pb.authStore.isValid) {
-    const trashCategory = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
-    fileFilterId = trashCategory?.id;
-    if (!fileFilterId) {
-        showToast('Trash category not found.', 3000);
-        return;
-    }
+  const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH; // 'trash'
+  
+  // 1. Resolve BOTH IDs (Server ID & Local ID)
+  // This matches the logic used to display the files, ensuring what you see is what gets deleted.
+  let trashPbId = null;
+  let trashLocalId = trashIdentifier;
+  
+  const trashCat = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
+  
+  if (trashCat) {
+      trashPbId = trashCat.id;             // The permanent ID (e.g. "abc123...")
+      if (trashCat.localId) trashLocalId = trashCat.localId; // The local ID (e.g. "trash")
   }
-
-  const filesToDelete = state.files.filter(f => f.categoryId === fileFilterId);
+  
+  // 2. Filter files that match EITHER ID
+  const filesToDelete = state.files.filter(f => 
+      f.categoryId === trashPbId || f.categoryId === trashLocalId
+  );
   
   if (filesToDelete.length === 0) {
       showToast('Trash is already empty.', 2000);
       return;
   }
   
-  // 2. Permanent Deletion from PocketBase (Logged In)
+  // 3. Batch Delete from Server
   if (pb.authStore.isValid) {
-    for (const file of filesToDelete) {
-      try {
-        await pb.collection('files').delete(file.id);
-        deleteFileVersions(pb, file.id)
-            .catch(e => console.error('Background version cleanup failed:', e));
-      } catch (e) {
-        console.error(`Failed to delete file ${file.id} from PocketBase:`, e);
-      }
+    try {
+        const batch = pb.createBatch();
+        
+        for (const file of filesToDelete) {
+            // Only attempt server delete for synced files (not temp_ ones)
+            if (!file.id.startsWith('temp_')) {
+                batch.collection('files').delete(file.id);
+            }
+        }
+        
+        await batch.send();
+        
+    } catch (e) {
+        console.error('Batch delete failed:', e);
+        // Suppress generic autocancel errors, show others
+        if (e.status !== 0) {
+            showToast('Failed to clear some notes from server.', 3000);
+        }
     }
   }
 
-  // 3. Local State & Guest Storage Update
+  // 4. Local State Cleanup
   const deletedIds = new Set(filesToDelete.map(f => f.id));
   state.files = state.files.filter(f => !deletedIds.has(f.id));
   
+  // Guest storage update
   if (!pb.authStore.isValid) {
     guestStorage.saveData({ categories: state.categories, files: state.files });
   }
 
-  // 4. Handle active file selection
-  // If the active file was one of the deleted files, clear the editor and activeId.
+  // 5. Handle active file selection
+  const currentActiveId = state.activeId; 
   if (currentActiveId && deletedIds.has(currentActiveId)) {
       state.activeId = null;
       document.getElementById('textEditor').value = '';
       updateOriginalContent(); 
   }
 
-  // CRITICAL FIX: Ensure activeCategoryId is TRASH if it was TRASH before deletion, 
-  // and manually re-select it to update the file list.
-  if (wasActiveInCategory) {
-      // Re-selecting the empty trash category ensures renderFiles() and the UI update correctly.
-      // Setting shouldSelectFile to false prevents the logic from trying to select another note.
+  // Refresh Trash View
+  if (state.activeCategoryId === trashIdentifier || state.activeCategoryId === trashPbId) {
+      // Pass 'false' to avoid auto-selecting a file, just refresh the empty list
       selectCategory(trashIdentifier, false); 
   }
   
-  // 5. UI Update
-  showToast(`${filesToDelete.length} notes permanently deleted from Trash.`, 3000);
+  showToast(`${filesToDelete.length} notes permanently deleted.`, 3000);
   finalizeUIUpdate();
 }
 
@@ -1031,89 +1023,72 @@ async function deleteFile(id) {
   if (!file) return;
 
   const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH;
-  
-  // CRITICAL: Determine the actual ID for the Trash category (PB ID or localId)
   let trashCategoryId = trashIdentifier;
-  let trashCatObj = null;
 
   if (pb.authStore.isValid) {
-      trashCatObj = state.categories.find(c => c.localId === trashIdentifier);
+      const trashCatObj = state.categories.find(c => c.localId === trashIdentifier);
       trashCategoryId = trashCatObj?.id || trashIdentifier;
   }
 
   const wasActive = state.activeId === id;
   const wasLoggedIn = pb.authStore.isValid;
   
-  // Check if the file is ALREADY in trash
+  // 1. HARD DELETE (Already in Trash)
   if (file.categoryId === trashCategoryId) {
-      // PERMANENT DELETION (Hard Delete)
-      if (!confirm(`Permanently delete "${file.name}"? This cannot be undone.`)) return;
+      if (!confirm(`Permanently delete "${file.name}"?`)) return;
 
+      // Server Delete
       if (wasLoggedIn) {
-          try {
-              await pb.collection('files').delete(id);
-              setTimeout(() => {
-                  deleteFileVersions(pb, id)
-                      .catch(e => console.error('Background version cleanup failed:', e));
-              }, 50); 
-              showToast(`Note permanently deleted: ${file.name}`, 3000);
-          } catch (e) { 
-              console.error('PocketBase file deletion failed, proceeding with local cleanup:', e);
-              showToast('Failed to permanently delete from server.', 3000);
-          }
+          pb.collection('files').delete(id).catch(console.error);
       }
       
+      // Local Delete
       state.files = state.files.filter(f => f.id !== id);
-      
-      if (!wasLoggedIn) {
-          guestStorage.saveData({ categories: state.categories, files: state.files });
-      }
+      if (!wasLoggedIn) guestStorage.saveData({ categories: state.categories, files: state.files });
 
+      // Handle Selection
       if (wasActive) {
-          selectCategory(state.activeCategoryId, true);
-          if (!state.activeId) {
-              await createFile();
-              return;
-          }
+          state.activeId = null; // Clear ID
+          selectCategory(state.activeCategoryId, true); // Select Next
+          if (!state.activeId) await createFile(); // Or create new
       }
       
       finalizeUIUpdate();
       return;
   }
 
-  // SOFT DELETION (Move to Trash)
+  // 2. SOFT DELETE (Move to Trash)
   if (!confirm(`Move "${file.name}" to Trash?`)) return;
 
   const oldCategory = file.categoryId;
+  
+  // Update state immediately
   file.categoryId = trashCategoryId;
-
+  
+  // Server Update
   if (wasLoggedIn) {
-      try {
-          // No need to re-encrypt content, only update the category ID
-          await pb.collection('files').update(id, { category: trashCategoryId });
-          showToast(`Note moved to Trash: ${file.name}`, 3000);
-      } catch (e) { 
-          console.error('PocketBase move to trash failed:', e);
-          file.categoryId = oldCategory; // Revert change on failure
-          showToast('Failed to move note to Trash on server.', 3000);
-          finalizeUIUpdate();
-          return;
-      }
+      pb.collection('files').update(id, { category: trashCategoryId })
+        .catch(e => {
+            console.error('Move failed:', e);
+            file.categoryId = oldCategory; // Revert on fail
+            finalizeUIUpdate();
+        });
   } else {
       guestStorage.saveData({ categories: state.categories, files: state.files });
-      showToast(`Note moved to Trash: ${file.name}`, 3000);
   }
   
-  // Local state update & UI refresh
+  // Handle Selection
   if (wasActive) {
+    state.activeId = null; // CRITICAL: Force system to pick a NEW note
     selectCategory(state.activeCategoryId, true); 
+    
+    // If we moved the last note, create a new one immediately
     if (!state.activeId) {
         await createFile();
-        return;
+        return; 
     }
   }
 
-  state.files.sort((a, b) => new Date(b.updated) - new Date(a.updated));
   finalizeUIUpdate();
 }
 
@@ -1422,7 +1397,7 @@ list.appendChild(notesHeader);
   });
 }
 
-async function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
+function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
   if (currentMenu) currentMenu.remove();
   
   const menu = document.createElement('div');
@@ -1461,10 +1436,20 @@ async function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
   menu.innerHTML = menuHTML;
   document.body.appendChild(menu);
 
-  // Positioning logic
   const r = btn.getBoundingClientRect();
-  menu.style.top = r.bottom + 4 + 'px';
-  menu.style.left = r.left + 'px'; 
+  
+  // SIMPLE FIX: Position the menu
+  let top = r.bottom + 4;
+  
+  // Check if menu would go off-screen
+  if (top + menu.offsetHeight > window.innerHeight) {
+    // Move it above the button instead
+    top = r.top - menu.offsetHeight - 4;
+  }
+  
+  menu.style.top = top + 'px';
+  menu.style.left = r.left + 'px';
+  
   if (r.left + menu.offsetWidth > window.innerWidth) {
       menu.style.left = r.right - menu.offsetWidth + 'px'; 
   }
@@ -1644,16 +1629,33 @@ function showFileMenu(btn, id, name) {
   <svg class="btn-icon"><use href="#icon-delete"></use></svg>
   ${deleteText}
 </button>
-
   `;
 
   document.body.appendChild(menu);
 
   const r = btn.getBoundingClientRect();
-  menu.style.top = r.bottom + 4 + 'px';
+  
+  // SIMPLE FIX: Position the menu
+  let top = r.bottom + 4;
+  
+  // Check if menu would go off-screen
+  if (top + menu.offsetHeight > window.innerHeight) {
+    // Move it above the button instead
+    top = r.top - menu.offsetHeight - 4;
+  }
+  
+  menu.style.top = top + 'px';
   menu.style.left = r.left + 'px';
 
-  // const file = state.files.find(f => f.id === id); // already defined above
+  const close = (e) => {
+    if (!menu.contains(e.target) && e.target !== btn) {
+      menu.remove();
+      document.removeEventListener('click', close);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+
+  currentMenu = menu;
 
   menu.querySelector('.ctx-rename').onclick = async () => {
     const newName = prompt('New name:', name);
@@ -1715,16 +1717,6 @@ function showFileMenu(btn, id, name) {
     deleteFile(id); // deleteFile now handles the soft/hard delete logic internally
     menu.remove();
   };
-
-  const close = (e) => {
-    if (!menu.contains(e.target) && e.target !== btn) {
-      menu.remove();
-      document.removeEventListener('click', close);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close), 0);
-
-  currentMenu = menu;
 }
 
 function loadActiveToEditor() {
