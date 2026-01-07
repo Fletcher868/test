@@ -31,6 +31,7 @@ let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') 
 let finalizeUIUpdateTimeout = null;
 let isFinalizingUI = false;
 let versionHistoryController = null;
+let uiUpdateQueued = false;
 // ===================================================================
 // 1. GUEST STORAGE BACKEND (localStorage)
 // ===================================================================
@@ -944,23 +945,22 @@ async function clearTrash() {
     return;
   }
   
-  const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH; // 'trash'
-  
-  // 1. Resolve BOTH IDs (Server ID & Local ID)
-  // This matches the logic used to display the files, ensuring what you see is what gets deleted.
+  const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH; // "trash"
   let trashPbId = null;
   let trashLocalId = trashIdentifier;
   
-  const trashCat = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
-  
-  if (trashCat) {
-      trashPbId = trashCat.id;             // The permanent ID (e.g. "abc123...")
-      if (trashCat.localId) trashLocalId = trashCat.localId; // The local ID (e.g. "trash")
+  // 1. Resolve IDs to find everything visible in the Trash folder
+  if (pb.authStore.isValid) {
+    const trashCat = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
+    if (trashCat) {
+        trashPbId = trashCat.id;             
+        if (trashCat.localId) trashLocalId = trashCat.localId;
+    }
   }
-  
-  // 2. Filter files that match EITHER ID
+
+  // 2. Identify files to delete (Server ID OR Local ID)
   const filesToDelete = state.files.filter(f => 
-      f.categoryId === trashPbId || f.categoryId === trashLocalId
+      (trashPbId && f.categoryId === trashPbId) || f.categoryId === trashLocalId
   );
   
   if (filesToDelete.length === 0) {
@@ -972,19 +972,20 @@ async function clearTrash() {
   if (pb.authStore.isValid) {
     try {
         const batch = pb.createBatch();
+        let hasOps = false;
         
         for (const file of filesToDelete) {
-            // Only attempt server delete for synced files (not temp_ ones)
+            // Only delete synced files
             if (!file.id.startsWith('temp_')) {
                 batch.collection('files').delete(file.id);
+                hasOps = true;
             }
         }
         
-        await batch.send();
+        if (hasOps) await batch.send();
         
     } catch (e) {
         console.error('Batch delete failed:', e);
-        // Suppress generic autocancel errors, show others
         if (e.status !== 0) {
             showToast('Failed to clear some notes from server.', 3000);
         }
@@ -995,26 +996,25 @@ async function clearTrash() {
   const deletedIds = new Set(filesToDelete.map(f => f.id));
   state.files = state.files.filter(f => !deletedIds.has(f.id));
   
-  // Guest storage update
   if (!pb.authStore.isValid) {
     guestStorage.saveData({ categories: state.categories, files: state.files });
   }
 
-  // 5. Handle active file selection
-  const currentActiveId = state.activeId; 
-  if (currentActiveId && deletedIds.has(currentActiveId)) {
+  // 5. Handle active file selection clearing
+  if (state.activeId && deletedIds.has(state.activeId)) {
       state.activeId = null;
       document.getElementById('textEditor').value = '';
       updateOriginalContent(); 
   }
 
-  // Refresh Trash View
+  // 6. Refresh UI
+  showToast(`${filesToDelete.length} notes permanently deleted.`, 3000);
+  
+  // Ensure we are viewing the (now empty) trash category correctly
   if (state.activeCategoryId === trashIdentifier || state.activeCategoryId === trashPbId) {
-      // Pass 'false' to avoid auto-selecting a file, just refresh the empty list
-      selectCategory(trashIdentifier, false); 
+     selectCategory(trashIdentifier, false);
   }
   
-  showToast(`${filesToDelete.length} notes permanently deleted.`, 3000);
   finalizeUIUpdate();
 }
 
@@ -2182,39 +2182,40 @@ function selectFile(id) {
 }
 
 
-/**
- * Executes a single, debounced, locked call to render UI elements that rely on file state.
- */
 function finalizeUIUpdate() {
+  // If we are already rendering, mark that we need to run again as soon as we finish.
+  if (isFinalizingUI) {
+      uiUpdateQueued = true; 
+      return;
+  }
+  
   clearTimeout(finalizeUIUpdateTimeout);
 
   finalizeUIUpdateTimeout = setTimeout(async () => {
-    if (isFinalizingUI) return;
+    // Double check lock inside timeout
+    if (isFinalizingUI) {
+        uiUpdateQueued = true;
+        return;
+    }
+    
     isFinalizingUI = true;
+    uiUpdateQueued = false; // Reset queue flag
 
     try {
       const file = state.files.find(f => f.id === state.activeId);
       
-      // CRITICAL FIX: Robust sort with fallback for identical timestamps
+      // Sort Files: Newest first, fallback to name
       state.files.sort((a, b) => {
         const timeA = new Date(a.updated).getTime();
         const timeB = new Date(b.updated).getTime();
-
-        if (timeA !== timeB) {
-          return timeB - timeA; // Sort newest first
-        }
-        
-        // Secondary sort by name (ascending) for identical timestamps
+        if (timeA !== timeB) return timeB - timeA; 
         return a.name.localeCompare(b.name);
       });
       
       renderFiles();
-
       loadActiveToEditor();
-      
       updateSidebarInfo(file);
 
-      // Only update version history if there's a selected file
       if (file) {
         await updateVersionHistory(file); 
       }
@@ -2224,8 +2225,12 @@ function finalizeUIUpdate() {
       console.error("Final UI Update failed:", e);
     } finally {
       isFinalizingUI = false;
+      // CRITICAL FIX: If an update was requested while we were running, run again immediately.
+      if (uiUpdateQueued) {
+          finalizeUIUpdate();
+      }
     }
-  }, 0); // Changed to 0ms delay for immediate post-load execution
+  }, 0);
 }
 
 
