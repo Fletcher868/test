@@ -1190,50 +1190,70 @@ html, body, #app {
   fill: #16a34a;
 }
 
-/* Version List */
+/* Version List - Modern Card Style (Subtle Background) */
 .version-list {
   list-style: none;
   padding: 0;
-  margin: 14px 0 0;
+  margin: 12px 0 0;
   font-size: 13.5px;
 }
 .version-list li {
-  padding: 8px 14px;
-  margin: 6px 0;
-  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 8px 0;
+  border-radius: 12px;
   cursor: pointer;
-  transition: all 0.22s ease;
-  border: 1px solid transparent;
-  background: #f8fafc;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  background: #f9fafb; 
+  background: linear-gradient(135deg, #ffffff, #f8fafc); 
   line-height: 1.4;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+  position: relative;
+  overflow: hidden;
 }
+
 .version-list li:hover {
-  background: #f1f5f9;
+  background: linear-gradient(135deg, #f8fafc, #f1f5f9);
   border-color: #cbd5e1;
-  transform: translateY(-1px);
-  box-shadow: 0 3px 6px rgba(0,0,0,0.06);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+}
+.version-list li:hover::before {
+  opacity: 0.8;
+  background: #94a3b8;
 }
 .version-list li.selected {
-  background: #dbeafe;
+  background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
   border-color: #3b82f6;
-  box-shadow: 0 0 0 2px #93c5fd;
+  border-left: 3px solid #3b82f6;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.12);
   font-weight: 600;
+}
+.version-list li.selected::before {
+  opacity: 1;
+  background: #3b82f6;
 }
 .version-list li strong {
   display: block;
   color: #1e293b;
   font-size: 13.5px;
-  margin-bottom: 1px;
+  margin-bottom: 2px;
+  font-weight: 500;
+}
+.version-list li.selected strong {
+  color: #1e40af;
+  font-weight: 600;
 }
 .version-list li small {
   color: #64748b;
   font-size: 12px;
-  line-height: 1.35;
+  line-height: 1.4;
   display: block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 1px;
+}
+.version-list li.selected small {
+  color: #475569;
 }
 .version-list li.muted {
   color: #94a3b8;
@@ -1241,13 +1261,16 @@ html, body, #app {
   cursor: default;
   background: transparent;
   border-color: transparent;
+  box-shadow: none;
 }
 .version-list li.muted:hover {
   background: transparent;
   transform: none;
   box-shadow: none;
 }
-
+.version-list li.muted::before {
+  display: none;
+}
 /* ================================================
    STICKY BOTTOM BOX - LOOK 1: Clean Accent Box (No Gradient, No Before, No Dark)
    ================================================ */
@@ -1885,13 +1908,25 @@ html, body, #app {
   color: var(--accent1);
 }
 .notes-header-row {
+    cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 14px 12px 14px; /* Ensure padding is consistent */
-    cursor: default;
+    padding: 12px 14px 12px 0px; /* Ensure padding is consistent */
 }
-
+.notes-header-row::before {
+  content: ''; 
+  display: block;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='8' y1='6' x2='21' y2='6'%3E%3C/line%3E%3Cline x1='8' y1='12' x2='21' y2='12'%3E%3C/line%3E%3Cline x1='8' y1='18' x2='21' y2='18'%3E%3C/line%3E%3Ccircle cx='3' cy='6' r='1.2' fill='%2394a3b8' stroke='none'/%3E%3Ccircle cx='3' cy='12' r='1.2' fill='%2394a3b8' stroke='none'/%3E%3Ccircle cx='3' cy='18' r='1.2' fill='%2394a3b8' stroke='none'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 18px; /* Even larger */
+  opacity: 0.6;
+  margin-right: 6px;
+}
 /* Small, flat button for the New Note action next to the title */
 .new-note-btn-small {
     width: 28px;
