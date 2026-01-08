@@ -1150,40 +1150,33 @@ function renderFiles() {
   list.innerHTML = '';
 
   // 1. =======================
-  // CATEGORIES HEADER (Collapsible)
-  // ==========================
-  const categoriesHeader = document.createElement('div');
-  categoriesHeader.className = 'notes-header-row category-toggle-header';
+// CATEGORIES HEADER (Collapsible)
+// ==========================
+const categoriesHeader = document.createElement('div');
+categoriesHeader.className = 'notes-header-row category-toggle-header';
 
-  const chevron = document.createElement('span');
-  chevron.className = 'categories-chevron';
-  chevron.innerHTML = `
-    <svg class="btn-icon chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-        <use href="#${isCategoriesExpanded ? 'icon-chevron-down' : 'icon-chevron-right'}" />
-    </svg>`;
+const title = document.createElement('span');
+title.className = 'categories-title';
+title.textContent = 'Categories';
 
-  const title = document.createElement('span');
-  title.className = 'categories-title';
-  title.textContent = 'Categories';
-
-  const addFolderBtn = document.createElement('button');
-  addFolderBtn.className = 'new-note-btn-small';
-  addFolderBtn.textContent = '+';
-  addFolderBtn.title = 'New category';
+const addFolderBtn = document.createElement('button');
+addFolderBtn.className = 'new-note-btn-small';
+addFolderBtn.textContent = '+';
+addFolderBtn.title = 'New category';
 
 // Show for both logged-in users AND guest users when categories are expanded
 if (isCategoriesExpanded) {
-    addFolderBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const name = prompt('New category name:');
-      if (name?.trim()) {
-        createCategory(name);
-      }
-    });
-  } else {
-    addFolderBtn.style.visibility = 'hidden';
-    addFolderBtn.style.pointerEvents = 'none';
-  }
+  addFolderBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const name = prompt('New category name:');
+    if (name?.trim()) {
+      createCategory(name);
+    }
+  });
+} else {
+  addFolderBtn.style.visibility = 'hidden';
+  addFolderBtn.style.pointerEvents = 'none';
+}
 
 categoriesHeader.addEventListener('click', (e) => {
   // Only toggle if the click is not on the '+' button area
@@ -1195,10 +1188,9 @@ categoriesHeader.addEventListener('click', (e) => {
   }
 });
 
-  categoriesHeader.appendChild(chevron);
-  categoriesHeader.appendChild(title);
-  categoriesHeader.appendChild(addFolderBtn);
-  list.appendChild(categoriesHeader);
+categoriesHeader.appendChild(title);
+categoriesHeader.appendChild(addFolderBtn);
+list.appendChild(categoriesHeader);
 
   // 2. =======================
   // FOLDERS (DYNAMICALLY RENDERED)
@@ -1821,11 +1813,12 @@ async function saveVersionIfChanged() {
     if (pb.authStore.isValid && derivedKey) {
       await createVersionSnapshot(pb, derivedKey, file.id, currentContent); 
     } else {
+      // --- GUEST MODE FIX ---
       if (!file.versions) file.versions = [];
       file.versions.unshift({
         id: `v_${Date.now()}_${Math.random().toString(36).substr(2,6)}`,
         created: new Date().toISOString(),
-        content: currentContent
+        content: originalContent // <--- CHANGED: Save the "before" state
       });
       if (file.versions.length > 50) file.versions.length = 50;
       guestStorage.saveData({ categories: state.categories, files: state.files });
@@ -1917,27 +1910,32 @@ async function updateVersionHistory(file = null) {
 
   let versions = [];
 
-  // Don't try to load versions for temporary files
-  if (file.id.startsWith('temp_')) {
-    versions = [];
-  } else if (pb.authStore.isValid && derivedKey) {
-try {
-      // CRITICAL FIX: Pass the signal to getVersions
-      versions = await getVersions(pb, derivedKey, file.id, signal);
-    } catch (e) {
-      // CRITICAL FIX: Check for AbortError/isAbort/Autocancel to handle intentional cancellation silently.
-      if (e.name === 'AbortError' || e.isAbort || (e.status === 0 && e.message.includes('autocancelled'))) {
-          console.log('Version history load aborted.');
-          versionList.classList.remove('loading');
-          versionHistoryController = null;
-          return; 
-      }
-      console.error(e);
+  // --- LOGIC FIX STARTS HERE ---
+  if (pb.authStore.isValid && derivedKey) {
+    // LOGGED IN: Only fetch from server if it's NOT a temp file
+    if (file.id.startsWith('temp_')) {
       versions = [];
+    } else {
+      try {
+        // CRITICAL FIX: Pass the signal to getVersions
+        versions = await getVersions(pb, derivedKey, file.id, signal);
+      } catch (e) {
+        // CRITICAL FIX: Check for AbortError/isAbort/Autocancel to handle intentional cancellation silently.
+        if (e.name === 'AbortError' || e.isAbort || (e.status === 0 && e.message.includes('autocancelled'))) {
+            console.log('Version history load aborted.');
+            versionList.classList.remove('loading');
+            versionHistoryController = null;
+            return; 
+        }
+        console.error(e);
+        versions = [];
+      }
     }
   } else {
+    // GUEST: Always load local versions, even for temp_ IDs
     versions = file.versions || [];
   }
+  // --- LOGIC FIX ENDS HERE ---
 
   let html = `
     <li class="version-current">
