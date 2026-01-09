@@ -540,9 +540,9 @@ document.addEventListener("DOMContentLoaded", () => {
     <!-- Integration Script -->
 <!-- Integration Script -->
     <script type="module">
-        import PocketBase from './pocketbase.es.mjs';
+        import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.es.mjs';
 
-        const PB_URL = 'http://127.0.0.1:8090';
+        const PB_URL = 'https://repeatedly-pleasant-elk.ngrok-free.app/'; 
         const pb = new PocketBase(PB_URL);
 
         const container = document.getElementById('paypal-button-container');
