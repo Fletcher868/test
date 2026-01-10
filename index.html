@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>KryptNote | End-to-End Encrypted Notes</title>
   <link rel="stylesheet" href="style.css" />
-<!-- Favicon (fixed with relative paths) -->
-<link rel="icon" type="image/png" href="/test/favicon/favicon-96x96.png" sizes="96x96" />
-<link rel="icon" type="image/svg+xml" href="/test/favicon/favicon.svg" />
-<link rel="shortcut icon" href="/test/favicon/favicon.ico" />
-<link rel="apple-touch-icon" sizes="180x180" href="/test/favicon/apple-touch-icon.png" />
-<link rel="manifest" href="/test/favicon/site.webmanifest" />
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="/favicon/favicon-96x96.png" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg" />
+  <link rel="shortcut icon" href="/favicon/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png" />
+  <link rel="manifest" href="/favicon/site.webmanifest" />
   <!-- Description (important for SEO) -->
   <meta name="description" content="KryptNote: Secure, end-to-end encrypted note-taking app. Private notes with AES-GCM 256-bit encryption, Zero-knowledge, no tracking, and version history.">
   <!-- Keywords – 2025 optimized for KryptNote -->
@@ -172,7 +172,6 @@
           <div id="signupForm" class="dropdown-content form-content hidden">
             <div class="form-header">
               <h4>Create Account</h4>
-              <p>Start your encrypted notebook</p>
             </div>
             
             <!-- START: E2EE WARNING -->
@@ -491,7 +490,44 @@
     </div>
   </div>
 </div>
+<!-- Upgrade Feature Modal -->
+<div id="upgradeModal" class="st-modal hidden">
+  <div class="st-card" style="height: auto; max-height: 90vh; max-width: 400px; overflow: visible;">
+    
+    <!-- Header -->
+    <div class="st-header" style="border-bottom: none; padding-bottom: 0;">
+      <div class="st-user-summary"></div> <!-- Spacer -->
+      <button id="closeUpgradeModal" class="st-close-btn">
+        <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
+    </div>
 
+    <!-- Body -->
+    <div class="st-body" style="text-align: center; padding-top: 0; padding-bottom: 32px; background: #fff;">
+      
+      <!-- Crown Icon Bubble -->
+      <div style="width: 64px; height: 64px; background: #fffbeb; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; color: #d97706;">
+        <svg class="btn-icon" style="width: 32px; height: 32px;"><use href="#icon-crown"/></svg>
+      </div>
+
+      <h3 style="font-size: 20px; font-weight: 700; color: #0f172a; margin-bottom: 10px;">Custom Categories</h3>
+      
+      <p style="font-size: 14px; color: #64748b; margin-bottom: 24px; line-height: 1.5;">
+        Organizing notes into custom folders is a <strong>Pro feature</strong>.<br>
+        Upgrade to unlock unlimited categories.
+      </p>
+
+      <button id="goToPricingBtn" class="st-btn-primary" style="width: 100%; justify-content: center; display: flex; align-items: center; gap: 8px;">
+        Upgrade to Pro
+      </button>
+      
+      <button id="cancelUpgradeBtn" style="margin-top: 12px; background: none; border: none; color: #64748b; font-size: 13px; font-weight: 500; cursor: pointer;">
+        Maybe later
+      </button>
+
+    </div>
+  </div>
+</div>
   <!-- Scripts -->
   <!-- icons.js moved to the bottom of body to fix "null" error -->
   <script src="icons.js"></script>
