@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png" />
   <link rel="manifest" href="/favicon/site.webmanifest" />
     <style>
-        /* --- CSS VARIABLES (Theming) --- */
+        /* --- CSS VARIABLES (Original Initial State) --- */
         :root {
             --primary: #4f46e5;
             --primary-hover: #4338ca;
@@ -64,7 +64,7 @@
             display: flex; align-items: center;
         }
         .nav-inner { width: 100%; display: flex; justify-content: space-between; align-items: center; }
-              .nav-links { gap: 2rem; }
+        .nav-links { gap: 2rem; }
         .nav-links a { text-decoration: none; color: var(--text-muted); font-weight: 500; font-size: 0.95rem; transition: color 0.2s; }
         .nav-links a:hover, .nav-links a.active { color: #3b82f6; }
         .btn-nav { background: #3b82f6; color: white !important; padding: 0.5rem 1rem; border-radius: 99px; }
@@ -224,7 +224,7 @@
         .processing-card p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.5; }
 
         /* =========================================
-   COMPACT LOGO DESIGN
+   COMPACT LOGO DESIGN (Original Colors)
    ========================================= */
 
 .logo-link {
@@ -236,13 +236,13 @@
 .logo-container {
   display: flex;
   align-items: center;
-  gap: 8px; /* Reduced from 10px */
+  gap: 8px; 
   padding: 4px 4px 6px 4px;
-  border-radius: 10px; /* Reduced from 12px */
+  border-radius: 10px; 
   background: #ffffff;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
   transition: all 0.2s ease;
-  max-width: 180px; /* Limit maximum width */
+  max-width: 180px; 
 }
 
 /* Hover effect */
@@ -257,10 +257,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px; /* Reduced from 36px */
-  height: 32px; /* Reduced from 36px */
+  width: 32px; 
+  height: 32px; 
   background: linear-gradient(135deg, #3b82f6, #2563eb);
-  border-radius: 8px; /* Reduced from 9px */
+  border-radius: 8px; 
   color: white;
   flex-shrink: 0;
 }
@@ -269,28 +269,28 @@
 .logo-text {
   display: flex;
   align-items: baseline;
-  gap: 3px; /* Reduced from 4px */
-  min-width: 0; /* Allow text to shrink */
+  gap: 3px; 
+  min-width: 0; 
 }
 
 .logo-name {
-  font-size: 17px; /* Reduced from 20px */
-  font-weight: 700; /* Changed from 800 */
+  font-size: 17px; 
+  font-weight: 700; 
   color: #1e293b;
   letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 60px; /* Limit width */
+  max-width: 60px; 
 }
 
 .logo-subtitle {
-  font-size: 14px; /* Reduced from 16px */
+  font-size: 14px; 
   font-weight: 500;
   color: #3b82f6;
   letter-spacing: -0.01em;
   position: relative;
-  padding-left: 6px; /* Reduced from 8px */
+  padding-left: 6px; 
   white-space: nowrap;
 }
 
@@ -301,34 +301,11 @@
   left: 0;
   top: 50%;
   transform: translateY(-50%);
-  width: 1.5px; /* Reduced from 2px */
-  height: 12px; /* Reduced from 14px */
+  width: 1.5px; 
+  height: 12px; 
   background: linear-gradient(to bottom, #60a5fa, #3b82f6);
   border-radius: 1px;
   opacity: 0.7;
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-  .logo-container {
-    padding: 6px 10px;
-    gap: 6px;
-  }
-  
-  .logo-icon {
-    width: 28px;
-    height: 28px;
-  }
-  
-  .logo-name {
-    font-size: 15px;
-    max-width: 50px;
-  }
-  
-  .logo-subtitle {
-    font-size: 13px;
-    padding-left: 5px;
-  }
 }
     </style>
 </head>
@@ -382,7 +359,6 @@ document.addEventListener("DOMContentLoaded", () => {
 <div class="nav-links hidden-mobile items-center">
     <a href="index.html">Home</a>
     <a href="#" class="active">Pricing</a>
-    <!-- NEW: Added link to Contact page -->
     <a href="contact.html">Contact</a>
     <a href="faq.html">FAQ</a>
     <a href="index.html" class="btn-nav">Back to Notes</a>
@@ -394,11 +370,11 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
     </nav>
 
-    <!-- Header -->
+    <!-- Header (Updated Text) -->
     <div class="container">
         <header>
-            <h1>Simple, transparent <span class="highlight">pricing</span></h1>
-            <p>Start organizing your life today. No credit card required for free plan.</p>
+            <h1>Secure Notes. <span class="highlight">Limitless Organization.</span></h1>
+            <p>Experience true privacy with end-to-end encryption.<br>Upgrade to Pro for the ultimate organization workflow.</p>
         </header>
     </div>
 
@@ -419,7 +395,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="card">
                 <div>
                     <h3 class="plan-name">Free</h3>
-                    <p style="color:var(--text-muted); font-size:0.9rem;">Essential note-taking for individuals.</p>
+                    <p style="color:var(--text-muted); font-size:0.9rem;">Essential secure note-taking.</p>
                 </div>
                 <div style="margin: 1.5rem 0;">
                     <span class="price">$0</span>
@@ -428,8 +404,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 <ul class="features">
                     <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Unlimited notes</li>
                     <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> 7 days version history</li>
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Default Categories (Work & Trash)</li>
                     <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> End-to-end encryption</li>
-                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Mobile & web access</li>
                 </ul>
                 <button class="btn btn-outline" onclick="window.location.href='index.html'">Get Started Free</button>
             </div>
@@ -439,7 +415,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 <div class="popular-tag">Most Popular</div>
                 <div>
                     <h3 class="plan-name">Pro</h3>
-                    <p style="color:var(--text-muted); font-size:0.9rem;">Advanced features for power users.</p>
+                    <p style="color:var(--text-muted); font-size:0.9rem;">Power features for serious organizers.</p>
                 </div>
                 <div style="margin: 1.5rem 0;">
                     <span class="price">$9</span>
@@ -448,7 +424,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 <ul class="features">
                     <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> <strong>Everything in Free</strong></li>
                     <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Unlimited version history</li>
-                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Advanced AI features</li>
+                    <!-- Updated Feature -->
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> <strong>Unlimited Custom Categories</strong></li>
                     <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Priority Support</li>
                 </ul>
                 
@@ -462,7 +439,7 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
     </section>
 
-    <!-- Comparison Table -->
+    <!-- Comparison Table (Updated Content) -->
     <section class="container">
         <h2 class="text-center" style="margin-bottom: 2.5rem; color: var(--text-main);">Compare Features</h2>
         <div class="table-container">
@@ -476,9 +453,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 </thead>
                 <tbody>
                     <tr>
-                        <td>Unlimited Notes</td>
-                        <td class="col-center" style="color:var(--accent-green)">✓</td>
-                        <td class="col-center" style="color:#3b82f6">✓</td>
+                        <td>Notes</td>
+                        <td class="col-center" style="color:var(--accent-green)">Unlimited</td>
+                        <td class="col-center" style="color:#3b82f6">Unlimited</td>
                     </tr>
                     <tr>
                         <td>Version History</td>
@@ -486,16 +463,16 @@ document.addEventListener("DOMContentLoaded", () => {
                         <td class="col-center" style="font-weight:600">Unlimited</td>
                     </tr>
                     <tr>
-                        <td>AI Features</td>
-                        <td class="col-center" style="color:#cbd5e1">—</td>
-                        <td class="col-center" style="color:#3b82f6">✓</td>
+                        <td>Custom Categories</td>
+                        <td class="col-center" style="color:#94a3b8">Default Only</td>
+                        <td class="col-center" style="color:#3b82f6">Unlimited</td>
                     </tr>
                 </tbody>
             </table>
         </div>
     </section>
 
-    <!-- FAQ -->
+    <!-- FAQ (Updated Content) -->
     <section id="faq" class="container faq-section">
         <h2 class="text-center" style="margin-bottom: 3rem;">Frequently Asked Questions</h2>
         
@@ -506,12 +483,12 @@ document.addEventListener("DOMContentLoaded", () => {
         
         <details>
             <summary>Is my data secure with encryption?</summary>
-            <div class="faq-content">Absolutely. We use industry-standard end-to-end encryption to ensure your notes remain private and secure.</div>
+            <div class="faq-content">Absolutely. We use industry-standard end-to-end encryption (AES-256) to ensure your notes remain private and secure. Even we cannot read them.</div>
         </details>
         
         <details>
             <summary>What happens if I cancel Pro?</summary>
-            <div class="faq-content">Your account will revert to the Free plan. You will keep all your notes, but premium features like AI and unlimited history will be locked.</div>
+            <div class="faq-content">Your account will revert to the Free plan. You will keep your existing notes, but you won't be able to create new custom categories or access file versions older than 7 days.</div>
         </details>
     </section>
 
@@ -538,7 +515,6 @@ document.addEventListener("DOMContentLoaded", () => {
     <script src="https://www.paypal.com/sdk/js?client-id=AZ1FwPWxMIw_G1FmfV6ERfmMGXNWgLW9oY5zNeOgUtuz4zd2BgYrb62uWn7F3uPslGTtv31-yY5GNVBG&vault=true&intent=subscription"></script>
     
     <!-- Integration Script -->
-<!-- Integration Script -->
     <script type="module">
         import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.es.mjs';
 
@@ -565,7 +541,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // --- NEW POLLING FUNCTION ---
-        // Accepts 'oldExpiryStr' so we can compare against the previous date
         async function waitForUpgrade(userId, oldExpiryStr) {
             let attempts = 0;
             const maxAttempts = 20; // Wait up to 40 seconds
@@ -586,9 +561,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     console.log(`   Attempt ${attempts}: Current Expiry in DB = ${user.plan_expires}`);
 
-                    // SUCCESS LOGIC:
-                    // The new date must be GREATER than the old date.
-                    // This proves the webhook actually processed the update.
                     if (newTime > oldTime) {
                         clearInterval(interval);
                         
@@ -644,24 +616,13 @@ document.addEventListener("DOMContentLoaded", () => {
                     });
                 },
                 onApprove: async function(data) {
-                    // 1. Show the Loading Screen immediately
                     setProcessing(true);
-
-                    // 2. SNAPSHOT: Get the CURRENT expiration date BEFORE the webhook updates it.
-                    // We need this to know when it changes.
                     try {
                         const currentUser = await pb.collection('users').getOne(userId);
                         const oldExpiry = currentUser.plan_expires;
-                        
-                        console.log('✅ PayPal Approved. ID:', data.subscriptionID);
-                        console.log('📸 Snapshot taken. Old Expiry:', oldExpiry);
-
-                        // 3. Start waiting for the change
                         waitForUpgrade(userId, oldExpiry);
-
                     } catch (err) {
                         console.error("Could not fetch user snapshot", err);
-                        // Fallback: If snapshot fails, just wait blindly (less accurate but works)
                         waitForUpgrade(userId, null);
                     }
                 },
