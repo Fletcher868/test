@@ -415,9 +415,9 @@ pb.realtime.subscribe('files', async function (e) {
           
           // NEW: Suppression check for originating client
           // Suppress the Realtime event if the category was just created by this client
-          if (e.action === 'create' && recentlySavedLocally.has(record.id)) {
-              return; 
-          }
+if ((e.action === 'create' || e.action === 'update') && recentlySavedLocally.has(record.id)) {
+    return; 
+}
           
           const index = state.categories.findIndex(c => c.id === record.id);
           
@@ -510,11 +510,17 @@ async function loadUserFiles() {
       
       if (state.categories.length === 0) {
         state.categories = await createDefaultCategories();
-      } else {
-          // CRITICAL: Inject localId for existing default categories
+} else {
+          // CRITICAL: Inject localId based on ICON, not Name.
+          // This allows the user to rename "Work" to anything (e.g., "My Notes") 
+          // while keeping it recognized as the system default.
           state.categories = state.categories.map(c => {
-              if (c.name === 'Work') c.localId = DEFAULT_CATEGORY_IDS.WORK;
-              else if (c.name === 'Trash') c.localId = DEFAULT_CATEGORY_IDS.TRASH;
+              if (c.iconName === 'icon-work') {
+                  c.localId = DEFAULT_CATEGORY_IDS.WORK;
+              }
+              else if (c.iconName === 'icon-delete') {
+                  c.localId = DEFAULT_CATEGORY_IDS.TRASH;
+              }
               return c;
           });
       }
@@ -1168,6 +1174,14 @@ addFolderBtn.title = 'New category';
 if (isCategoriesExpanded) {
   addFolderBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+
+    // NEW: Check for premium status before allowing creation
+    if (!isUserPremium()) {
+        showUpgradeModal();
+        return;
+    }
+
+    // Existing logic continues here for premium users...
     const name = prompt('New category name:');
     if (name?.trim()) {
       createCategory(name);
@@ -1430,12 +1444,9 @@ function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
 
   const r = btn.getBoundingClientRect();
   
-  // SIMPLE FIX: Position the menu
+  // Position the menu
   let top = r.bottom + 4;
-  
-  // Check if menu would go off-screen
   if (top + menu.offsetHeight > window.innerHeight) {
-    // Move it above the button instead
     top = r.top - menu.offsetHeight - 4;
   }
   
@@ -1448,76 +1459,78 @@ function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
 
   // --- Event Listeners ---
   
-  // 1. Clear Trash (Only for Trash Category)
+  // 1. Clear Trash
   if (isTrash) {
     menu.querySelector('.ctx-clear-trash').onclick = () => {
-      // CRITICAL FIX: Remove menu immediately upon action start
       menu.remove();
       clearTrash();
     };
   } 
   
-  // 2. Rename Category (For Work and Custom Categories)
-  if (!isTrash) {
-    menu.querySelector('.ctx-rename').onclick = async () => {
-        // CRITICAL FIX: Remove menu immediately upon action start
-        menu.remove();
-        
-        const newName = prompt(`Rename category "${name}" to:`, name);
-        if (!newName?.trim() || newName.trim() === name) { return; }
+// 2. Rename Category (For Work and Custom Categories)
+if (!isTrash) {
+  menu.querySelector('.ctx-rename').onclick = async () => {
+      menu.remove();
+      
+      const newName = prompt(`Rename category "${name}" to:`, name);
+      if (!newName?.trim() || newName.trim() === name) { return; }
 
-        const trimmedName = newName.trim();
-        const category = state.categories.find(c => c.id === id || c.localId === id);
-        if (!category) { return; }
-        
-        const oldName = category.name;
-        category.name = trimmedName;
-        
-        if (pb.authStore.isValid && category.id && !category.localId) { // Only update if it's a PB-created custom category
-            try {
-                await pb.collection('categories').update(category.id, { name: trimmedName }); 
-                showToast(`Category renamed to: ${trimmedName}`, 2000); 
-            }
-            catch (e) { 
-                console.error(e); 
-                category.name = oldName; 
-                showToast('Category rename failed', 3000); 
-            }
-        } else if (!pb.authStore.isValid || category.localId === DEFAULT_CATEGORY_IDS.WORK) {
-            // Guest mode or renaming the default 'Work' category
-             if (!pb.authStore.isValid) {
-                 guestStorage.saveData({ categories: state.categories, files: state.files });
-             }
-            showToast(`Category renamed to: ${trimmedName}!`, 2000); 
-        }
+      const trimmedName = newName.trim();
+      const category = state.categories.find(c => c.id === id || c.localId === id);
+      if (!category) { return; }
+      
+      const oldName = category.name;
+      category.name = trimmedName; // Optimistic update
+      
+      // Update the UI immediately
+      if (id === state.activeCategoryId) {
+         const activeCategoryTitle = document.querySelector('.categories-title');
+         if(activeCategoryTitle) activeCategoryTitle.textContent = `${trimmedName} Notes`;
+      }
+      finalizeUIUpdate();
 
-        if (id === state.activeCategoryId) {
-             // If we renamed the active category, update the files list title
-             const activeCategoryTitle = document.querySelector('.categories-title');
-             if(activeCategoryTitle) activeCategoryTitle.textContent = `${trimmedName} Notes`;
-        }
-        
-        finalizeUIUpdate();
-    };
-  }
+      if (pb.authStore.isValid) {
+          // Ensure we have a valid PB ID
+          if (category.id && !category.id.startsWith('cat_temp_') && !category.id.startsWith('cat_guest_')) {
+              
+              // 1. ADD TO SUPPRESSION LIST
+              recentlySavedLocally.add(category.id);
 
-  // 3. Delete Category (Only for Custom Categories)
+              try {
+                  await pb.collection('categories').update(category.id, { name: trimmedName }); 
+                  showToast(`Category renamed to: ${trimmedName}`, 2000); 
+              }
+              catch (e) { 
+                  console.error('Rename failed on server:', e); 
+                  category.name = oldName; // Revert
+                  showToast('Category rename failed', 3000); 
+                  finalizeUIUpdate(); 
+              }
+              finally {
+                  // 2. REMOVE FROM SUPPRESSION LIST AFTER SHORT DELAY
+                  setTimeout(() => recentlySavedLocally.delete(category.id), 500);
+              }
+          }
+      } else {
+           guestStorage.saveData({ categories: state.categories, files: state.files });
+           showToast(`Category renamed to: ${trimmedName}!`, 2000); 
+           finalizeUIUpdate();
+      }
+  };
+}
+
+  // 3. Delete Category
   if (isDeletable) {
     menu.querySelector('.ctx-delete-category').onclick = async () => {
-        
         if (!confirm(`Are you sure you want to delete category "${name}"? All notes in it will be moved to Trash.`)) {
             return;
         }
-
-        // CRITICAL FIX: Remove menu immediately upon action start
         menu.remove();
         
         const categoryToDelete = state.categories.find(c => c.id === id || c.localId === id);
         if (!categoryToDelete) { return; }
         
-        // CRITICAL: Determine the ID used by files for the category being deleted
         const categoryToDeleteId = pb.authStore.isValid ? categoryToDelete.id : categoryToDelete.localId || categoryToDelete.id;
-
         const filesToMove = state.files.filter(f => f.categoryId === categoryToDeleteId);
         
         const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH;
@@ -1529,7 +1542,6 @@ function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
             return;
         }
 
-        // 1. Move files to Trash
         if (pb.authStore.isValid) {
             const promises = filesToMove.map(f => 
                 pb.collection('files').update(f.id, { category: trashCategoryId })
@@ -1538,34 +1550,29 @@ function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
             );
             await Promise.all(promises);
         } else {
-            // Guest mode: update local file state
             filesToMove.forEach(f => f.categoryId = trashCategoryId);
         }
 
-        // 2. Delete the category itself
         if (pb.authStore.isValid && categoryToDelete.id) {
             try {
                 await pb.collection('categories').delete(categoryToDelete.id);
             } catch (e) {
-                console.error('PocketBase category deletion failed:', e);
-                showToast('Category deletion failed on server. Local cleanup applied.', 4000);
+                console.error('Category deletion failed:', e);
+                showToast('Category deletion failed on server.', 4000);
             }
         }
 
-        // 3. Update local state (remove category)
         state.categories = state.categories.filter(c => c.id !== id && c.localId !== id);
         
-        // 4. Update guest storage
         if (!pb.authStore.isValid) {
             guestStorage.saveData({ categories: state.categories, files: state.files });
         }
         
-        // 5. Handle active category change
         if (state.activeCategoryId === id) {
             selectCategory(DEFAULT_CATEGORY_IDS.WORK, true); 
         }
 
-        showToast(`Category "${name}" deleted. ${filesToMove.length} notes moved to Trash.`, 4000);
+        showToast(`Category "${name}" deleted. Notes moved to Trash.`, 4000);
         finalizeUIUpdate();
     };
   }
@@ -1852,10 +1859,10 @@ async function updateVersionHistory(file = null) {
   const versionList = document.getElementById('versionList');
   if (!versionList) return;
 
-  // CRITICAL FIX: CANCEL any previous version history request
+  // CANCEL any previous version history request
   if (versionHistoryController) {
       versionHistoryController.abort();
-      versionHistoryController = null; // Clear the reference
+      versionHistoryController = null; 
   }
   
   // Don't try to load versions for empty/new files
@@ -1874,16 +1881,9 @@ async function updateVersionHistory(file = null) {
   let badgeHTML = ''; 
   let badgeClass = '';
 
-  const user = pb.authStore.model;
   const isLoggedIn = pb.authStore.isValid;
-  let isPremium = false;
+  const isPremium = isUserPremium(); // Refactored
 
-  if (isLoggedIn && user?.plan_expires) {
-      const expiry = new Date(user.plan_expires);
-      const now = new Date();
-      isPremium = expiry > now;
-  }
-  
   if (!isLoggedIn) {
       badgeHTML = 'Guest (3 Days)';
       badgeClass = 'badge-guest';
@@ -1910,17 +1910,14 @@ async function updateVersionHistory(file = null) {
 
   let versions = [];
 
-  // --- LOGIC FIX STARTS HERE ---
   if (pb.authStore.isValid && derivedKey) {
     // LOGGED IN: Only fetch from server if it's NOT a temp file
     if (file.id.startsWith('temp_')) {
       versions = [];
     } else {
       try {
-        // CRITICAL FIX: Pass the signal to getVersions
         versions = await getVersions(pb, derivedKey, file.id, signal);
       } catch (e) {
-        // CRITICAL FIX: Check for AbortError/isAbort/Autocancel to handle intentional cancellation silently.
         if (e.name === 'AbortError' || e.isAbort || (e.status === 0 && e.message.includes('autocancelled'))) {
             console.log('Version history load aborted.');
             versionList.classList.remove('loading');
@@ -1932,10 +1929,9 @@ async function updateVersionHistory(file = null) {
       }
     }
   } else {
-    // GUEST: Always load local versions, even for temp_ IDs
+    // GUEST: Always load local versions
     versions = file.versions || [];
   }
-  // --- LOGIC FIX ENDS HERE ---
 
   let html = `
     <li class="version-current">
@@ -1990,9 +1986,9 @@ async function updateVersionHistory(file = null) {
     highlightSelectedVersion(null);
   }
   
-  // Clear the controller on successful completion
   versionHistoryController = null; 
 }
+
 // 3. PREVIEW MODE HELPERS
 function enterPreviewMode(version) {
   const editor = document.getElementById('textEditor');
@@ -2067,6 +2063,18 @@ function showToast(message, duration = 2500) {
     setTimeout(() => toast.remove(), 300);
   }, duration);
 }
+
+function isUserPremium() {
+    if (!pb.authStore.isValid) return false;
+    
+    const user = pb.authStore.model;
+    if (!user || !user.plan_expires) return false;
+    
+    const expiry = new Date(user.plan_expires);
+    const now = new Date();
+    return expiry > now;
+}
+
 async function handleRestore() {
   const file = state.files.find(f => f.id === state.activeId);
   if (!file) return;
@@ -2384,15 +2392,9 @@ function updateProfileState() {
   
   let statusText = 'Guest';
   let statusClass = 'guest';
-  let isPremium = false; 
+  const isPremium = isUserPremium(); // Refactored
 
   if (isLoggedIn) {
-     if (user?.plan_expires) {
-          const expiry = new Date(user.plan_expires);
-          const now = new Date();
-          isPremium = expiry > now;
-     }
-
      if (isPremium) {
         statusText = 'Premium Plan';
         statusClass = 'premium';
@@ -2451,13 +2453,8 @@ function updateVersionFooter() {
     existingFooter.remove();
   }
 
-  const user = pb.authStore.model;
-  let isPremium = false;
-  if (user?.plan_expires) {
-    const expiry = new Date(user.plan_expires);
-    const now = new Date();
-    isPremium = expiry > now;
-  }
+  // Refactored: Use helper instead of manual date check
+  const isPremium = isUserPremium();
 
   if (isPremium) {
     return;
@@ -2542,6 +2539,36 @@ document.querySelectorAll('.submenu .dropdown-item').forEach(item => {
     document.getElementById('profileDropdown').classList.add('hidden');
   });
 });
+// --- Upgrade Modal Logic ---
+const upgradeModal = document.getElementById('upgradeModal');
+const closeUpgradeBtn = document.getElementById('closeUpgradeModal');
+const cancelUpgradeBtn = document.getElementById('cancelUpgradeBtn');
+const goToPricingBtn = document.getElementById('goToPricingBtn');
+
+function showUpgradeModal() {
+    upgradeModal.classList.remove('hidden');
+}
+
+function hideUpgradeModal() {
+    upgradeModal.classList.add('hidden');
+}
+
+if (closeUpgradeBtn) closeUpgradeBtn.addEventListener('click', hideUpgradeModal);
+if (cancelUpgradeBtn) cancelUpgradeBtn.addEventListener('click', hideUpgradeModal);
+
+if (goToPricingBtn) {
+    goToPricingBtn.addEventListener('click', () => {
+        window.location.href = 'Pricing.html';
+    });
+}
+
+// Close modal when clicking outside
+if (upgradeModal) {
+    upgradeModal.addEventListener('click', (e) => {
+        if (e.target === upgradeModal) hideUpgradeModal();
+    });
+}
+
 
 // Init
 initPocketBase();
