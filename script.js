@@ -2,8 +2,10 @@ import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.
 import { 
   deriveMasterKey, generateDataKey, wrapDataKey, unwrapDataKey, 
   exportKeyToString, storeDataKeyInSession, loadDataKeyFromSession, 
-  encryptBlob, decryptBlob, randomSalt, arrayToB64, b64ToArray 
+  encryptBlob, decryptBlob, randomSalt, arrayToB64, b64ToArray ,
+  generateShareKey, exportKeyToUrl
 } from './crypto.js';
+
 import { initSettings } from './settings.js'; 
 import { createVersionSnapshot, getVersions } from './versions.js';
 import { setupExport } from './export.js'; 
@@ -1624,6 +1626,11 @@ function showFileMenu(btn, id, name) {
   Download
 </button>
 
+<button class="ctx-share">
+  <svg class="btn-icon"><use href="#icon-export"/></svg> <!-- Reusing export icon or add a share icon -->
+  Share
+</button>
+
 <button class="ctx-delete">
   <svg class="btn-icon"><use href="#icon-delete"></use></svg>
   ${deleteText}
@@ -1712,6 +1719,11 @@ function showFileMenu(btn, id, name) {
     menu.remove();
   };
 
+  menu.querySelector('.ctx-share').onclick = () => {
+    openShareModal(id);
+    menu.remove();
+  };
+
   menu.querySelector('.ctx-delete').onclick = () => {
     deleteFile(id); // deleteFile now handles the soft/hard delete logic internally
     menu.remove();
@@ -1760,7 +1772,10 @@ function updateSidebarInfo(file = null) {
   const infoModified = document.getElementById('infoModified');
   const encryptionOffline = document.getElementById('encryptionOffline');
   const encryptionOnline = document.getElementById('encryptionOnline');
+  
+  // Select buttons
   const infoDownload = document.getElementById('infoDownload');
+  const infoShare = document.getElementById('infoShare'); // <--- NEW
   
   if (infoFileNameDisplay) {
     infoFileNameDisplay.onblur = null;
@@ -1768,13 +1783,16 @@ function updateSidebarInfo(file = null) {
     infoFileNameDisplay.onclick = null; 
   }
 
+  // --- NO FILE SELECTED ---
   if (!file) {
     if (infoFileNameDisplay) infoFileNameDisplay.textContent = '—';
     if (infoFileId) infoFileId.textContent = '—';
     if (infoCreated) infoCreated.textContent = '—';
     if (infoModified) infoModified.textContent = '—';
 
+    // Disable buttons
     if (infoDownload) { infoDownload.disabled = true; infoDownload.onclick = null; }
+    if (infoShare) { infoShare.disabled = true; infoShare.onclick = null; } // <--- NEW
     
     if (encryptionOffline) encryptionOffline.style.display = 'flex';
     if (encryptionOnline) encryptionOnline.style.display = 'none';
@@ -1782,11 +1800,10 @@ function updateSidebarInfo(file = null) {
     return;
   }
 
+  // --- FILE SELECTED ---
   const isLoggedIn = pb.authStore.isValid && derivedKey;
   
-  if (infoFileNameDisplay) {
-      infoFileNameDisplay.textContent = file.name;
-  }
+  if (infoFileNameDisplay) infoFileNameDisplay.textContent = file.name;
   if (infoFileId) infoFileId.textContent = file.id;
   if (infoCreated) infoCreated.textContent = formatDate(file.created);
   if (infoModified) infoModified.textContent = formatDate(file.updated);
@@ -1796,9 +1813,16 @@ function updateSidebarInfo(file = null) {
       encryptionOnline.style.display = isLoggedIn ? 'flex' : 'none';
   }
   
+  // Enable Download
   if (infoDownload) {
     infoDownload.disabled = false;
     infoDownload.onclick = () => downloadNote(file);
+  }
+
+  // Enable Share (NEW)
+  if (infoShare) {
+    infoShare.disabled = false;
+    infoShare.onclick = () => openShareModal(file.id);
   }
 }
 
@@ -2569,6 +2593,140 @@ if (upgradeModal) {
     });
 }
 
+// ==========================================
+// SHARE MODAL LOGIC
+// ==========================================
+
+const shareModal = document.getElementById('shareModal');
+const closeShareModalBtn = document.getElementById('closeShareModal'); // Renamed for clarity
+const shareLinkInput = document.getElementById('shareLinkInput');
+const shareStepConfig = document.getElementById('shareStepConfig');
+const shareResult = document.getElementById('shareResult');
+let currentShareFileId = null;
+
+// 1. Define reusable Close/Reset function
+function hideShareModal() {
+    shareModal.classList.add('hidden');
+    
+    // Reset the view state after the fade-out animation (200ms)
+    setTimeout(() => {
+        if (shareStepConfig && shareResult) {
+            shareStepConfig.classList.remove('hidden');
+            shareResult.classList.add('hidden');
+        }
+        if (shareLinkInput) shareLinkInput.value = '';
+    }, 200);
+}
+
+// 2. Attach Close Event to 'X' Button
+if (closeShareModalBtn) {
+    closeShareModalBtn.onclick = hideShareModal;
+}
+
+// 3. Attach Close Event to Backdrop (Click Outside)
+if (shareModal) {
+    shareModal.addEventListener('click', (e) => {
+        // If the click target is the modal container itself (not the card inside)
+        if (e.target === shareModal) {
+            hideShareModal();
+        }
+    });
+}
+
+function openShareModal(fileId) {
+    if (!pb.authStore.isValid) {
+        showToast("You must be logged in to share notes.");
+        return;
+    }
+    currentShareFileId = fileId;
+    
+    // Ensure correct initial state before showing
+    shareStepConfig.classList.remove('hidden');
+    shareResult.classList.add('hidden');
+    
+    shareModal.classList.remove('hidden');
+}
+
+document.getElementById('generateShareBtn')?.addEventListener('click', async () => {
+    if (!currentShareFileId) return;
+    
+    const btn = document.getElementById('generateShareBtn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = 'Generating...';
+    btn.disabled = true;
+
+    try {
+        // 1. Get File
+        const file = state.files.find(f => f.id === currentShareFileId);
+        if (!file) throw new Error("File not found");
+
+        // 2. Generate Key & Encrypt
+        const shareKey = await generateShareKey();
+        const { ciphertext, iv, authTag } = await encryptBlob(file.content, shareKey);
+
+        // 3. Expiration
+        const hours = parseInt(document.getElementById('shareExpiration').value);
+        const date = new Date();
+        date.setTime(date.getTime() + (hours * 60 * 60 * 1000));
+        
+        // 4. Upload
+        const record = await pb.collection('shared_notes').create({
+            user: pb.authStore.model.id,
+            file: currentShareFileId,
+            encryptedBlob: arrayToB64(ciphertext),
+            iv: arrayToB64(iv),
+            authTag: arrayToB64(authTag),
+            expires: date.toISOString()
+        });
+
+        // 5. Construct Link
+        const keyStr = await exportKeyToUrl(shareKey);
+        const shareUrl = `${window.location.origin}/share.html?id=${record.id}#key=${keyStr}`;
+
+        // 6. UI Transition
+        shareLinkInput.value = shareUrl;
+        
+        // Hide Config, Show Result
+        shareStepConfig.classList.add('hidden');
+        shareResult.classList.remove('hidden');
+
+    } catch (e) {
+        console.error(e);
+        showToast('Failed to generate link');
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+});
+
+document.getElementById('copyShareLinkBtn')?.addEventListener('click', () => {
+    // 1. Get the text
+    const textToCopy = shareLinkInput.value;
+
+    // 2. Use the modern Clipboard API
+    navigator.clipboard.writeText(textToCopy).then(() => {
+        // --- Success Animation ---
+        const copyBtn = document.getElementById('copyShareLinkBtn');
+        const originalText = copyBtn.textContent;
+        
+        copyBtn.textContent = "Copied!";
+        copyBtn.style.backgroundColor = "#10b981"; // Green
+        copyBtn.style.color = "#ffffff";
+        
+        setTimeout(() => {
+            copyBtn.textContent = originalText;
+            copyBtn.style.backgroundColor = ""; // Reset to default
+            copyBtn.style.color = "";
+        }, 2000);
+    }).catch(err => {
+        // Fallback for older browsers or if permission denied
+        console.error('Async: Could not copy text: ', err);
+        
+        // Optional: Keep execCommand as a backup if the above fails
+        shareLinkInput.select();
+        document.execCommand('copy');
+    });
+});
 
 // Init
 initPocketBase();
