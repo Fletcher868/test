@@ -29,7 +29,7 @@ let pb = null,
 let originalContent = '';
 let isSavingVersion = false;
 let recentlySavedLocally = new Set(); 
-let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') === 'true'; // Default to collapsed
+let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') === 'false'; // Default to collapsed
 let finalizeUIUpdateTimeout = null;
 let isFinalizingUI = false;
 let versionHistoryController = null;
@@ -2664,10 +2664,16 @@ document.getElementById('generateShareBtn')?.addEventListener('click', async () 
         const shareKey = await generateShareKey();
         const { ciphertext, iv, authTag } = await encryptBlob(file.content, shareKey);
 
-        // 3. Expiration
-        const hours = parseInt(document.getElementById('shareExpiration').value);
-        const date = new Date();
-        date.setTime(date.getTime() + (hours * 60 * 60 * 1000));
+        // 3. Handle Expiration Logic
+        const expirationValue = document.getElementById('shareExpiration').value;
+        let expirationDate = ""; // Default to empty (Unlimited)
+
+        if (expirationValue !== "0") {
+            const hours = parseInt(expirationValue);
+            const date = new Date();
+            date.setTime(date.getTime() + (hours * 60 * 60 * 1000));
+            expirationDate = date.toISOString();
+        }
         
         // 4. Upload
         const record = await pb.collection('shared_notes').create({
@@ -2676,7 +2682,7 @@ document.getElementById('generateShareBtn')?.addEventListener('click', async () 
             encryptedBlob: arrayToB64(ciphertext),
             iv: arrayToB64(iv),
             authTag: arrayToB64(authTag),
-            expires: date.toISOString()
+            expires: expirationDate // Sends ISO string OR empty string
         });
 
         // 5. Construct Link
@@ -2686,7 +2692,6 @@ document.getElementById('generateShareBtn')?.addEventListener('click', async () 
         // 6. UI Transition
         shareLinkInput.value = shareUrl;
         
-        // Hide Config, Show Result
         shareStepConfig.classList.add('hidden');
         shareResult.classList.remove('hidden');
 
