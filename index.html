@@ -351,13 +351,21 @@
               </div>
             </div>
 
-            <div class="info-section">
-              <h4>Export</h4>
-              <button id="infoDownload" class="outline small">
-                <svg class="btn-icon"><use href="#icon-download"/></svg>
-                Download Note
-              </button>
-            </div>
+<div class="info-section">
+  <h4>Actions</h4>
+  
+  <!-- NEW Share Button -->
+  <button id="infoShare" class="sidebar-action-btn">
+    <svg class="btn-icon"><use href="#icon-share"/></svg>
+    Share Note
+  </button>
+
+  <!-- Existing Download Button (Updated Class) -->
+  <button id="infoDownload" class="sidebar-action-btn">
+    <svg class="btn-icon"><use href="#icon-download"/></svg>
+    Download Note
+  </button>
+</div>
           </div>
 
 
@@ -377,6 +385,80 @@
 
     </main>
   </div>
+
+<!-- Share Modal (Redesigned) -->
+<div id="shareModal" class="st-modal hidden">
+  <div class="st-card" style="height: auto; min-height: auto; max-width: 440px; overflow: visible;">
+    
+    <!-- Header -->
+    <div class="st-header" style="padding: 20px 24px 16px;">
+      <div class="st-user-summary" style="gap:12px;">
+        <!-- Share Icon Badge -->
+        <div class="st-avatar-large" style="background:#f0f9ff; color:#0ea5e9; box-shadow:none; width:40px; height:40px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+        </div>
+        <div class="st-user-details">
+          <h3>Share Securely</h3>
+          <span>End-to-End Encrypted Link</span>
+        </div>
+      </div>
+      <button id="closeShareModal" class="st-close-btn">
+        <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
+    </div>
+
+    <!-- Body -->
+    <div class="st-body" style="padding: 24px; flex: 0 0 auto;">
+      
+      <!-- STEP 1: Configuration (Visible by default) -->
+      <div id="shareStepConfig">
+        <p class="st-subtext" style="margin-bottom: 20px; line-height: 1.5;">
+          This creates a read-only snapshot of your note. The encryption key is embedded in the link and is never sent to the server.
+        </p>
+        
+        <div class="st-form-group">
+          <label class="st-label">Link Expiration</label>
+          <div style="position: relative;">
+            <select id="shareExpiration" class="st-input" style="appearance: none; cursor: pointer;">
+              <option value="1">1 Hour</option>
+              <option value="24">1 Day</option>
+              <option value="72">3 Days</option>
+              <option value="168" selected>7 Days</option>
+              <option value="720">30 Days</option>
+            </select>
+            <!-- Custom Chevron -->
+            <div style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); pointer-events: none; color:#64748b;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="st-actions-right" style="margin-top: 24px;">
+           <button id="generateShareBtn" class="st-btn-primary" style="width: 100%; justify-content: center; display: flex; gap: 8px;">
+             Generate Link
+           </button>
+        </div>
+      </div>
+
+      <!-- STEP 2: Result (Hidden by default) -->
+      <div id="shareResult" class="hidden">
+        
+        <div class="st-form-group">
+          <label class="st-label" style="color: #16a34a;">Link Generated Successfully</label>
+          <div class="share-input-group">
+            <input type="text" id="shareLinkInput" class="st-input share-input-readonly" readonly>
+            <button id="copyShareLinkBtn" class="st-btn-primary small">Copy</button>
+          </div>
+        </div>
+
+        <div class="st-info-box" style="margin-bottom: 0;">
+          <strong>Important:</strong> If you lose this link, we cannot recover it. The note content is fixed at the time of generation.
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
 
 <!-- Settings Modal (New Professional Design) -->
 <div id="settingsModal" class="st-modal hidden">
