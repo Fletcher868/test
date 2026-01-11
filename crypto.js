@@ -109,3 +109,31 @@ export const b64ToArray = str => {
   if (!str) return new Uint8Array(0);
   return Uint8Array.from(atob(str.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
 };
+
+
+// 1. Generate a random AES-GCM key for sharing
+export async function generateShareKey() {
+  return await crypto.subtle.generateKey(
+    { name: "AES-GCM", length: 256 },
+    true, 
+    ["encrypt", "decrypt"]
+  );
+}
+
+// 2. Export Key to URL-safe Base64 (for the link fragment)
+export async function exportKeyToUrl(key) {
+  const raw = await crypto.subtle.exportKey('raw', key);
+  return arrayToB64(new Uint8Array(raw));
+}
+
+// 3. Import Key from URL-safe Base64
+export async function importKeyFromUrl(str) {
+  const raw = b64ToArray(str);
+  return await crypto.subtle.importKey(
+    'raw', 
+    raw, 
+    'AES-GCM', 
+    true, 
+    ['encrypt', 'decrypt']
+  );
+}
