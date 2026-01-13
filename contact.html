@@ -1,18 +1,24 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Contact - KryptNote</title>
-      <!-- Favicon -->
-  <link rel="icon" type="image/png" href="/favicon/favicon-96x96.png" sizes="96x96" />
-  <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg" />
-  <link rel="shortcut icon" href="/favicon/favicon.ico" />
-  <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png" />
-  <link rel="manifest" href="/favicon/site.webmanifest" />
+    <title>Contact Support - KryptNote</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/favicon/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png" />
+    <link rel="manifest" href="/favicon/site.webmanifest" />
+
+    <!-- Google Fonts: Inter (Required for Logo) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
     <style>
-        /* --- CSS VARIABLES (Theming) --- */
+        /* --- CSS VARIABLES --- */
         :root {
             --primary: #4f46e5;
             --primary-hover: #4338ca;
@@ -21,7 +27,6 @@
             --text-main: #0f172a;
             --text-muted: #64748b;
             --border: #e2e8f0;
-            --accent-green: #22c55e;
             --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
             --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
             --radius: 1rem;
@@ -32,7 +37,7 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: var(--bg-body);
             color: var(--text-main);
             line-height: 1.5;
@@ -41,12 +46,9 @@
 
         /* --- LAYOUT UTILITIES --- */
         .container { max-width: var(--container); margin: 0 auto; padding: 0 1.5rem; }
-        .flex { display: flex; }
-        .items-center { align-items: center; }
-        .justify-between { justify-content: space-between; }
-        .grid-2 { display: grid; grid-template-columns: 1fr; gap: 2rem; }
-        .text-center { text-align: center; }
+        .grid-2 { display: grid; grid-template-columns: 1fr; gap: 4rem; }
         .hidden-mobile { display: none; }
+        .items-center { align-items: center; }
         
         @media (min-width: 768px) {
             .grid-2 { grid-template-columns: 1fr 1fr; }
@@ -65,149 +67,98 @@
             display: flex; align-items: center;
         }
         .nav-inner { width: 100%; display: flex; justify-content: space-between; align-items: center; }
-          .nav-links { gap: 2rem; }
+        
+        /* --- LOGO STYLE A (Updated) --- */
+        .logo-link {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 32px;
+            text-decoration: none;
+        }
+
+        .logo-icon {
+            height: 32px;
+            width: 32px;
+            color: #3b82f6; /* Primary Blue */
+            fill: currentColor;
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+        }
+
+        .logo-link:hover .logo-icon {
+            transform: scale(1.1) rotate(-5deg);
+            color: #2563eb; /* Darker Blue */
+        }
+
+        .logo-text {
+            font-family: 'Inter', sans-serif;
+            font-size: 26px; /* Visual height match */
+            line-height: 1;
+            font-weight: 800;
+            color: #0f172a; /* Slate 900 */
+            letter-spacing: -0.04em;
+            white-space: nowrap;
+        }
+
+        .logo-text span {
+            color: #3b82f6;
+        }
+        /* ------------------------------------- */
+
+        .nav-links { gap: 2rem; }
         .nav-links a { text-decoration: none; color: var(--text-muted); font-weight: 500; font-size: 0.95rem; transition: color 0.2s; }
         .nav-links a:hover, .nav-links a.active { color: #3b82f6; }
         .btn-nav { background: #3b82f6; color: white !important; padding: 0.5rem 1rem; border-radius: 99px; }
         .btn-nav:hover { background: var(--primary-hover); }
 
-        /* --- HERO --- */
-        header { padding-top: 140px; padding-bottom: 60px; max-width: 800px; margin: 0 auto; text-align: center; }
-        h1 { font-size: 2.5rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 1rem; color: var(--text-main); }
-        @media(min-width: 768px) { h1 { font-size: 3.75rem; } }
-        header p { font-size: 1.25rem; color: var(--text-muted); max-width: 600px; margin: 0 auto; }
-        .highlight { color: #3b82f6; }
-
-        /* --- PRICING CARDS (Reusable for Contact Card) --- */
-        .contact-section { max-width: 1000px; margin: 0 auto 6rem; }
-        .card {
-            background: var(--bg-card);
-            border-radius: var(--radius);
-            border: 1px solid var(--border);
-            padding: 2rem;
-            position: relative;
-            transition: transform 0.2s, box-shadow 0.2s;
-            display: flex; flex-direction: column;
-        }
-        .card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
-        .plan-name { font-size: 1.125rem; font-weight: 600; margin-bottom: 0.5rem; }
-        .price { font-size: 2.25rem; font-weight: 800; color: var(--text-main); }
-        .period { color: var(--text-muted); font-size: 1rem; font-weight: 500; }
+        /* --- CONTACT SECTION --- */
+        .contact-wrapper { padding-top: 140px; padding-bottom: 80px; }
         
+        .contact-info h1 { font-size: 2.5rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 1rem; color: var(--text-main); }
+        .contact-info p { font-size: 1.125rem; color: var(--text-muted); margin-bottom: 2rem; }
+        
+        .info-card {
+            background: white; border: 1px solid var(--border); border-radius: 12px;
+            padding: 1.5rem; margin-bottom: 1rem; display: flex; align-items: flex-start; gap: 1rem;
+        }
+        .info-icon { 
+            width: 40px; height: 40px; background: #eff6ff; color: #3b82f6; 
+            border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+        }
+        .info-text h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem; }
+        .info-text p { font-size: 0.95rem; color: var(--text-muted); margin: 0; }
+        .info-text a { color: #3b82f6; text-decoration: none; font-weight: 500; }
+
+        /* --- FORM --- */
+        .contact-form {
+            background: white; padding: 2.5rem; border-radius: 1.5rem;
+            box-shadow: var(--shadow-lg); border: 1px solid var(--border);
+        }
+        .form-group { margin-bottom: 1.5rem; }
+        .form-label { display: block; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-main); }
+        .form-input, .form-textarea {
+            width: 100%; padding: 0.75rem 1rem; border: 1px solid var(--border);
+            border-radius: 0.75rem; font-size: 1rem; font-family: inherit;
+            transition: all 0.2s; background: #f8fafc;
+        }
+        .form-input:focus, .form-textarea:focus {
+            outline: none; border-color: #3b82f6; background: white;
+            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+        }
+        .btn-submit {
+            width: 100%; background: #3b82f6; color: white; border: none;
+            padding: 1rem; border-radius: 0.75rem; font-size: 1rem; font-weight: 600;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .btn-submit:hover { background: var(--primary-hover); }
+
         /* --- FOOTER --- */
         footer { border-top: 1px solid var(--border); background: white; padding: 4rem 0 2rem; text-align: center; }
+        .footer-links { display: flex; justify-content: center; gap: 1.5rem; margin: 2rem 0; font-size: 0.9rem; }
+        .footer-links a { color: var(--text-muted); text-decoration: none; }
+        .footer-links a:hover { color: #3b82f6; }
         .copyright { color: #94a3b8; font-size: 0.875rem; }
-        
-        /* --- NEW CONTACT SPECIFIC STYLES (for layout consistency) --- */
-        .main-content { padding-bottom: 60px; }
-
-        /* =========================================
-   COMPACT LOGO DESIGN
-   ========================================= */
-
-.logo-link {
-  text-decoration: none;
-  color: inherit;
-  display: inline-block;
-}
-
-.logo-container {
-  display: flex;
-  align-items: center;
-  gap: 8px; /* Reduced from 10px */
-  padding: 4px 4px 6px 4px;
-  border-radius: 10px; /* Reduced from 12px */
-  background: #ffffff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
-  transition: all 0.2s ease;
-  max-width: 180px; /* Limit maximum width */
-}
-
-/* Hover effect */
-.logo-container:hover {
-  border-color: #3b82f6;
-  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.12);
-  transform: translateY(-1px);
-}
-
-/* Logo Icon - Smaller */
-.logo-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px; /* Reduced from 36px */
-  height: 32px; /* Reduced from 36px */
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-  border-radius: 8px; /* Reduced from 9px */
-  color: white;
-  flex-shrink: 0;
-}
-
-/* Logo Text - Compact */
-.logo-text {
-  display: flex;
-  align-items: baseline;
-  gap: 3px; /* Reduced from 4px */
-  min-width: 0; /* Allow text to shrink */
-}
-
-.logo-name {
-  font-size: 17px; /* Reduced from 20px */
-  font-weight: 700; /* Changed from 800 */
-  color: #1e293b;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 60px; /* Limit width */
-}
-
-.logo-subtitle {
-  font-size: 14px; /* Reduced from 16px */
-  font-weight: 500;
-  color: #3b82f6;
-  letter-spacing: -0.01em;
-  position: relative;
-  padding-left: 6px; /* Reduced from 8px */
-  white-space: nowrap;
-}
-
-/* Vertical separator - Smaller */
-.logo-subtitle::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 1.5px; /* Reduced from 2px */
-  height: 12px; /* Reduced from 14px */
-  background: linear-gradient(to bottom, #60a5fa, #3b82f6);
-  border-radius: 1px;
-  opacity: 0.7;
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-  .logo-container {
-    padding: 6px 10px;
-    gap: 6px;
-  }
-  
-  .logo-icon {
-    width: 28px;
-    height: 28px;
-  }
-  
-  .logo-name {
-    font-size: 15px;
-    max-width: 50px;
-  }
-  
-  .logo-subtitle {
-    font-size: 13px;
-    padding-left: 5px;
-  }
-}
     </style>
 </head>
 <body>
@@ -215,22 +166,14 @@
     <!-- Navigation -->
     <nav>
         <div class="container nav-inner">
-        <a href="/" class="logo-link">
-          <div class="logo-container">
-            <div class="logo-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M12 4L4 8V16L12 20L20 16V8L12 4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M12 12L8 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                <path d="M12 12L16 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                <path d="M8 14L12 16L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </div>
-            <div class="logo-text">
-              <span class="logo-name">Krypt</span>
-              <span class="logo-subtitle">Note</span>
-            </div>
-          </div>
-        </a>
+            <!-- UPDATED LOGO: Style A -->
+            <a href="/" class="logo-link">
+                <svg class="logo-icon" viewBox="0 0 24 24">
+                    <path d="M19.003 7.503L14.505 3h-8.5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-11.5zm-5-2l2.5 2.5h-2.5v-2.5z" fill="currentColor"/>
+                    <path d="M8 11h8v2H8zm0 4h5v2H8z" fill="white"/>
+                </svg>
+                <div class="logo-text">Krypt<span>Note</span></div>
+            </a>
             
             <div class="nav-links hidden-mobile items-center">
                 <a href="index.html">Home</a>
@@ -246,31 +189,65 @@
         </div>
     </nav>
 
-    <!-- Header -->
-    <div class="container">
-        <header>
-            <h1>Get in <span class="highlight">Touch</span></h1>
-            <p>We're here to help! For support or inquiries, please use the email address below.</p>
-        </header>
-    </div>
-
-    <!-- Contact Card Section -->
-    <section class="container contact-section main-content">
-        <div class="card text-center" style="max-width: 420px; margin: 0 auto;">
-            <svg style="width: 36px; height: 36px; color: #3b82f6; margin: 0 auto 1rem;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
-
-            <h3 class="plan-name" style="margin-bottom: 0.5rem;">Email Address</h3>
-            <p class="period" style="margin-bottom: 1.5rem;">
-                Reach out for support, feature requests, or business inquiries.
-            </p>
+    <!-- Main Content -->
+    <div class="container contact-wrapper">
+        <div class="grid-2">
             
-            <div style="margin: 1.5rem 0 2rem;">
-                <a href="mailto:isoint@gmail.com" class="price" style="font-size: 1.75rem; text-decoration: none; color: #3b82f6;">isoint@gmail.com</a>
+            <!-- Left Column: Info -->
+            <div class="contact-info">
+                <h1>Get in touch</h1>
+                <p>Have questions about security, pricing, or features? We're here to help you get the most out of KryptNote.</p>
+                
+                <div class="info-card">
+                    <div class="info-icon">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                    </div>
+                    <div class="info-text">
+                        <h3>Email Support</h3>
+                        <p>Our team usually responds within 24 hours.</p>
+                        <a href="mailto:support@kryptnote.com">support@kryptnote.com</a>
+                    </div>
+                </div>
+
+                <div class="info-card">
+                    <div class="info-icon">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    </div>
+                    <div class="info-text">
+                        <h3>Help Center</h3>
+                        <p>Find answers instantly in our docs.</p>
+                        <a href="faq.html">Visit FAQ &rarr;</a>
+                    </div>
+                </div>
             </div>
-            
-            <p class="period" style="font-size: 0.9rem;">We aim to respond within 48 hours.</p>
+
+            <!-- Right Column: Form -->
+            <form class="contact-form" onsubmit="event.preventDefault(); alert('Thank you! We have received your message.');">
+                <div class="form-group">
+                    <label class="form-label">Name</label>
+                    <input type="text" class="form-input" placeholder="Your name" required>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Email</label>
+                    <input type="email" class="form-input" placeholder="you@example.com" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Subject</label>
+                    <input type="text" class="form-input" placeholder="How can we help?" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Message</label>
+                    <textarea class="form-textarea" rows="5" placeholder="Tell us more about your inquiry..." required></textarea>
+                </div>
+
+                <button type="submit" class="btn-submit">Send Message</button>
+            </form>
+
         </div>
-    </section>
+    </div>
 
     <!-- Footer -->
     <footer>
@@ -278,7 +255,7 @@
             <div style="display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 700; color: var(--text-main); margin-bottom: 1rem;">
                 KryptNote
             </div>
-            <p class="copyright">© 2026 KryptNote.</p>
+            <p class="copyright">© 2026 KryptNote. All rights reserved.</p>
         </div>
     </footer>
 
