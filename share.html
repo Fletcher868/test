@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Secure Shared Note | KryptNote</title>
 
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/favicon/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png" />
+    <link rel="manifest" href="/favicon/site.webmanifest" />
+
     <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,10 +27,11 @@
             --text-body: #334155;
             --text-muted: #64748b;
             
-            --primary: #4f46e5;
-            --primary-dark: #4338ca;
-            --primary-light: #eef2ff;
-            --primary-glow: rgba(79, 70, 229, 0.4);
+            /* BLUE THEME */
+            --primary: #3b82f6;       
+            --primary-dark: #2563eb;  
+            --primary-light: #eff6ff; 
+            --primary-glow: rgba(59, 130, 246, 0.4);
             
             --success-bg: #ecfdf5;
             --success-text: #047857;
@@ -41,6 +49,7 @@
             flex-direction: column;
             align-items: center;
             padding: 40px 24px;
+            -webkit-font-smoothing: antialiased;
         }
 
         /* --- Navigation --- */
@@ -53,30 +62,78 @@
             margin-bottom: 40px;
         }
 
-        .logo-group {
+        /* --- EXACT INDEX.HTML LOGO STYLES --- */
+        .logo-link {
+            text-decoration: none;
+            color: inherit;
+            display: inline-block;
+        }
+
+        .logo-container {
             display: flex;
             align-items: center;
-            gap: 12px;
-            text-decoration: none;
-            color: var(--text-main);
-            transition: opacity 0.2s;
+            gap: 8px;
+            padding: 4px 4px 6px 4px;
+            border-radius: 10px;
+            background: #ffffff;
+            /* box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04); */
+            transition: all 0.2s ease;
         }
-        .logo-group:hover { opacity: 0.8; }
+
+        .logo-container:hover {
+            transform: translateY(-1px);
+        }
 
         .logo-icon {
-            width: 40px; height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
             background: linear-gradient(135deg, #3b82f6, #2563eb);
-            border-radius: 12px;
-            display: flex; align-items: center; justify-content: center;
+            border-radius: 8px;
             color: white;
-            box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
+            flex-shrink: 0;
         }
 
-        .logo-text { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
-        .logo-text span { color: #3b82f6; }
+        .logo-text {
+            display: flex;
+            align-items: baseline;
+            gap: 3px;
+        }
+
+        .logo-name {
+            font-size: 17px;
+            font-weight: 700;
+            color: #1e293b;
+            letter-spacing: -0.01em;
+        }
+
+        .logo-subtitle {
+            font-size: 14px;
+            font-weight: 500;
+            color: #3b82f6;
+            letter-spacing: -0.01em;
+            position: relative;
+            padding-left: 6px;
+        }
+
+        .logo-subtitle::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 1.5px;
+            height: 12px;
+            background: linear-gradient(to bottom, #60a5fa, #3b82f6);
+            border-radius: 1px;
+            opacity: 0.7;
+        }
+        /* ------------------------------------- */
 
         .btn-cta {
-            background: linear-gradient(135deg, #4f46e5, #6366f1);
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
             color: white;
             padding: 10px 20px;
             border-radius: 99px;
@@ -119,6 +176,12 @@
             border-bottom: 1px solid var(--border); 
             display: flex;
             align-items: center;
+            justify-content: space-between;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
             gap: 16px;
         }
 
@@ -131,13 +194,18 @@
             flex-shrink: 0;
         }
 
-        .header-text { display: flex; flex-direction: column; gap: 2px; }
-        .header-title { font-size: 16px; font-weight: 700; color: var(--text-main); }
+        .header-text { display: flex; flex-direction: column; gap: 3px; }
+        .header-title { font-size: 17px; font-weight: 700; color: var(--text-main); }
+        
+        /* Modernized Badge (Neutral Color, Modern Font) */
         .header-subtitle {
-            font-size: 13px; color: var(--text-muted); font-weight: 500;
+            font-size: 13px; 
+            color: #64748b; /* Slate Gray */
+            font-weight: 500;
             display: flex; align-items: center; gap: 6px;
+            letter-spacing: 0.01em;
         }
-        .dot { width: 6px; height: 6px; background: #10b981; border-radius: 50%; }
+        .lock-icon { width: 13px; height: 13px; stroke-width: 2.5; }
 
         /* --- Content --- */
         .card-body {
@@ -154,6 +222,7 @@
             line-height: 1.8;
             color: var(--text-body);
             display: none;
+            font-family: 'Inter', system-ui, sans-serif;
         }
 
         /* Loading & Error */
@@ -177,97 +246,92 @@
         /* --- FOOTER --- */
         .card-footer {
             padding: 24px 40px;
-            background: #ffffff;
+            background: #fcfcfc;
             border-top: 1px solid var(--border);
             display: none; 
-            justify-content: space-between;
-            align-items: center;
+            flex-direction: column;
+            gap: 24px;
         }
 
-        /* Expiration Block */
-        .meta-group {
+        /* Action Buttons Grid */
+        .action-bar {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 12px;
+            width: 100%;
+        }
+
+        .btn-action {
             display: flex;
             align-items: center;
-            gap: 12px;
-        }
-.meta-icon-circle {
-    width: 40px; height: 40px;
-    background: #eef2ff;   /* Soft Indigo Background */
-    color: #4f46e5;        /* Vibrant Indigo Icon */
-    border-radius: 10px;   /* Modern Rounded Square */
-    display: flex; 
-    align-items: center; 
-    justify-content: center;
-    flex-shrink: 0;
-}
-        .meta-text {
-            display: flex; flex-direction: column;
-            line-height: 1.3;
-        }
-        .meta-label {
-            font-size: 11px;
-            font-weight: 700;
-            color: #94a3b8;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        .meta-value {
-            font-size: 14px;
-            font-weight: 600;
-            color: #1e293b;
-            font-feature-settings: "tnum"; 
-        }
-
-        /* NEW COPY BUTTON (Clean & Colorful Icon) */
-        .btn-copy {
-            background: #ffffff;
-            border: 1px solid #e2e8f0;
-            color: #334155;
-            padding: 11px 20px;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 16px;
             border-radius: 12px;
             font-weight: 600;
             font-size: 14px;
             cursor: pointer;
-            display: flex; align-items: center; gap: 10px;
             transition: all 0.2s ease;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-        }
-        
-        /* The Icon inside gets the specific color */
-        .btn-copy svg {
-            color: var(--primary); /* Indigo Icon */
-            transition: transform 0.2s;
+            border: 1px solid var(--border);
+            background: white;
+            color: var(--text-body);
         }
 
-        .btn-copy:hover {
-            border-color: #818cf8; /* Soft Indigo Border */
-            background: var(--primary-light); /* Soft Indigo BG */
+        /* Hover Blue tint */
+        .btn-action:hover {
+            border-color: #93c5fd; 
+            background: #eff6ff; 
             color: var(--primary-dark);
             transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.1);
+        }
+        
+        .btn-action:active { transform: translateY(0); }
+
+        .btn-action svg { width: 18px; height: 18px; color: var(--text-muted); transition: color 0.2s; }
+        .btn-action:hover svg { color: var(--primary); }
+
+        /* Primary Action (Copy) emphasis */
+        .btn-action.primary {
+            border-color: #bfdbfe;
+            background: #eff6ff;
+            color: var(--primary-dark);
+        }
+        .btn-action.primary svg { color: var(--primary); }
+        .btn-action.primary:hover {
+            border-color: #60a5fa;
+            background: #dbeafe;
         }
 
-        .btn-copy:active { transform: translateY(0); }
-
-        /* Success State */
-        .btn-copy.copied {
+        /* Success State for Copy */
+        .btn-action.primary.copied {
             background: var(--success-bg);
             border-color: var(--success-border);
             color: var(--success-text);
-            box-shadow: none;
         }
-        .btn-copy.copied svg {
-            color: var(--success-text);
+        .btn-action.primary.copied svg { color: var(--success-text); }
+
+        /* Expiration Meta - Bottom placement */
+        .meta-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            color: var(--text-muted);
+            font-size: 13px;
+            font-weight: 500;
+            background: transparent;
+            padding-top: 8px;
         }
+        .meta-container svg { width: 15px; height: 15px; color: #94a3b8; }
+
 
         @media (max-width: 600px) {
             body { padding: 20px 16px; }
             .card-header, .card-body, .card-footer { padding: 24px; }
-            .card-footer { flex-direction: column; gap: 20px; align-items: stretch; }
-            .meta-group { justify-content: center; text-align: left; }
-            .btn-copy { justify-content: center; width: 100%; }
+            .action-bar { grid-template-columns: 1fr; }
             .nav-header { flex-direction: column; gap: 20px; }
             .btn-cta { width: 100%; justify-content: center; }
+            .header-title { font-size: 14px; }
         }
     </style>
 </head>
@@ -275,13 +339,22 @@
 
     <!-- Top Navigation -->
     <header class="nav-header">
-        <a href="/" class="logo-group">
+        <a href="/" class="logo-link">
+          <div class="logo-container">
             <div class="logo-icon">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                </svg>
+              <!-- Exact Index.html Logo (20x20 in 32x32 container) -->
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M12 4L4 8V16L12 20L20 16V8L12 4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M12 12L8 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M12 12L16 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M8 14L12 16L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
             </div>
-            <div class="logo-text">Krypt<span>Note</span></div>
+            <div class="logo-text">
+              <span class="logo-name">Krypt</span>
+              <span class="logo-subtitle">Note</span>
+            </div>
+          </div>
         </a>
 
         <a href="/" class="btn-cta">
@@ -298,20 +371,27 @@
         
         <!-- Header -->
         <div class="card-header">
-            <div class="header-icon-box">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                    <line x1="16" y1="13" x2="8" y2="13"></line>
-                    <line x1="16" y1="17" x2="8" y2="17"></line>
-                    <polyline points="10 9 9 9 8 9"></polyline>
-                </svg>
-            </div>
-            <div class="header-text">
-                <div class="header-title">Shared Note</div>
-                <div class="header-subtitle">
-                    <span class="dot"></span>
-                    End-to-End Encrypted
+            <div class="header-left">
+                <!-- Blue Card Icon -->
+                <div class="header-icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                </div>
+                <div class="header-text">
+                    <div class="header-title">Shared Note</div>
+                    <!-- Modernized Badge (Neutral/Grey) -->
+                    <div class="header-subtitle">
+                        <svg class="lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        </svg>
+                        End-to-End Encrypted
+                    </div>
                 </div>
             </div>
         </div>
@@ -335,31 +415,47 @@
         <!-- Footer -->
         <div id="footer" class="card-footer">
             
-<!-- Valid Until Block -->
-<div class="meta-group">
-    <div class="meta-icon-circle">
-        <!-- New Calendar/Clock Icon -->
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-            <line x1="16" y1="2" x2="16" y2="6"></line>
-            <line x1="8" y1="2" x2="8" y2="6"></line>
-            <line x1="3" y1="10" x2="21" y2="10"></line>
-        </svg>
-    </div>
-    <div class="meta-text">
-        <span class="meta-label">Valid Until</span>
-        <span id="meta" class="meta-value">Loading...</span>
-    </div>
-</div>
+            <!-- 1. Buttons (Top of Footer) - Blue Theme -->
+            <div class="action-bar">
+                
+                <!-- Copy Button -->
+                <button id="copyBtn" class="btn-action primary">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    Copy Text
+                </button>
 
-            <!-- Copy Button (White with Indigo Icon) -->
-            <button id="copyBtn" class="btn-copy">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                <!-- Download Button -->
+                <button id="downloadBtn" class="btn-action">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Download
+                </button>
+
+                <!-- Raw Button -->
+                <button id="rawBtn" class="btn-action">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="16 18 22 12 16 6"></polyline>
+                        <polyline points="8 6 2 12 8 18"></polyline>
+                    </svg>
+                    View Raw
+                </button>
+
+            </div>
+
+            <!-- 2. Expiration Meta (Bottom of Footer) -->
+            <div class="meta-container">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
                 </svg>
-                Copy Content
-            </button>
+                <span id="meta">Loading expiration...</span>
+            </div>
         </div>
 
     </main>
@@ -381,7 +477,12 @@
         const loadingBox = document.getElementById('loading');
         const metaBox = document.getElementById('meta');
         const footer = document.getElementById('footer');
+        
         const copyBtn = document.getElementById('copyBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const rawBtn = document.getElementById('rawBtn');
+
+        let decryptedContent = "";
 
         function showError(title, message) {
             loadingBox.style.display = 'none';
@@ -412,14 +513,14 @@
                 ]);
 
                 const key = await importKeyFromUrl(keyStr);
-                const plaintext = await decryptBlob({
+                decryptedContent = await decryptBlob({
                     iv: b64ToArray(record.iv),
                     authTag: b64ToArray(record.authTag),
                     ciphertext: b64ToArray(record.encryptedBlob)
                 }, key);
 
                 loadingBox.style.display = 'none';
-                contentBox.textContent = plaintext;
+                contentBox.textContent = decryptedContent;
                 contentBox.style.display = 'block';
                 footer.style.display = 'flex';
 
@@ -428,12 +529,12 @@
                     const now = new Date();
                     if (now > exp) throw new Error("Expired");
                     
-                    // Format: 12/01/2026 22:02
+                    // Format: Expires: 13/01/2026 at 04:19
                     const dateStr = exp.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
                     const timeStr = exp.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-                    metaBox.textContent = `${dateStr} ${timeStr}`;
+                    metaBox.textContent = `Expires: ${dateStr} at ${timeStr}`;
                 } else {
-                    metaBox.textContent = "Permanent";
+                    metaBox.textContent = "Does not expire";
                 }
 
             } catch (err) {
@@ -450,9 +551,12 @@
             }
         }
 
+        // --- Action Handlers ---
+
+        // 1. Copy
         copyBtn.addEventListener('click', async () => {
             try {
-                await navigator.clipboard.writeText(contentBox.textContent);
+                await navigator.clipboard.writeText(decryptedContent);
                 
                 const originalHtml = copyBtn.innerHTML;
                 copyBtn.classList.add('copied');
@@ -468,7 +572,6 @@
                     copyBtn.innerHTML = originalHtml;
                 }, 2000);
             } catch (err) {
-                console.error("Copy failed:", err);
                 const range = document.createRange();
                 range.selectNode(contentBox);
                 window.getSelection().removeAllRanges();
@@ -476,6 +579,33 @@
                 document.execCommand("copy");
                 window.getSelection().removeAllRanges();
             }
+        });
+
+        // 2. Download
+        downloadBtn.addEventListener('click', () => {
+            if (!decryptedContent) return;
+            const blob = new Blob([decryptedContent], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const date = new Date().toISOString().slice(0, 10);
+            a.href = url;
+            a.download = `kryptnote-shared-${date}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        // 3. View Raw (Blob Logic)
+        rawBtn.addEventListener('click', () => {
+            if (!decryptedContent) return;
+            
+            // Create Blob to avoid about:blank issues
+            const blob = new Blob([decryptedContent], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            
+            // Open in new tab (natively treated as text file)
+            window.open(url, '_blank');
         });
 
         loadSharedNote();
