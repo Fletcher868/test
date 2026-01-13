@@ -1227,7 +1227,7 @@ html, body, #app {
   /* NEW LOOK: Main accent text color */
   color: #374151; 
   
-  padding: 16px; 
+  padding: 10px 38px 10px 8px; 
   text-align: center;
   
   /* Strong accent border on one side */
@@ -1243,8 +1243,46 @@ html, body, #app {
   white-space: normal;
   margin-top: auto; 
 }
+/* ... existing .sticky-bottom-box styles ... */
+.sticky-bottom-box {
+  /* Keep existing styles, add these lines: */
+  padding-right: 30px; /* Make space for the close button */
+  position: sticky;    /* Ensure it acts as an anchor for absolute children */
+}
 
+.footer-close-btn {
+  position: absolute;
+  right: 4px; /* Tucked closer to the edge */
+  top: 50%;
+  transform: translateY(-50%);
+  
+  /* Larger Hit Area & Icon */
+  width: 32px; 
+  height: 32px;
+  font-size: 24px; /* Bigger X */
+  
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  
+  /* Centering */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
 
+.footer-close-btn:hover {
+  color: #475569;
+  background: rgba(0, 0, 0, 0.05);
+}
+.pro-text {
+    padding-top: 4px;
+}
 /* Ensure links inside the box stand out */
 .sticky-bottom-box a {
     color: var(--accent1) !important; /* Use the main Indigo color */
