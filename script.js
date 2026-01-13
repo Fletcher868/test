@@ -2490,7 +2490,7 @@ function updateVersionFooter() {
     footerContent = `
       <div class="sign-in-text">Sign in to keep the last 7 days (free)</div>
       <div class="pro-text">
-        <a href="Pricing.html" style="color:var(--primary);text-decoration:none;">Go Pro</a> to keep every version forever</a>
+        <a href="Pricing.html" style="color:var(--primary);text-decoration:none;">Go Pro</a> for unlimited versions</a>
       </div>
     `;
   }
