@@ -44,114 +44,45 @@ html, body, #app {
   padding-top: 8px;
 }
 
-
 /* =========================================
-   COMPACT LOGO DESIGN
+   LOGO STYLE A: FLUSH STICKY NOTE
    ========================================= */
-
 .logo-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
   text-decoration: none;
-  color: inherit;
-  display: inline-block;
 }
 
-.logo-container {
-  display: flex;
-  align-items: center;
-  gap: 8px; /* Reduced from 10px */
-  padding: 4px 4px 6px 4px;
-  border-radius: 10px; /* Reduced from 12px */
-  background: #ffffff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
-  transition: all 0.2s ease;
-  max-width: 180px; /* Limit maximum width */
-}
-
-/* Hover effect */
-.logo-container:hover {
-  border-color: #3b82f6;
-  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.12);
-  transform: translateY(-1px);
-}
-
-/* Logo Icon - Smaller */
 .logo-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px; /* Reduced from 36px */
-  height: 32px; /* Reduced from 36px */
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-  border-radius: 8px; /* Reduced from 9px */
-  color: white;
+  height: 32px;
+  width: 32px;
+  color: #3b82f6; /* Primary Blue */
+  fill: currentColor;
+  transition: transform 0.2s ease;
   flex-shrink: 0;
 }
 
-/* Logo Text - Compact */
+.logo-link:hover .logo-icon {
+  transform: scale(1.1) rotate(-5deg);
+  color: #2563eb; /* Darker Blue */
+}
+
 .logo-text {
-  display: flex;
-  align-items: baseline;
-  gap: 3px; /* Reduced from 4px */
-  min-width: 0; /* Allow text to shrink */
-}
-
-.logo-name {
-  font-size: 17px; /* Reduced from 20px */
-  font-weight: 700; /* Changed from 800 */
-  color: #1e293b;
-  letter-spacing: -0.01em;
+  font-family: 'Inter', sans-serif;
+  font-size: 26px; /* Visual height match */
+  line-height: 1;
+  font-weight: 800;
+  color: #0f172a; /* Slate 900 */
+  letter-spacing: -0.04em;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 60px; /* Limit width */
 }
 
-.logo-subtitle {
-  font-size: 14px; /* Reduced from 16px */
-  font-weight: 500;
+.logo-text span {
   color: #3b82f6;
-  letter-spacing: -0.01em;
-  position: relative;
-  padding-left: 6px; /* Reduced from 8px */
-  white-space: nowrap;
 }
 
-/* Vertical separator - Smaller */
-.logo-subtitle::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 1.5px; /* Reduced from 2px */
-  height: 12px; /* Reduced from 14px */
-  background: linear-gradient(to bottom, #60a5fa, #3b82f6);
-  border-radius: 1px;
-  opacity: 0.7;
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-  .logo-container {
-    padding: 6px 10px;
-    gap: 6px;
-  }
-  
-  .logo-icon {
-    width: 28px;
-    height: 28px;
-  }
-  
-  .logo-name {
-    font-size: 15px;
-    max-width: 50px;
-  }
-  
-  .logo-subtitle {
-    font-size: 13px;
-    padding-left: 5px;
-  }
-}
 .new-btn {
   margin-left: auto;
   padding: 8px 10px;
@@ -172,10 +103,20 @@ html, body, #app {
 }
 
 /* If you want to keep the title visible, adjust layout */
+/* Sidebar Header with Elegant Separator */
 .sb-head {
   display: flex;
   align-items: center;
-  margin-bottom: 12px;
+  
+  /* Vertical Spacing */
+  padding-top: 6px;
+  padding-bottom: 18px; /* Space between logo and the line */
+  
+  /* The Separator Line */
+  border-bottom: 1px solid #f1f5f9; /* Very subtle slate color */
+  
+  /* Horizontal Adjustment */
+  margin-right: 8px;    /* Keeps the line from touching the right scrollbar edge */
 }
 
 /* Files List */
