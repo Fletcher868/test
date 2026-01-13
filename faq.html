@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -32,7 +31,7 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: var(--bg-body);
             color: var(--text-main);
             line-height: 1.5;
@@ -66,93 +65,43 @@
         }
         .nav-inner { width: 100%; display: flex; justify-content: space-between; align-items: center; }
         
-        /* --- COMPLEX LOGO STYLES (Copied from index.html) --- */
+        /* --- LOGO STYLE A (Updated) --- */
         .logo-link {
-          text-decoration: none;
-          color: inherit;
-          display: inline-block;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 32px;
+            text-decoration: none;
         }
 
-        .logo-container {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 4px 4px 6px 4px;
-          border-radius: 10px;
-          background: #ffffff;
-          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
-          transition: all 0.2s ease;
-          max-width: 180px;
+        .logo-icon {
+            height: 32px;
+            width: 32px;
+            color: #3b82f6; /* Primary Blue */
+            fill: currentColor;
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
         }
 
-        /* Hover effect */
-        .logo-container:hover {
-          border-color: #3b82f6;
-          box-shadow: 0 4px 10px rgba(59, 130, 246, 0.12);
-          transform: translateY(-1px);
+        .logo-link:hover .logo-icon {
+            transform: scale(1.1) rotate(-5deg);
+            color: #2563eb; /* Darker Blue */
         }
 
-        /* Logo Icon - Smaller */
-        .logo-icon-complex {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 32px;
-          height: 32px;
-          background: linear-gradient(135deg, #3b82f6, #2563eb);
-          border-radius: 8px;
-          color: white;
-          flex-shrink: 0;
-        }
-
-        /* Logo Text - Compact */
         .logo-text {
-          display: flex;
-          align-items: baseline;
-          gap: 3px;
-          min-width: 0;
+            font-family: 'Inter', sans-serif;
+            font-size: 26px; /* Visual height match */
+            line-height: 1;
+            font-weight: 800;
+            color: #0f172a; /* Slate 900 */
+            letter-spacing: -0.04em;
+            white-space: nowrap;
         }
 
-        .logo-name {
-          font-size: 17px;
-          font-weight: 700;
-          color: var(--text-main);
-          letter-spacing: -0.01em;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          max-width: 60px;
+        .logo-text span {
+            color: #3b82f6;
         }
-
-        .logo-subtitle {
-          font-size: 14px;
-          font-weight: 500;
-          color: #3b82f6;
-          letter-spacing: -0.01em;
-          position: relative;
-          padding-left: 6px;
-          white-space: nowrap;
-        }
-
-        /* Vertical separator */
-        .logo-subtitle::before {
-          content: '';
-          position: absolute;
-          left: 0;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 1.5px;
-          height: 12px;
-          background: linear-gradient(to bottom, #60a5fa, #3b82f6);
-          border-radius: 1px;
-          opacity: 0.7;
-        }
-        .logo-icon-complex svg {
-            stroke: white;
-            stroke-width: 2;
-            fill: none;
-        }
-        /* --- END COMPLEX LOGO STYLES --- */
+        /* ------------------------------------- */
 
         .nav-links { gap: 2rem; }
         .nav-links a { text-decoration: none; color: var(--text-muted); font-weight: 500; font-size: 0.95rem; transition: color 0.2s; }
@@ -206,27 +155,23 @@
         .copyright { color: #94a3b8; font-size: 0.875rem; }
         
     </style>
+    <!-- Google Fonts: Inter (Required for Logo) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 
     <!-- Navigation -->
     <nav>
         <div class="container nav-inner">
+            <!-- UPDATED LOGO: Style A -->
             <a href="index.html" class="logo-link">
-                <div class="logo-container">
-                    <div class="logo-icon-complex">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                            <path d="M12 4L4 8V16L12 20L20 16V8L12 4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M12 12L8 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                            <path d="M12 12L16 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                            <path d="M8 14L12 16L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                    </div>
-                    <div class="logo-text">
-                        <span class="logo-name">Krypt</span>
-                        <span class="logo-subtitle">Note</span>
-                    </div>
-                </div>
+                <svg class="logo-icon" viewBox="0 0 24 24">
+                    <path d="M19.003 7.503L14.505 3h-8.5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-11.5zm-5-2l2.5 2.5h-2.5v-2.5z" fill="currentColor"/>
+                    <path d="M8 11h8v2H8zm0 4h5v2H8z" fill="white"/>
+                </svg>
+                <div class="logo-text">Krypt<span>Note</span></div>
             </a>
             
             <div class="nav-links hidden-mobile items-center">
