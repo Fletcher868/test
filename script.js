@@ -29,7 +29,7 @@ let pb = null,
 let originalContent = '';
 let isSavingVersion = false;
 let recentlySavedLocally = new Set(); 
-let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') === 'false'; // Default to collapsed
+let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') === 'true'; // Default to collapsed
 let finalizeUIUpdateTimeout = null;
 let isFinalizingUI = false;
 let versionHistoryController = null;
