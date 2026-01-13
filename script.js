@@ -29,7 +29,7 @@ let pb = null,
 let originalContent = '';
 let isSavingVersion = false;
 let recentlySavedLocally = new Set(); 
-let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') === 'true'; // Default to collapsed
+let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') !== 'false';
 let finalizeUIUpdateTimeout = null;
 let isFinalizingUI = false;
 let versionHistoryController = null;
@@ -646,9 +646,7 @@ async function createFile() {
   const targetCategoryId = state.activeCategoryId;
 
   if (targetCategoryId === DEFAULT_CATEGORY_IDS.TRASH) {
-      showToast('Cannot create a new note in the Trash category. Switched to Work.', 3000);
-      state.activeCategoryId = DEFAULT_CATEGORY_IDS.WORK;
-      selectCategory(DEFAULT_CATEGORY_IDS.WORK, true);
+      showToast('Cannot create a new note in the Trash category.', 3000);
       return; 
   }
 
@@ -2469,6 +2467,11 @@ function updateProfileState() {
 }
 
 function updateVersionFooter() {
+  // 1. Check if user previously dismissed the footer
+  if (localStorage.getItem('kryptNote_dismissFooter') === 'true') {
+    return;
+  }
+
   const historyPanel = document.getElementById('version-history');
   if (!historyPanel) return;
 
@@ -2488,27 +2491,39 @@ function updateVersionFooter() {
 
   if (!pb.authStore.isValid) {
     footerContent = `
-      <div class="sign-in-text">Sign in to keep the last 7 days (free)</div>
+      <div class="sign-in-text">Sign in to keep the last 7 days</div>
       <div class="pro-text">
-        <a href="Pricing.html" style="color:var(--primary);text-decoration:none;">Go Pro</a> for unlimited versions</a>
+        <a href="Pricing.html" style="color:var(--accent1);text-decoration:none;">Go Pro</a> for unlimited versions
       </div>
     `;
   }
   else {
     footerContent = `
       <div class="pro-text">
-        <a href="Pricing.html" style="color:var(--primary);text-decoration:none;">Upgrade</a> to Restore all previous versions.
+        <a href="Pricing.html" style="color:var(--accent1);text-decoration:none;">Upgrade</a> to restore all previous versions.
       </div>
     `;
   }
 
+  // 2. Add the button HTML (×)
   const fullFooterHTML = `
     <div class="sticky-bottom-box" id="versionFooter">
       ${footerContent}
+      <button id="dismissFooterBtn" class="footer-close-btn" title="Dismiss">×</button>
     </div>
   `;
 
   historyPanel.insertAdjacentHTML('beforeend', fullFooterHTML);
+
+  // 3. Add Event Listener to Dismiss and Save to Storage
+  document.getElementById('dismissFooterBtn').addEventListener('click', (e) => {
+    e.stopPropagation(); // Prevent triggering any parent clicks
+    const footer = document.getElementById('versionFooter');
+    if (footer) footer.remove();
+    
+    // Save preference so it doesn't appear again on reload
+    localStorage.setItem('kryptNote_dismissFooter', 'true');
+  });
 }
 
 pBtn?.addEventListener('click', toggleDrop);
