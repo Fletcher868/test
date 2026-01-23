@@ -1,9 +1,10 @@
 import { encryptBlob, decryptBlob, arrayToB64, b64ToArray } from './crypto.js';
 
 /**
- * Save a new encrypted version snapshot.
+ * Save a new encrypted version snapshot with Editor Mode.
+ * @param {string} editorMode - 'plain' or 'rich'
  */
-export async function createVersionSnapshot(pb, derivedKey, fileId, content) {
+export async function createVersionSnapshot(pb, derivedKey, fileId, content, editorMode) {
   try {
     const { ciphertext, iv, authTag } = await encryptBlob(content, derivedKey);
 
@@ -13,9 +14,10 @@ export async function createVersionSnapshot(pb, derivedKey, fileId, content) {
       encryptedBlob: arrayToB64(ciphertext),
       iv: arrayToB64(iv),
       authTag: arrayToB64(authTag),
+      editor: editorMode || 'plain' // <--- Save the mode
     });
     
-    console.log('Version snapshot saved for file:', fileId);
+    console.log(`Version saved (${editorMode}) for file:`, fileId);
   } catch (err) {
     console.error('Failed to save version snapshot:', err);
   }
@@ -47,10 +49,13 @@ export async function getVersions(pb, derivedKey, fileId, signal) {
         } catch (decErr) {
           console.error('Version decryption error:', decErr);
         }
+        
+        // Return the object INCLUDING the editor mode
         return {
           id: r.id,
           created: r.created,
-          content,
+          content: content,
+          editor: r.editor // <--- Retrieve the mode
         };
       })
     );
