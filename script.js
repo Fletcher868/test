@@ -29,7 +29,7 @@ let isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; // Loa
 let previewMode = false;        
 let previewVersion = null;      
 let originalBeforePreview = ''; 
-const PB_URL = 'https://repeatedly-pleasant-elk.ngrok-free.app/';
+const PB_URL = 'https://nonpending-teisha-depletory.ngrok-free.dev/';
 let pb = null, 
     // UPDATE: Added categories and set default active category
     state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK }, 
