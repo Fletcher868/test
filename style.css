@@ -711,57 +711,9 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 6px;
+  padding: 0px 6px 6px 6px;
 }
 
-/* ================================================
-   TOP TOOLBAR
-   ================================================ */
-.toolbar-container { 
-  margin-bottom: 5px; 
-  position: relative;
-  border-right: 1px solid #e2e8f0; 
-}
-
-.toolbar-slider { 
-  height: 36px; 
-  width: 100%; 
-  overflow-x: auto;
-}
-
-.toolbar-panel {
-  display: flex; 
-  gap: 8px; 
-  align-items: center;
-  height: 36px;
-  min-width: min-content;
-}
-
-.toolbar-panel button {
-  padding: 6px 12px; 
-  border-radius: 8px;
-  border: 1px solid var(--border); 
-  background: var(--toolbar-bg);
-  cursor: pointer; 
-  font-size: 13px; 
-  height: 36px;
-  display: flex; 
-  align-items: center; 
-  flex-shrink: 0;
-  transition: all .2s ease;
-  box-shadow: 0 1px 2px rgba(0,0,0,.05);
-  white-space: nowrap;
-}
-
-.toolbar-panel button:hover {
-  background: rgba(99,102,241,.1);
-  box-shadow: 0 1px 4px rgba(0,0,0,.08);
-}
-
-.toolbar-panel button:active {
-  background: rgba(99,102,241,.2);
-  box-shadow: inset 0 1px 3px rgba(0,0,0,.08);
-}
 
 
 /* ================================================
@@ -834,9 +786,9 @@ html, body, #app {
 
 /* Hide button text on small screens, show only icons */
 @media (max-width: 1066px) {
-  .toolbar-panel button { padding: 6px 8px; }
-  .toolbar-panel button .btn-text { display: none; }
-  .toolbar-panel button .btn-icon { margin-right: 0; }
+  .plain-btn { padding: 6px 8px; }
+  .plain-btn .btn-text { display: none; }
+  .plain-btn .btn-icon { margin-right: 0; }
 }
 
 /* Scrollbars for toolbar */
@@ -1978,4 +1930,762 @@ html, body, #app {
 
 #shareResult {
   animation: fadeIn 0.3s ease;
+}
+
+/* ================================================
+   3. EDITOR CONTENT & TYPOGRAPHY
+   ================================================ */
+
+/* Wrapper for Tiptap to ensure it takes full height */
+.tiptap-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+}
+
+/* ProseMirror is the actual editable div from Tiptap */
+.ProseMirror {
+  flex: 1;
+  overflow-y: auto;
+  cursor: text;
+  
+  /* Match #textEditor base styles */
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 24px 32px; /* Slightly more padding for document feel */
+  
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.75;
+  color: #334155; /* Slate 700 */
+  
+  /* Match #textEditor shadows & transition */
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.03);
+  transition: all 0.2s ease;
+}
+
+/* --- THE FOCUS EFFECT (Matches Plain Text Editor) --- */
+.ProseMirror:focus {
+  outline: none;
+  box-shadow: 
+    0 0 0 3px rgba(99, 102, 241, 0.22),
+    0 2px 8px rgba(99, 102, 241, 0.12),
+    inset 0 1px 2px rgba(0,0,0,0.06);
+  border-color: rgba(99, 102, 241, 0.4);
+  transform: translateY(-1px);
+}
+
+/* Scrollbar styling for ProseMirror to match #textEditor */
+.ProseMirror::-webkit-scrollbar { width: 10px; }
+.ProseMirror::-webkit-scrollbar-track { background: transparent; }
+.ProseMirror::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.25);
+  border-radius: 6px;
+  border: 2px solid #fff;
+}
+.ProseMirror::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.4); }
+
+/* --- TYPOGRAPHY STYLES --- */
+
+.ProseMirror p { margin-bottom: 1em; }
+
+.ProseMirror h1 { font-size: 2em; font-weight: 800; color: #0f172a; margin-top: 1.2em; margin-bottom: 0.6em; line-height: 1.2; letter-spacing: -0.02em; }
+.ProseMirror h2 { font-size: 1.5em; font-weight: 700; color: #1e293b; margin-top: 1.2em; margin-bottom: 0.5em; letter-spacing: -0.01em; }
+.ProseMirror h3 { font-size: 1.25em; font-weight: 600; color: #334155; margin-top: 1em; margin-bottom: 0.5em; }
+
+.ProseMirror ul, .ProseMirror ol { padding-left: 1.5em; margin-bottom: 1em; color: #334155; }
+.ProseMirror li { margin-bottom: 0.25em; }
+
+.ProseMirror blockquote {
+  border-left: 4px solid #6366f1; /* Indigo Accent */
+  background: #f8fafc;
+  padding: 12px 16px;
+  border-radius: 0 8px 8px 0;
+  margin: 1.5em 0;
+  color: #475569;
+  font-style: italic;
+}
+
+.ProseMirror pre {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 16px;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  margin: 1.5em 0;
+  overflow-x: auto;
+}
+
+.ProseMirror code {
+  background: #f1f5f9;
+  color: #db2777; /* Pink 600 */
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9em;
+}
+
+.ProseMirror a { color: #2563eb; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; transition: color 0.2s; }
+.ProseMirror a:hover { color: #1d4ed8; }
+
+.ProseMirror img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+  margin: 1em 0;
+}
+
+/* Placeholder Styling */
+.ProseMirror p.is-editor-empty:first-child::before {
+  color: #94a3b8;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+/* ================================================
+   1. EDITOR LAYOUT & WRAPPERS (Flush Design)
+   ================================================ */
+
+/* 1. Reset the main container padding to 0 so the toolbar touches edges */
+.editor-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+/* 2. The wrapper for each mode (Plain vs Rich) */
+.editor-mode-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+}
+
+.editor-mode-wrapper.hidden {
+  display: none !important;
+}
+
+/* ================================================
+   TOP TOOLBAR
+   ================================================ */
+
+
+.toolbar-slider { 
+  height: 36px; 
+  width: 100%; 
+  overflow-x: auto;
+}
+
+.toolbar-panel {
+  display: flex; 
+  gap: 8px; 
+  align-items: center;
+  height: 36px;
+  min-width: min-content;
+}
+
+/* --- NEW: Specific Class for Plain Text Buttons --- */
+.plain-btn {
+  padding: 6px 12px; 
+  border-radius: 8px;
+  border: 1px solid var(--border); 
+  background: var(--toolbar-bg);
+  cursor: pointer; 
+  font-size: 13px; 
+  height: 36px;
+  display: flex; 
+  align-items: center; 
+  flex-shrink: 0;
+  transition: all .2s ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05);
+  white-space: nowrap;
+}
+
+.plain-btn:hover {
+  background: rgba(99,102,241,.1);
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+}
+
+.plain-btn:active {
+  background: rgba(99,102,241,.2);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.08);
+}
+
+/* ================================================
+   2. MODERN RICH TOOLBAR (Simple Template)
+   ================================================ */
+
+.toolbar-container {
+  z-index: 20;
+  flex-shrink: 0;
+  padding: 1px 0px;
+  margin-bottom: 5px;
+  position: relative;
+  border-right: none;
+  border-radius: 0 0 8px 8px;
+}
+.toolbar-slider {
+  width: 100%;
+  overflow: visible !important; /* Allow dropdowns to show */
+  padding: 4px 4px 4px 1px; /* top:4px, right:1px, bottom:4px, left:4px */
+  display: flex;
+  align-items: center;
+}
+
+/* Match .toolbar-panel sizing from Plain mode */
+.simple-toolbar {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  width: 100%;
+  gap: 8px; /* Consistent gap between groups */
+  padding: 4px;
+}
+/* Helper to push the last item to the right */
+.ml-auto {
+  margin-left: auto !important;
+}
+/* --- Buttons --- */
+.toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(226, 232, 240, 0.6);
+  background: #ffffff;
+  border-radius: 8px;
+  color: #4b5563;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  text-decoration: none;
+  box-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 1px 1px rgba(255, 255, 255, 0.8) inset;
+}
+
+.toolbar-btn:hover {
+  background: #f8fafc;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+  transform: translateY(-1px);
+  box-shadow: 
+    0 4px 10px rgba(59, 130, 246, 0.12),
+    0 1px 1px rgba(255, 255, 255, 0.8) inset;
+}
+
+.toolbar-btn.is-active {
+  background: linear-gradient(135deg, #eff6ff, #dbeafe);
+  color: #1d4ed8;
+  border-color: #93c5fd;
+  font-weight: 600;
+  box-shadow: 
+    0 2px 8px rgba(59, 130, 246, 0.2),
+    inset 0 1px 1px rgba(255, 255, 255, 0.6);
+}
+
+/* --- Vertical Divider --- */
+.simple-toolbar .divider {
+  width: 1px;
+  height: 20px;
+  background-color: #e2e8f0;
+  margin: 0 4px;
+}
+
+/* --- Heading Dropdown --- */
+.dropdown {
+  position: relative;
+  height: 36px;
+  display: flex;
+  align-items: center;
+}
+
+.dropdown-trigger {
+  width: auto !important;
+  height: 36px; /* Match buttons */
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 550;
+  color: #334155;
+  gap: 6px;
+  justify-content: space-between;
+  min-width: 90px;
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+}
+.dropdown-trigger:hover {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.dropdown-menu {
+  display: none; 
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  width: 140px;
+  z-index: 100;
+  padding: 4px;
+  flex-direction: column;
+}
+
+.dropdown.is-open .dropdown-menu {
+  display: flex;
+}
+
+.dropdown-item {
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #334155;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.dropdown-item:hover {
+  background: #f1f5f9;
+  color: #1d4ed8;
+}
+
+/* --- Color Picker Button --- */
+.color-wrapper {
+  position: relative; /* Essential for the input overlay */
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  
+  /* Reset fixed sizes so it matches other buttons */
+  width: auto !important;
+  height: auto !important;
+}
+.color-wrapper:hover {
+  background: rgba(99,102,241,.1);
+}
+.color-input {
+  position: absolute;
+  top: 0; left: 0; 
+  width: 100%; height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  border: none;
+}
+
+/* --- Switch Mode Button (Align with toolbar height) --- */
+.simple-toolbar .switch-mode-btn {
+  margin-left: auto !important; 
+  height: 36px; 
+  padding: 0 12px;
+  background: #ffffff;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.simple-toolbar .switch-mode-btn:hover {
+  background: #f8fafc;
+  color: #334155;
+  border-color: #cbd5e1;
+}
+/* =========================================
+   NEW MODERN BUTTON GROUPS (Tailwind-like)
+   ========================================= */
+
+/* The container for a set of merged buttons */
+.btn-group {
+  display: inline-flex;
+  vertical-align: middle;
+  /* Optional: Add shadow if you like, similar to the snippet's focus ring idea */
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  border-radius: 8px; /* rounded-lg */
+  margin-right: 8px; /* Space between groups */
+}
+
+/* The individual button styling */
+.btn-group-item {
+  position: relative;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px; /* gap-2 */
+  padding: 8px 12px; /* py-3 px-4 (adjusted slightly for toolbar height) */
+  background-color: #ffffff; /* bg-white */
+  border: 1px solid #e5e7eb; /* border-gray-200 */
+  color: #111827; /* text-gray-900 */
+  font-size: 14px; /* text-sm */
+  font-weight: 500; /* font-medium */
+  line-height: 1.5;
+  cursor: pointer;
+  margin-left: -1px; /* -ml-px (merges borders) */
+  transition: all 0.2s ease-in-out;
+  flex-shrink: 0;
+}
+
+/* First item in group: Round left corners */
+.btn-group-item:first-child {
+  margin-left: 0;
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+}
+
+/* Last item in group: Round right corners */
+.btn-group-item:last-child {
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+
+/* Hover State - Light Indigo Background + Darker Text */
+.btn-group-item:hover {
+  background-color: #eef2ff; /* Light Indigo background */
+  color: #4338ca;            /* Dark Indigo text */
+  border-color: #c7d2fe;     /* Light Indigo border */
+  z-index: 2;                /* Ensure border overlaps neighbors */
+}
+
+/* Force SVGs to change color on hover */
+.btn-group-item:hover svg, 
+.btn-group-item:hover svg path {
+  stroke: currentColor;      /* Uses the text color defined above */
+}
+
+/* Focus State - Fix: Use focus-visible to prevent sticky focus on click */
+.btn-group-item:focus {
+  outline: none; /* Removes default browser outline on click */
+}
+
+.btn-group-item:focus-visible {
+  z-index: 10;
+  outline: none;
+  border-color: #4f46e5; 
+  box-shadow: 0 0 0 2px #4f46e5; 
+}
+
+/* SVG Icon Sizing to match w-4 h-4 (16px) */
+.btn-group-item svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+/* Tools Dropdown adjustment for new button style */
+.tools-dropdown {
+  display: inline-flex;
+  margin-right: 8px;
+}
+/* =========================================
+   VERTICAL DROPDOWN BUTTONS (Tools Menu)
+   ========================================= */
+
+/* Override specific container styles if necessary to allow flush buttons */
+.tools-dropdown-content {
+  position: absolute;
+  top: calc(100% + 6px); /* Slight gap from button */
+  right: 0;
+  z-index: 100;
+  min-width: 240px;      /* Wider for better readability */
+  padding: 6px;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0; /* gray-200 */
+  border-radius: 12px;       /* rounded-xl */
+  box-shadow: 
+    0 4px 6px -1px rgba(0, 0, 0, 0.1), 
+    0 2px 4px -1px rgba(0, 0, 0, 0.06),
+    0 20px 25px -5px rgba(0, 0, 0, 0.1); /* Deep shadow */
+  animation: dropIn 0.1s ease-out;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The vertical button styling */
+.tool-vertical-btn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: #4b5563; /* gray-600 */
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+  gap: 12px;
+}
+
+/* Remove border from the last item */
+.tool-vertical-btn:last-child {
+  border-bottom: none;
+}
+
+/* Hover State - Light Indigo Background + Darker Text */
+.tool-vertical-btn:hover {
+  background-color: #f3f4f6; /* gray-100 */
+  color: #111827;            /* gray-900 */
+}
+
+/* Force SVGs to change color on hover */
+.tool-vertical-btn:hover svg,
+.tool-vertical-btn:hover svg path {
+  stroke: currentColor;
+}
+
+/* Focus State - Fix: Use focus-visible */
+.tool-vertical-btn:focus {
+  outline: none;
+}
+
+.tool-vertical-btn:focus-visible {
+  background-color: #f3f4f6;
+  color: #4f46e5;
+}
+
+.tool-vertical-btn:focus-visible svg {
+  stroke: #4f46e5;
+}
+
+/* Icon Styling inside vertical btn */
+.tool-vertical-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  flex-shrink: 0;
+}
+.mode-check-icon {
+  margin-left: auto; /* Push to far right */
+  opacity: 0;
+  transform: scale(0.8);
+  transition: all 0.2s;
+  color: #4f46e5; /* Indigo */
+}
+.tool-vertical-btn.selected {
+  background-color: #eef2ff; /* indigo-50 */
+  color: #4338ca;            /* indigo-700 */
+  font-weight: 600;
+}
+.tool-vertical-btn.selected .mode-check-icon {
+  opacity: 1;
+  transform: scale(1);
+}
+@keyframes dropIn {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* Override existing specific rules if they conflict */
+.tools-dropdown-content button {
+  margin: 0 !important; /* Reset margin from previous CSS */
+  border-radius: 0 !important;
+}
+/* =========================================
+   RICH TEXT TOOLBAR (Tailwind-like Blue Theme)
+   ========================================= */
+/* Prevent icons from capturing clicks/focus events */
+.rich-btn-item svg,
+.btn-group-item svg {
+  pointer-events: none;
+}
+/* Group Container */
+.rich-btn-group {
+  display: inline-flex;
+  vertical-align: middle;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  border-radius: 8px;
+  margin-right: 12px; /* Gap between groups */
+}
+
+/* Individual Button */
+.rich-btn-item {
+  position: relative;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px; /* Adjusted padding for better touch target */
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb; /* gray-200 */
+  color: #111827; /* gray-900 */
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-left: -1px;
+  transition: all 0.2s ease-in-out;
+  flex-shrink: 0;
+}
+
+/* Corner Rounding Logic */
+.rich-btn-item:first-child {
+  margin-left: 0;
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+}
+.rich-btn-item:last-child {
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+
+/* Hover State */
+.rich-btn-item:hover {
+  background-color: #f9fafb; /* gray-50 */
+  z-index: 2;
+}
+
+/* Active / Focus State (Blue Theme) */
+.rich-btn-item.is-active,
+.rich-btn-item:focus-visible {
+  background-color: #3b82f6; /* blue-500 */
+  color: #ffffff;            /* text-white */
+  border-color: #3b82f6;
+  z-index: 10;
+  outline: none;
+}
+
+/* SVG styling */
+.rich-btn-item svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+  stroke: currentColor; /* Inherits text color (gray or white) */
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Heading Dropdown Customization to match Rich Toolbar */
+.rich-dropdown-trigger {
+  border-radius: 8px !important; /* Standalone rounded */
+  min-width: 110px;
+  justify-content: space-between;
+}
+/* =========================================
+   TAILWIND-STYLE DROPDOWN ITEMS
+   ========================================= */
+
+/* The dropdown container styling (if not already set) */
+.dropdown-menu {
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb; /* border-gray-200 */
+  border-radius: 8px;        /* rounded-lg */
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); /* shadow-lg */
+  padding: 4px;              /* p-1 */
+  min-width: 160px;
+}
+
+/* The individual items */
+.dropdown-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  padding: 8px 12px;         /* py-2 px-3 */
+  font-size: 14px;           /* text-sm */
+  line-height: 1.25rem;
+  color: #000000;            /* text-gray-700 */
+  background-color: transparent;
+  border: none;
+  border-radius: 6px;        /* rounded-md */
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s;
+  font-weight: 400;
+}
+
+/* Hover State */
+.dropdown-item:hover {
+  background-color: #f3f4f6; /* bg-gray-100 */
+  color: #111827;            /* text-gray-900 */
+}
+
+/* Active/Focus State */
+.dropdown-item:focus {
+  outline: none;
+  background-color: #f3f4f6;
+  color: #4f46e5;            /* text-indigo-600 */
+}
+/* =========================================
+   RICH PREVIEW MODAL (INTERACTIVE SANDBOX)
+   ========================================= */
+
+/* The Editor Container inside the modal */
+.sandbox-editor-container {
+  display: flex; 
+  flex-direction: column; 
+  height: 450px; 
+  background: white; 
+  position: relative;
+  border-top: 1px solid #e2e8f0;
+}
+
+/* The actual editable area in the modal */
+#previewEditorBody {
+  flex: 1;
+  overflow-y: auto;
+  cursor: text;
+  background: #fff;
+}
+
+/* Make the TipTap instance fill the body */
+#previewEditorBody .ProseMirror {
+  min-height: 100%;
+  padding: 20px 30px 80px 30px; /* Bottom padding for footer */
+  outline: none;
+}
+
+/* Sticky Upgrade Footer */
+.sandbox-footer {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 12px 24px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(4px);
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 20;
+}
+
+.sandbox-text {
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 500;
+}
+/* Fix: Blue line on top for Rich Editor in Preview Mode */
+.ProseMirror.preview-mode {
+  border-top: 3px solid #3b82f6 !important;
+  border-top-left-radius: 4px; /* Slight adjustment to look good with the line */
+  border-top-right-radius: 4px;
 }
