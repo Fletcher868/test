@@ -5,7 +5,14 @@ import {
   encryptBlob, decryptBlob, randomSalt, arrayToB64, b64ToArray ,
   generateShareKey, exportKeyToUrl
 } from './crypto.js';
-
+import { Editor } from 'https://esm.sh/@tiptap/core@2.2.4';
+import StarterKit from 'https://esm.sh/@tiptap/starter-kit@2.2.4';
+import TextStyle from 'https://esm.sh/@tiptap/extension-text-style@2.2.4';
+import { Color } from 'https://esm.sh/@tiptap/extension-color@2.2.4';
+import Link from 'https://esm.sh/@tiptap/extension-link@2.2.4';
+import Image from 'https://esm.sh/@tiptap/extension-image@2.2.4';
+import TextAlign from 'https://esm.sh/@tiptap/extension-text-align@2.2.4';
+import Placeholder from 'https://esm.sh/@tiptap/extension-placeholder@2.2.4';
 import { initSettings } from './settings.js'; 
 import { createVersionSnapshot, getVersions } from './versions.js';
 import { setupExport } from './export.js'; 
@@ -17,7 +24,8 @@ const DEFAULT_CATEGORY_IDS = {
 };
 // NEW: Guest storage key and structure
 const GUEST_STORAGE_KEY = 'kryptNoteLocalData';
-
+let tiptapEditor = null;
+let isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; // Load preference
 let previewMode = false;        
 let previewVersion = null;      
 let originalBeforePreview = ''; 
@@ -34,6 +42,7 @@ let finalizeUIUpdateTimeout = null;
 let isFinalizingUI = false;
 let versionHistoryController = null;
 let uiUpdateQueued = false;
+let originalEditorMode = null;
 // ===================================================================
 // 1. GUEST STORAGE BACKEND (localStorage)
 // ===================================================================
@@ -57,27 +66,210 @@ const guestStorage = {
   }
 };
 
+
+// NEW: Key for logged-in user cache
+const USER_CACHE_KEY = 'kryptNote_userCache';
+
+// Helper: Save current state to local storage (for fast reload)
+function saveToUserCache() {
+  // Only cache if logged in
+  if (!pb.authStore.isValid) return;
+  
+  try {
+    const cacheData = {
+      files: state.files,
+      categories: state.categories,
+      activeId: state.activeId,
+      activeCategoryId: state.activeCategoryId,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(USER_CACHE_KEY, JSON.stringify(cacheData));
+  } catch (e) {
+    console.warn("Cache quota exceeded or disabled", e);
+  }
+}
+
+// Helper: Load from local storage immediately
+function loadFromUserCache() {
+  const data = localStorage.getItem(USER_CACHE_KEY);
+  if (!data) return false;
+
+  try {
+    const parsed = JSON.parse(data);
+    state.files = parsed.files || [];
+    state.categories = parsed.categories || [];
+    // Restore selection
+    state.activeId = parsed.activeId;
+    state.activeCategoryId = parsed.activeCategoryId || DEFAULT_CATEGORY_IDS.WORK;
+    return true;
+  } catch (e) {
+    console.error("Cache parse error", e);
+    return false;
+  }
+}
 // ===================================================================
 // POCKETBASE & AUTH
 // ===================================================================
+// --- RICH PREVIEW SANDBOX LOGIC ---
+let previewEditor = null;
+
+function initPreviewEditor() {
+  if (previewEditor) return;
+
+  previewEditor = new Editor({
+    element: document.getElementById('previewEditorBody'),
+    extensions: [
+      StarterKit,
+      TextStyle, 
+      Color,
+      Link.configure({ openOnClick: false }),
+      Image,
+      TextAlign.configure({ types: ['heading', 'paragraph'] }),
+    ],
+    content: `
+      <h3>Welcome to the Super Editor! 🚀</h3>
+      <p>This is a <strong>live demo</strong>. You can type here, use the toolbar, and see how it feels.</p>
+      <ul>
+        <li>Rich formatting with <code>code blocks</code></li>
+        <li>Lists, Quotes, and Headings</li>
+        <li><span style="color: #6366f1">Colors</span> and Images</li>
+      </ul>
+      <p style="text-align: center">Centered text support!</p>
+    `,
+  });
+
+  // Helper to wire buttons
+  const cmd = (id, callback) => {
+    const btn = document.getElementById(id);
+    if(btn) {
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        callback(previewEditor.chain().focus());
+      });
+    }
+  };
+
+  // --- Wire Up Buttons ---
+  cmd('prev_ttUndo', (c) => c.undo().run());
+  cmd('prev_ttRedo', (c) => c.redo().run());
+  cmd('prev_ttBold', (c) => c.toggleBold().run());
+  cmd('prev_ttItalic', (c) => c.toggleItalic().run());
+  cmd('prev_ttStrike', (c) => c.toggleStrike().run());
+  cmd('prev_ttCode', (c) => c.toggleCode().run()); // Added
+  
+  cmd('prev_ttAlignLeft', (c) => c.setTextAlign('left').run()); // Added
+  cmd('prev_ttAlignCenter', (c) => c.setTextAlign('center').run()); // Added
+  cmd('prev_ttAlignRight', (c) => c.setTextAlign('right').run()); // Added
+
+  cmd('prev_ttBullet', (c) => c.toggleBulletList().run());
+  cmd('prev_ttOrdered', (c) => c.toggleOrderedList().run());
+  cmd('prev_ttQuote', (c) => c.toggleBlockquote().run()); // Added
+
+  // --- Colors & Inserts ---
+  document.getElementById('prev_ttColor')?.addEventListener('input', (e) => {
+    previewEditor.chain().focus().setColor(e.target.value).run();
+  });
+
+  document.getElementById('prev_ttLink')?.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const url = window.prompt('Enter Link URL');
+    if (url) previewEditor.chain().focus().setLink({ href: url }).run();
+  });
+
+  document.getElementById('prev_ttImage')?.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const url = window.prompt('Enter Image URL');
+    if (url) previewEditor.chain().focus().setImage({ src: url }).run();
+  });
+
+  // --- Preview Dropdown Logic ---
+  const dropdown = document.getElementById('prev_headingDropdown');
+  const trigger = dropdown?.querySelector('.dropdown-trigger');
+  
+  if (dropdown && trigger) {
+      trigger.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          dropdown.classList.toggle('is-open');
+      });
+      dropdown.querySelectorAll('.dropdown-item').forEach(item => {
+          item.addEventListener('mousedown', (e) => {
+              e.preventDefault(); 
+              const level = parseInt(e.target.getAttribute('data-level'));
+              if (level === 0) previewEditor.chain().focus().setParagraph().run();
+              else previewEditor.chain().focus().toggleHeading({ level }).run();
+              dropdown.classList.remove('is-open');
+          });
+      });
+      window.addEventListener('mousedown', (e) => {
+          if (!dropdown.contains(e.target)) dropdown.classList.remove('is-open');
+      });
+  }
+}
+
+function showRichPreviewModal() {
+  const modal = document.getElementById('richPreviewModal');
+  modal.classList.remove('hidden');
+  
+  // Initialize the editor if it hasn't been yet
+  setTimeout(() => {
+    initPreviewEditor();
+    if(previewEditor) previewEditor.commands.focus();
+  }, 100);
+}
+
+// Close logic for Preview Modal
+document.getElementById('closeRichPreview')?.addEventListener('click', () => {
+  document.getElementById('richPreviewModal').classList.add('hidden');
+});
+document.getElementById('upgradeFromPreviewBtn')?.addEventListener('click', () => {
+  window.location.href = 'Pricing.html';
+});
 
 async function initPocketBase() {
+  // 1. Init PB
   pb = new PocketBase(PB_URL);
 
+  // 2. Setup Editors
+  initTiptap();
+  setupEditorSwitching();
+  applyEditorMode();
+  updateEditorModeUI(); 
+
+  // 3. OPTIMIZATION: Try to load Cache immediately (Instant Render)
+  if (pb.authStore.isValid) {
+      if (loadFromUserCache()) {
+          console.log("Loaded from local cache (Fast render)");
+          // Render immediately with cached data
+          renderFiles();
+          loadActiveToEditor();
+          
+          // Re-establish active file/tab info
+          const activeFile = state.files.find(f => f.id === state.activeId);
+          updateSidebarInfo(activeFile);
+          if(activeFile) updateVersionHistory(activeFile);
+      }
+  }
+
+  // 4. Refresh Auth Token
   if (pb.authStore.isValid) {
     try {
         await pb.collection('users').authRefresh();
-        console.log("User data refreshed from server.");
     } catch (err) {
         console.warn("Session expired:", err);
         pb.authStore.clear();
+        // If session died, clear the cache so we don't show secrets
+        localStorage.removeItem(USER_CACHE_KEY);
+        // Reload page or let it fall to guest mode logic
     }
   }
 
+  // 5. Network Sync (Background Update)
   if (pb.authStore.isValid) {
+    // This will fetch fresh data, decrypt it, and overwrite the cache/UI
     await restoreEncryptionKeyAndLoad();
     setupExport(pb, derivedKey, showToast);
   } else {
+    // Guest Mode
     loadUserFiles();
     updateProfileState();
     setupExport(pb, derivedKey, showToast);
@@ -225,7 +417,7 @@ function logout() {
   pb.authStore.clear();
   sessionStorage.removeItem('dataKey');
   derivedKey = null;
-
+  localStorage.removeItem(USER_CACHE_KEY); 
   // Fully reset state
   state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK };
   previewMode = false;
@@ -233,8 +425,14 @@ function logout() {
   originalBeforePreview = '';
   originalContent = '';
 
+  // Clear Plain Text Editor
   const editor = document.getElementById('textEditor');
   if (editor) editor.value = '';
+
+  // Clear Rich Text Editor
+  if (tiptapEditor) {
+      tiptapEditor.commands.setContent('');
+  }
   
   loadUserFiles();
 
@@ -512,7 +710,7 @@ async function loadUserFiles() {
       
       if (state.categories.length === 0) {
         state.categories = await createDefaultCategories();
-} else {
+      } else {
           // CRITICAL: Inject localId based on ICON, not Name.
           // This allows the user to rename "Work" to anything (e.g., "My Notes") 
           // while keeping it recognized as the system default.
@@ -593,6 +791,11 @@ async function loadUserFiles() {
       // Ensures a stable order when timestamps are the same.
       return b.id.localeCompare(a.id);
   });
+  
+  // --- CACHE UPDATE ---
+  // Save the fresh server data to local cache so the NEXT refresh is instant
+  saveToUserCache(); 
+  // --------------------
   
   // This is the single, final, authoritative UI update call for the load process.
   updateOriginalContent();
@@ -944,6 +1147,8 @@ async function saveFile(file) {
     guestStorage.saveData({ categories: state.categories, files: state.files });
     finalizeUIUpdate();
   }
+    saveToUserCache();
+
 }
 
 async function clearTrash() {
@@ -1730,17 +1935,53 @@ function showFileMenu(btn, id, name) {
 
 function loadActiveToEditor() {
   const f = state.files.find(x => x.id === state.activeId);
-  const editor = document.getElementById('textEditor');
-  
   const newContent = f ? f.content : '';
-  
-  // Only update the editor if the value has actually changed.
-  if (editor.value !== newContent) {
-    editor.value = newContent;
+
+  // --- STANDARD NOTES LOGIC ---
+  if (isUserPremium()) {
+    if (newContent.trim().startsWith('{"type":"doc"')) {
+      isRichMode = true;
+    } else if (newContent.trim().length > 0) {
+      isRichMode = false;
+    } else {
+      isRichMode = false; 
+    }
+  } else {
+    isRichMode = false;
   }
   
-  // CRITICAL FIX: Ensure originalContent is set based on the editor's actual value
-  // This is the content that *should* be in the file, preventing an immediate save on blur/next tick.
+  applyEditorMode(); 
+  updateEditorModeUI(); // Ensure dropdown label matches
+
+  // 1. Load Plain Text Editor
+  const textarea = document.getElementById('textEditor');
+  if (textarea.value !== newContent) {
+    textarea.value = newContent;
+  }
+
+  // 2. Load Rich Text Editor
+  if (tiptapEditor) {
+     if (!newContent) {
+         tiptapEditor.commands.setContent('');
+     } else {
+         try {
+             const json = JSON.parse(newContent);
+             tiptapEditor.commands.setContent(json);
+         } catch (e) {
+             // --- FIX: Manual JSON Construction for Preview/Background Load ---
+             const lines = newContent.split('\n');
+             const docStructure = {
+                 type: 'doc',
+                 content: lines.map(line => ({
+                     type: 'paragraph',
+                     content: line ? [{ type: 'text', text: line }] : [] 
+                 }))
+             };
+             tiptapEditor.commands.setContent(docStructure);
+         }
+     }
+  }
+  
   originalContent = newContent;
 }
 
@@ -1826,56 +2067,61 @@ function updateSidebarInfo(file = null) {
 
 async function saveVersionIfChanged() {
   const file = state.files.find(f => f.id === state.activeId);
-  const currentContent = document.getElementById('textEditor').value;
+  
+  // 1. Determine Content and Mode
+  let currentContent = '';
+  let versionMode = 'plain'; 
+
+  if (isRichMode && tiptapEditor) {
+      currentContent = JSON.stringify(tiptapEditor.getJSON());
+      versionMode = 'rich';
+  } else {
+      currentContent = document.getElementById('textEditor').value;
+      versionMode = 'plain';
+  }
 
   if (!file || currentContent === originalContent) return;
 
-  // CRITICAL FIX: If already saving, skip this call
-  if (isSavingVersion) {
-    console.log('Version save skipped: already saving.');
-    return;
-  }
-  
+  if (isSavingVersion) return;
   isSavingVersion = true;
 
   try {
     if (pb.authStore.isValid && derivedKey) {
-      await createVersionSnapshot(pb, derivedKey, file.id, currentContent); 
+      // Pass 'versionMode' 
+      await createVersionSnapshot(pb, derivedKey, file.id, currentContent, versionMode); 
     } else {
-      // --- GUEST MODE FIX ---
+      // Guest Mode
       if (!file.versions) file.versions = [];
       file.versions.unshift({
         id: `v_${Date.now()}_${Math.random().toString(36).substr(2,6)}`,
         created: new Date().toISOString(),
-        content: originalContent // <--- CHANGED: Save the "before" state
+        content: originalContent, 
+        editor: isRichMode ? 'rich' : 'plain'
       });
       if (file.versions.length > 50) file.versions.length = 50;
       guestStorage.saveData({ categories: state.categories, files: state.files });
     }
 
     originalContent = currentContent;
-    // CRITICAL FIX: Remove direct call to updateVersionHistory to prevent race condition.
-    // We now rely on finalizeUIUpdate (which calls updateVersionHistory) to handle the refresh.
-    finalizeUIUpdate();
+    
+    // --- FIX 1: Explicitly refresh the history list immediately ---
+    await updateVersionHistory(file); 
+    // --------------------------------------------------------------
 
   } catch (e) {
     console.error('Version save failed:', e);
   } finally {
-    // CRITICAL FIX: Ensure the flag is cleared on completion/error
     isSavingVersion = false;
   }
 }
 
-/**
- * Update the original content when a file is loaded
- */
 function updateOriginalContent() {
-  const file = state.files.find(f => f.id === state.activeId);
-  // CRITICAL FIX: Ensure originalContent is set based on the editor's current value
-  // after loadActiveToEditor has set it, making it the perfect match for the active file.
-  originalContent = document.getElementById('textEditor').value;
+  if (isRichMode && tiptapEditor) {
+      originalContent = JSON.stringify(tiptapEditor.getJSON());
+  } else {
+      originalContent = document.getElementById('textEditor').value;
+  }
 }
-
 
 async function updateVersionHistory(file = null) {
   const versionList = document.getElementById('versionList');
@@ -2011,36 +2257,119 @@ async function updateVersionHistory(file = null) {
   versionHistoryController = null; 
 }
 
-// 3. PREVIEW MODE HELPERS
 function enterPreviewMode(version) {
-  const editor = document.getElementById('textEditor');
+  // 1. Capture current state (if not already captured)
+  if (originalBeforePreview === '') {
+      if (isRichMode && tiptapEditor) {
+          originalBeforePreview = JSON.stringify(tiptapEditor.getJSON());
+      } else {
+          originalBeforePreview = document.getElementById('textEditor').value;
+      }
+      originalEditorMode = isRichMode; // Remember where we started
+  }
 
-  originalBeforePreview = editor.value;
+  // 2. Determine the mode of the VERSION
+  // Fallback: If 'editor' is missing (old data), guess based on content
+  let versionIsRich = false;
+  if (version.editor) {
+      versionIsRich = (version.editor === 'rich');
+  } else {
+      versionIsRich = version.content.trim().startsWith('{"type":"doc"');
+  }
 
-  editor.value = version.content;
+  // 3. Switch UI Containers specifically for this preview
+  const plainWrap = document.getElementById('plainWrapper');
+  const richWrap = document.getElementById('richWrapper');
 
-  editor.disabled = true;
-  editor.classList.add('preview-mode');
+  if (versionIsRich) {
+      // HIDE Plain, SHOW Rich
+      plainWrap.classList.add('hidden');
+      richWrap.classList.remove('hidden');
+      
+      // Load content into TipTap
+      try {
+          const json = JSON.parse(version.content);
+          tiptapEditor.commands.setContent(json);
+      } catch(e) {
+          // If JSON parse fails, wrap text
+          tiptapEditor.commands.setContent(`<p>${version.content}</p>`);
+      }
+      
+      tiptapEditor.setEditable(false); // Lock it
+      document.querySelector('.ProseMirror').classList.add('preview-mode');
+      
+  } else {
+      // HIDE Rich, SHOW Plain
+      richWrap.classList.add('hidden');
+      plainWrap.classList.remove('hidden');
+      
+      // Load content into Textarea
+      const textarea = document.getElementById('textEditor');
+      textarea.value = version.content;
+      textarea.disabled = true; // Lock it
+      textarea.classList.add('preview-mode');
+  }
 
   createPreviewBanner(version.created);
 
   previewMode = true;
-  previewVersion = version;
+  previewVersion = version; // Store entire object (contains .editor)
 }
 
 function exitPreviewMode() {
-  const editor = document.getElementById('textEditor');
+  // 1. Restore the Global Mode Flag
+  isRichMode = originalEditorMode; 
+  applyEditorMode(); // Show the correct wrapper (Plain or Rich)
+
+  // 2. Restore Content Variables
+  if (isRichMode) {
+      try {
+          const json = JSON.parse(originalBeforePreview);
+          tiptapEditor.commands.setContent(json);
+      } catch(e) {
+          // Fallback if original wasn't JSON
+          const lines = originalBeforePreview.split('\n');
+          const docStructure = {
+              type: 'doc',
+              content: lines.map(line => ({
+                  type: 'paragraph',
+                  content: line ? [{ type: 'text', text: line }] : [] 
+              }))
+          };
+          tiptapEditor.commands.setContent(docStructure);
+      }
+  } else {
+      const textarea = document.getElementById('textEditor');
+      textarea.value = originalBeforePreview;
+  }
+
+  // 3. UNIVERSAL CLEANUP (The Fix)
+  // We explicitly unlock AND clean BOTH editors, no matter which one is active.
+  
+  // A. Clean Plain Editor
+  const textarea = document.getElementById('textEditor');
+  textarea.disabled = false; 
+  textarea.classList.remove('preview-mode');
+
+  // B. Clean Rich Editor
+  if (tiptapEditor) {
+      tiptapEditor.setEditable(true); // Unlock editing
+      
+      // Find the DOM element and remove the blue border class
+      const proseMirror = document.querySelector('.ProseMirror');
+      if (proseMirror) {
+          proseMirror.classList.remove('preview-mode');
+      }
+  }
+
+  // 4. Remove Banner
   const banner = document.getElementById('previewBanner');
-
-  editor.value = originalBeforePreview;
-
-  editor.disabled = false;
-  editor.classList.remove('preview-mode');
-
   if (banner) banner.remove();
 
+  // 5. Reset State Variables
   previewMode = false;
   previewVersion = null;
+  originalBeforePreview = ''; 
 }
 
 function createPreviewBanner(date) {
@@ -2057,7 +2386,17 @@ function createPreviewBanner(date) {
     </div>
   `;
 
-  document.querySelector('.editor-left').appendChild(banner);
+  // --- FIX 2: Append to the CURRENTLY VISIBLE editor container ---
+  // We look for the wrapper that does NOT have the 'hidden' class
+  const activeWrapper = document.querySelector('.editor-mode-wrapper:not(.hidden) .editor-left');
+  
+  if (activeWrapper) {
+      activeWrapper.appendChild(banner);
+  } else {
+      // Fallback (Should rarely happen)
+      document.querySelector('.editor-left').appendChild(banner);
+  }
+  // -------------------------------------------------------------
 
   banner.querySelector('#restoreBtn').onclick = handleRestore;
   banner.querySelector('#cancelBtn').onclick = () => {
@@ -2105,30 +2444,64 @@ async function handleRestore() {
   const banner = document.getElementById('previewBanner');
 
   try {
-    if (originalBeforePreview !== originalContent) {
-      await createVersionSnapshot(pb, derivedKey, file.id, originalBeforePreview);
+    // 1. Save a snapshot of the state we are overwriting (Safety)
+    if (originalBeforePreview !== '') {
+        // Save using the ORIGINAL mode
+        await createVersionSnapshot(
+            pb, 
+            derivedKey, 
+            file.id, 
+            originalBeforePreview, 
+            originalEditorMode ? 'rich' : 'plain'
+        );
     }
 
-    editor.value = previewVersion.content;
+    // 2. Determine the mode of the version we are restoring
+    const targetModeIsRich = (previewVersion.editor === 'rich') || 
+                             (!previewVersion.editor && previewVersion.content.trim().startsWith('{"type":"doc"'));
+
+    // 3. Update Global State
+    isRichMode = targetModeIsRich;
+    
+    // 4. Update File Content in Memory
     file.content = previewVersion.content;
     file.updated = new Date().toISOString();
 
-    await saveFile(file);
+    // 5. Update UI (Toolbars, Wrappers, Dropdowns)
+    updateEditorModeUI(); 
 
+    // 6. Populate the Correct Editor & Save
+    if (isRichMode) {
+        // We are now in Rich Mode
+        const json = JSON.parse(previewVersion.content);
+        tiptapEditor.commands.setContent(json);
+        tiptapEditor.setEditable(true); // Unlock
+        
+        // Auto-save the restored content
+        handleAutoSave(JSON.stringify(tiptapEditor.getJSON()));
+        
+        document.querySelector('.ProseMirror').classList.remove('preview-mode');
+    } else {
+        // We are now in Plain Mode
+        editor.value = previewVersion.content;
+        editor.disabled = false; // Unlock
+        
+        // Auto-save
+        editor.dispatchEvent(new Event('input'));
+        
+        editor.classList.remove('preview-mode');
+    }
+
+    // 7. Cleanup
     originalContent = previewVersion.content;
-    updateOriginalContent();
-
-    editor.disabled = false;
-    editor.classList.remove('preview-mode');
-
     if (banner) banner.remove();
-
     previewMode = false;
     previewVersion = null;
+    originalBeforePreview = '';
 
-    finalizeUIUpdate(); 
-
-    showToast('Restored!', 2000);
+    // Refresh Sidebar History to show the new "Backup" we just made
+    await updateVersionHistory(file);
+    showToast('Version restored successfully!', 2000);
 
   } catch (error) {
     console.error('Restore failed:', error);
@@ -2646,6 +3019,369 @@ if (shareModal) {
             hideShareModal();
         }
     });
+}
+
+// ===================================================================
+// TIPTAP & SWITCHING LOGIC
+// ===================================================================
+
+function initTiptap() {
+  tiptapEditor = new Editor({
+    element: document.getElementById('tiptapEditor'),
+    extensions: [
+      StarterKit,
+      TextStyle, 
+      Color, 
+      Link.configure({ openOnClick: false }),
+      Image, 
+      Placeholder.configure({ placeholder: 'Write rich text...' }),
+      // --- FIX: Add TextAlign Extension ---
+      TextAlign.configure({
+        types: ['heading', 'paragraph'],
+      }),
+    ],
+    content: '',
+    onUpdate: ({ editor }) => {
+      updateTiptapToolbar(editor);
+      const json = JSON.stringify(editor.getJSON());
+      handleAutoSave(json);
+    },
+    onSelectionUpdate: ({ editor }) => updateTiptapToolbar(editor),
+    onBlur: async () => {
+        if(isRichMode) await saveVersionIfChanged();
+    }
+  });
+  
+  setupTiptapButtons();
+}
+
+function setupEditorSwitching() {
+  // 1. Toggle the Dropdown Menus
+  const triggers = document.querySelectorAll('#editorModeTrigger');
+  const dropdowns = document.querySelectorAll('#editorModeDropdown');
+
+  triggers.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Toggle the specific dropdown next to the button clicked
+      const menu = btn.nextElementSibling;
+      // Hide others first
+      dropdowns.forEach(d => { if(d !== menu) d.classList.add('hidden'); });
+      menu.classList.toggle('hidden');
+    });
+  });
+
+  // Close menus on outside click
+  window.addEventListener('click', () => {
+    dropdowns.forEach(d => d.classList.add('hidden'));
+  });
+
+  // 2. Handle Option Clicks
+  const options = document.querySelectorAll('.mode-option');
+  const textarea = document.getElementById('textEditor');
+
+  options.forEach(opt => {
+    opt.addEventListener('click', () => {
+      const targetMode = opt.getAttribute('data-mode');
+
+      // --- CASE A: SWITCHING TO RICH ---
+  if (targetMode === 'rich') {
+        if (!isUserPremium()) {
+           showRichPreviewModal(); 
+           return; 
+        }
+
+        if (isRichMode) return; 
+
+        const raw = textarea.value;
+        
+        try {
+           // 1. Try to parse as existing JSON (in case it was hidden code)
+           const json = JSON.parse(raw);
+           // Safety check: ensure it's actually a TipTap doc
+           if (json.type === 'doc') {
+               tiptapEditor.commands.setContent(json);
+           } else {
+               throw new Error("Not a doc");
+           }
+        } catch(e) {
+           // 2. ROBUST FALLBACK: Convert Plain Text lines -> TipTap JSON Paragraphs
+           // This avoids HTML parsing issues entirely.
+           const lines = raw.split('\n');
+           const docStructure = {
+               type: 'doc',
+               content: lines.map(line => ({
+                   type: 'paragraph',
+                   // If line has text, create a text node. If empty, empty array (creates blank line)
+                   content: line ? [{ type: 'text', text: line }] : [] 
+               }))
+           };
+           tiptapEditor.commands.setContent(docStructure);
+        }
+
+        isRichMode = true;
+        updateEditorModeUI();
+        handleAutoSave(JSON.stringify(tiptapEditor.getJSON()));
+      }
+
+      // --- CASE B: SWITCHING TO PLAIN ---
+      else if (targetMode === 'plain') {
+        if (!isRichMode) return; // Already active
+
+        // Warning
+        if(!confirm("Switching to Plain Text will remove all formatting (images, colors). Continue?")) return;
+
+        // Convert
+        const cleanText = tiptapEditor.getText({ blockSeparator: "\n" });
+        textarea.value = cleanText;
+
+        isRichMode = false;
+        updateEditorModeUI();
+        textarea.dispatchEvent(new Event('input'));
+      }
+    });
+  });
+  
+  // Initial UI Update
+  updateEditorModeUI();
+}
+
+function updateEditorModeUI() {
+  // 1. Switch the main editor wrappers
+  applyEditorMode(); 
+
+  // 2. Update the Toolbar Button Label
+  const labelText = isRichMode ? "Super Editor" : "Plain Text";
+  document.querySelectorAll('.current-mode-label').forEach(el => el.textContent = labelText);
+
+  // 3. STRICT CHECKMARK UPDATE
+  const allOptions = document.querySelectorAll('.mode-option');
+  
+  // Step A: Reset ALL options first (Fixes "Both Selected" bug)
+  allOptions.forEach(btn => btn.classList.remove('selected'));
+
+  // Step B: Select ONLY the correct ones based on current state
+  allOptions.forEach(btn => {
+    const mode = btn.getAttribute('data-mode');
+    
+    if (isRichMode && mode === 'rich') {
+        btn.classList.add('selected');
+    } 
+    else if (!isRichMode && mode === 'plain') {
+        btn.classList.add('selected');
+    }
+  });
+
+  // 4. Save preference
+  localStorage.setItem('kryptNote_editorMode', isRichMode ? 'rich' : 'plain');
+  
+  // 5. Toggle Premium Body Class (for styling locks)
+  if (isUserPremium()) {
+    document.body.classList.add('is-premium');
+  } else {
+    document.body.classList.remove('is-premium');
+  }
+}
+
+function applyEditorMode() {
+  const plainWrap = document.getElementById('plainWrapper');
+  const richWrap = document.getElementById('richWrapper');
+  
+  if (isRichMode) {
+    plainWrap.classList.add('hidden');
+    richWrap.classList.remove('hidden');
+    setTimeout(() => tiptapEditor?.commands.focus(), 0);
+  } else {
+    richWrap.classList.add('hidden');
+    plainWrap.classList.remove('hidden');
+    setTimeout(() => document.getElementById('textEditor').focus(), 0);
+  }
+}
+
+function updateTiptapToolbar(editor) {
+  const set = (id, active) => {
+    const btn = document.getElementById(id);
+    if(btn) btn.classList.toggle('is-active', active);
+  };
+
+  // Standard Buttons
+  set('ttBold', editor.isActive('bold'));
+  set('ttItalic', editor.isActive('italic'));
+  set('ttStrike', editor.isActive('strike'));
+  set('ttCode', editor.isActive('code'));
+  set('ttBullet', editor.isActive('bulletList'));
+  set('ttOrdered', editor.isActive('orderedList'));
+  set('ttQuote', editor.isActive('blockquote'));
+  set('ttLink', editor.isActive('link'));
+  
+  // Alignment
+  set('ttAlignLeft', editor.isActive({ textAlign: 'left' }));
+  set('ttAlignCenter', editor.isActive({ textAlign: 'center' }));
+  set('ttAlignRight', editor.isActive({ textAlign: 'right' }));
+  
+  // Color
+  const colorInput = document.getElementById('ttColor');
+  if(colorInput && editor.getAttributes('textStyle').color) {
+      colorInput.value = editor.getAttributes('textStyle').color;
+  }
+
+  // Heading Dropdown Label
+  const currentLabel = document.getElementById('currentHeading');
+  if (currentLabel) {
+    if (editor.isActive('heading', { level: 1 })) currentLabel.textContent = 'Heading 1';
+    else if (editor.isActive('heading', { level: 2 })) currentLabel.textContent = 'Heading 2';
+    else if (editor.isActive('heading', { level: 3 })) currentLabel.textContent = 'Heading 3';
+    else currentLabel.textContent = 'Normal';
+  }
+}
+
+function setupTiptapButtons() {
+  
+  // 1. Specialized Handler for History (Undo/Redo)
+  const setupHistoryBtn = (id, action) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault(); // STOP focus loss
+      e.stopPropagation(); // Stop bubbling
+      
+      // Force focus back to editor immediately
+      tiptapEditor.view.focus();
+      
+      // Execute command
+      if (action === 'undo') {
+        tiptapEditor.commands.undo();
+      } else {
+        tiptapEditor.commands.redo();
+      }
+    });
+  };
+
+  setupHistoryBtn('ttUndo', 'undo');
+  setupHistoryBtn('ttRedo', 'redo');
+
+  // 2. General Handler for Formatting (Bold, Italic, etc.)
+  const cmd = (id, callback) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault(); // Stop focus loss
+      // Chain allows keeping selection state valid
+      callback(tiptapEditor.chain().focus()); 
+    });
+  };
+
+  // --- FORMATTING ---
+  cmd('ttBold', (chain) => chain.toggleBold().run());
+  cmd('ttItalic', (chain) => chain.toggleItalic().run());
+  cmd('ttStrike', (chain) => chain.toggleStrike().run());
+  cmd('ttCode', (chain) => chain.toggleCode().run());
+
+  // --- ALIGNMENT ---
+  cmd('ttAlignLeft', (chain) => chain.setTextAlign('left').run());
+  cmd('ttAlignCenter', (chain) => chain.setTextAlign('center').run());
+  cmd('ttAlignRight', (chain) => chain.setTextAlign('right').run());
+
+  // --- LISTS & QUOTES ---
+  cmd('ttBullet', (chain) => chain.toggleBulletList().run());
+  cmd('ttOrdered', (chain) => chain.toggleOrderedList().run());
+  cmd('ttQuote', (chain) => chain.toggleBlockquote().run());
+
+  // --- SPECIAL INPUTS ---
+  
+  // Color Picker (FIXED)
+  const colorInput = document.getElementById('ttColor');
+  if (colorInput) {
+      // 1. Intercept the click to prevent the editor from losing focus (and selection)
+      colorInput.addEventListener('mousedown', (e) => {
+          e.preventDefault(); 
+          // Manually trigger the click after a tiny delay so the browser opens the picker
+          // without blurring the text editor field.
+          setTimeout(() => {
+             colorInput.click();
+          }, 10);
+      });
+
+      // 2. Apply the color
+      colorInput.addEventListener('input', (e) => {
+          tiptapEditor.chain().focus().setColor(e.target.value).run();
+      });
+  }
+  
+  // Link
+  document.getElementById('ttLink')?.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const previousUrl = tiptapEditor.getAttributes('link').href;
+    setTimeout(() => {
+        const url = window.prompt('URL', previousUrl);
+        if (url === null) return;
+        if (url === '') {
+            tiptapEditor.chain().focus().extendMarkRange('link').unsetLink().run();
+        } else {
+            tiptapEditor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+        }
+    }, 10);
+  });
+  
+  // Image
+  document.getElementById('ttImage')?.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    setTimeout(() => {
+        const url = window.prompt('Image URL');
+        if (url) {
+            tiptapEditor.chain().focus().setImage({ src: url }).run();
+        }
+    }, 10);
+  });
+
+  // --- HEADING DROPDOWN ---
+  const dropdown = document.getElementById('headingDropdown');
+  const trigger = dropdown?.querySelector('.dropdown-trigger');
+  
+  if (dropdown && trigger) {
+      trigger.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          dropdown.classList.toggle('is-open');
+      });
+
+      dropdown.querySelectorAll('.dropdown-item').forEach(item => {
+          item.addEventListener('mousedown', (e) => {
+              e.preventDefault(); 
+              const level = parseInt(e.target.getAttribute('data-level'));
+              if (level === 0) {
+                  tiptapEditor.chain().focus().setParagraph().run();
+              } else {
+                  tiptapEditor.chain().focus().toggleHeading({ level }).run();
+              }
+              dropdown.classList.remove('is-open');
+          });
+      });
+
+      window.addEventListener('mousedown', (e) => {
+          if (!dropdown.contains(e.target)) dropdown.classList.remove('is-open');
+      });
+  }
+}
+
+document.getElementById('textEditor')?.addEventListener('input', (e) => {
+  if (!isRichMode) {
+      handleAutoSave(e.target.value);
+  }
+});
+
+function handleAutoSave(newContent) {
+  const file = state.files.find(f => f.id === state.activeId);
+  if (!file) return;
+
+  if (file.content !== newContent) {
+      file.content = newContent;
+      file.updated = new Date().toISOString();
+      clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => saveFile(file), 800);
+      updateSidebarInfo(file); // assuming you have this function
+  }
 }
 
 function openShareModal(fileId) {
