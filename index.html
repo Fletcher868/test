@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>KryptNote | End-to-End Encrypted Notes</title>
   <link rel="stylesheet" href="style.css" />
+<link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
   <!-- Favicon -->
  <link rel="icon" type="image/png" href="/favicon/favicon-96x96.png" sizes="96x96" />
 <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg" />
@@ -211,90 +212,304 @@
    <!-- Workspace -->
     <main class="workspace">
       
-      <!-- LEFT: Toolbar + Editor (ONE container, full height) -->
-      <div class="editor-container">
-        
+<!-- LEFT: Toolbar + Editor (ONE container, full height) -->
+<div class="editor-container">
+
+  <!-- === MODE 1: PLAIN TEXT (Your Existing Setup) === -->
+<!-- === MODE 1: PLAIN TEXT === -->
+  <div id="plainWrapper" class="editor-mode-wrapper">
     <!-- TOOLBAR -->
+<!-- TOOLBAR -->
     <div class="toolbar-container">
       <div class="toolbar-slider">
-        <!-- Default Panel -->
-        <div class="toolbar-panel default-panel">
-          <button id="undoBtn" title="Undo">
+        
+        <!-- GROUP 1: Undo / Redo -->
+        <div class="btn-group">
+          <button id="undoBtn" class="btn-group-item" title="Undo">
             <svg class="btn-icon"><use href="#icon-undo"/></svg>
             <span class="btn-text">Undo</span>
           </button>
-          <button id="redoBtn" title="Redo">
+          <button id="redoBtn" class="btn-group-item" title="Redo">
             <svg class="btn-icon"><use href="#icon-redo"/></svg>
             <span class="btn-text">Redo</span>
           </button>
-          <button id="copyBtn" title="Copy">
-            <svg class="btn-icon"><use href="#icon-copy"/></svg>
+        </div>
+
+        <!-- GROUP 2: Clipboard (With NEW ICONS) -->
+        <div class="btn-group">
+          <!-- Copy -->
+          <button id="copyBtn" class="btn-group-item" title="Copy">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M8.66667 15.3333V19.3333C8.66667 20.8061 9.86057 22 11.3333 22H19.3333C20.8061 22 22 20.8061 22 19.3333V11.3333C22 9.86057 20.8061 8.66667 19.3333 8.66667H15.3333M4.66667 15.3333H12.6667C14.1394 15.3333 15.3333 14.1394 15.3333 12.6667V4.66667C15.3333 3.19391 14.1394 2 12.6667 2H4.66667C3.19391 2 2 3.19391 2 4.66667V12.6667C2 14.1394 3.19391 15.3333 4.66667 15.3333Z" stroke="#111827" stroke-width="1.6" stroke-linecap="round" class="my-path"></path>
+            </svg>
             <span class="btn-text">Copy</span>
           </button>
-          <button id="cutBtn" title="Cut">
-            <svg class="btn-icon"><use href="#icon-cut"/></svg>
+
+          <!-- Cut -->
+          <button id="cutBtn" class="btn-group-item" title="Cut">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M8.52464 15.8155C9.58965 17.0908 9.4241 18.9922 8.15487 20.0624C6.88565 21.1325 4.99338 20.9661 3.92838 19.6908C2.86337 18.4155 3.02892 16.5141 4.29815 15.4439C5.56737 14.3738 7.45964 14.5401 8.52464 15.8155ZM8.52464 15.8155L19.2493 6.77307" stroke="#111827" stroke-width="1.6" stroke-linecap="round" class="my-path"></path>
+              <path d="M8.71703 8.18449C7.65202 9.45984 5.75975 9.62619 4.49053 8.55605C3.22131 7.48591 3.05575 5.58452 4.12076 4.30917C5.18576 3.03383 7.07803 2.86748 8.34726 3.93762C9.61648 5.00776 9.78203 6.90915 8.71703 8.18449ZM8.71703 8.18449L19.4416 17.2269" stroke="#111827" stroke-width="1.6" stroke-linecap="round" class="my-path"></path>
+              <path d="M17 12H19M21 12H22" stroke="#111827" stroke-width="1.6" stroke-linecap="round" class="my-path"></path>
+            </svg>
             <span class="btn-text">Cut</span>
           </button>
-          <button id="pasteBtn" title="Paste">
-            <svg class="btn-icon"><use href="#icon-paste"/></svg>
+
+          <!-- Paste -->
+          <button id="pasteBtn" class="btn-group-item" title="Paste">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M20 8.25V18C20 21 18.21 22 16 22H8C5.79 22 4 21 4 18V8.25C4 5 5.79 4.25 8 4.25C8 4.87 8.24997 5.43 8.65997 5.84C9.06997 6.25 9.63 6.5 10.25 6.5H13.75C14.99 6.5 16 5.49 16 4.25C18.21 4.25 20 5 20 8.25Z" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M16 4.25C16 5.49 14.99 6.5 13.75 6.5H10.25C9.63 6.5 9.06997 6.25 8.65997 5.84C8.24997 5.43 8 4.87 8 4.25C8 3.01 9.01 2 10.25 2H13.75C14.37 2 14.93 2.25 15.34 2.66C15.75 3.07 16 3.63 16 4.25Z" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M8 13H12" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M8 17H16" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
             <span class="btn-text">Paste</span>
           </button>
-          <button id="selectAllBtn" title="Select All">
+        </div>
+
+        <!-- GROUP 3: Editing Tools -->
+        <div class="btn-group">
+          <button id="selectAllBtn" class="btn-group-item" title="Select All">
             <svg class="btn-icon"><use href="#icon-select-all"/></svg>
             <span class="btn-text">Select All</span>
           </button>
-          <button id="findDockBtn" class="mode-btn" title="Find">
+          <button id="findDockBtn" class="btn-group-item" title="Find">
             <svg class="btn-icon"><use href="#icon-search"/></svg>
             <span class="btn-text">Find</span>
           </button>
-          <button id="replaceDockBtn" class="mode-btn" title="Replace">
+          <button id="replaceDockBtn" class="btn-group-item" title="Replace">
             <svg class="btn-icon"><use href="#icon-replace"/></svg>
             <span class="btn-text">Replace</span>
           </button>
-          
-<!-- Tools Dropdown Button -->
-<div class="tools-dropdown">
-  <button id="toolsMenuBtn" class="tools-btn">
-    <svg class="btn-icon"><use href="#icon-tools"/></svg>
-    <span class="btn-text">Tools</span>
-  </button>
-  <div id="toolsDropdown" class="tools-dropdown-content hidden">
-    <button id="tool_remove_duplicates" title="Remove Duplicate Lines">
-      <svg class="btn-icon"><use href="#icon-clear"/></svg>
-      Remove Duplicates
-    </button>
-    <button id="tool_sort_lines" title="Sort Lines">
-      <svg class="btn-icon"><use href="#icon-menu"/></svg>
-      Sort Lines
-    </button>
-<button id="tool_remove_empty_lines" title="Remove Empty Lines">
-  <svg class="btn-icon"><use href="#icon-remove-empty"/></svg>
-  Remove Empty Lines
-</button>
-  </div>
-</div>
         </div>
+          
+        <!-- Tools Dropdown (Kept separate or grouped) -->
+        <div class="tools-dropdown">
+          <button id="toolsMenuBtn" class="btn-group-item" style="border-radius: 8px;">
+            <svg class="btn-icon"><use href="#icon-tools"/></svg>
+            <span class="btn-text">Tools</span>
+          </button>
+<div id="toolsDropdown" class="tools-dropdown-content hidden">
+            <button id="tool_remove_duplicates" class="tool-vertical-btn">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M6 18L18 6M6 6l12 12" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Remove Duplicates
+            </button>
+            <button id="tool_sort_lines" class="tool-vertical-btn">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M3 6h18M3 12h12M3 18h6" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Sort Lines
+            </button>
+            <button id="tool_remove_empty_lines" class="tool-vertical-btn">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M21 10H3M21 6H3M21 14H3M21 18H3" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M6 2L18 22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-opacity="0.5"/>
+              </svg>
+              Remove Empty Lines
+            </button>
+          </div>
+        </div>
+
+  <!-- EDITOR MODE SWITCHER (Plain Toolbar) -->
+        <div class="tools-dropdown ml-auto">
+          <!-- Trigger -->
+          <button id="editorModeTrigger" class="btn-group-item" style="border-radius: 8px; gap: 6px; min-width: 120px; justify-content: space-between;">
+            <span class="current-mode-label">Plain Text</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          
+<!-- The Dropdown Menu -->
+          <div id="editorModeDropdown" class="tools-dropdown-content hidden">
+            
+            <!-- OPTION 1: PLAIN TEXT -->
+            <button class="tool-vertical-btn mode-option" data-mode="plain">
+              <!-- Left Icon: Text -->
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18H3"/></svg>
+              <span>Plain Text</span>
+              <!-- Right Icon: Checkmark -->
+              <svg class="mode-check-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+
+            <!-- OPTION 2: SUPER EDITOR -->
+            <button class="tool-vertical-btn mode-option" data-mode="rich">
+              <div style="display:flex; align-items:center; gap:10px; flex:1;">
+                <!-- Left Icon: Sparkles -->
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M19 3v4"/><path d="M21 5h-4"/></svg>
+                <span>Super Editor</span>
+                
+                <!-- Lock Icon (Hidden via CSS if Premium) -->
+                <svg class="lock-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px; height:14px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              </div>
+              
+              <!-- Right Icon: Checkmark -->
+              <svg class="mode-check-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+
+          </div>
+        </div>
+
       </div>
     </div>
 
-        <!-- Editor + Find Dock -->
-        <div class="editor-left">
-          <textarea id="textEditor" placeholder="Write or edit your text here..."></textarea>
-
-          <!-- Find/Replace Dock -->
-          <div id="findDock" class="find-dock hidden" role="region" aria-label="Find and Replace">
-            <div class="find-dock-row">
-              <input id="dock_find" type="text" placeholder="Find..." />
-              <input id="dock_replace" type="text" placeholder="Replace with..." />
-              <label class="dock-checkbox"><input id="dock_regex" type="checkbox" /> Regex</label>
-              <button id="dock_find_btn">Find</button>
-              <button id="dock_replace_btn">Replace</button>
-              <button id="dock_replace_all_btn">Replace All</button>
-              <button id="dock_close" class="close-btn" title="Close">X</button>
-            </div>
-          </div>
+    <!-- Existing Editor & Find Dock -->
+    <div class="editor-left">
+      <textarea id="textEditor" placeholder="Write or edit your text here..."></textarea>
+      <!-- Find/Replace Dock (Kept exactly as is) -->
+      <div id="findDock" class="find-dock hidden" role="region" aria-label="Find and Replace">
+        <div class="find-dock-row">
+          <input id="dock_find" type="text" placeholder="Find..." />
+          <input id="dock_replace" type="text" placeholder="Replace with..." />
+          <label class="dock-checkbox"><input id="dock_regex" type="checkbox" /> Regex</label>
+          <button id="dock_find_btn">Find</button>
+          <button id="dock_replace_btn">Replace</button>
+          <button id="dock_replace_all_btn">Replace All</button>
+          <button id="dock_close" class="close-btn" title="Close">X</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- === MODE 2: RICH TEXT (TipTap) === -->
+  <div id="richWrapper" class="editor-mode-wrapper hidden">
+<!-- Rich Toolbar -->
+    <div class="toolbar-container">
+<div class="toolbar-slider">
+        <!-- Added 'simple-toolbar' for layout and 'rich-panel' for specific styling -->
+        <div class="toolbar-panel rich-panel simple-toolbar" id="tiptapToolbar">
+          
+          <!-- Group 1: History -->
+          <div class="rich-btn-group">
+            <button id="ttUndo" class="rich-btn-item" title="Undo">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+            </button>
+            <button id="ttRedo" class="rich-btn-item" title="Redo">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 3.7"/></svg>
+            </button>
+          </div>
+
+          <!-- Group 2: Headings (Dropdown) -->
+          <div class="rich-btn-group">
+             <div class="dropdown" id="headingDropdown">
+              <button class="rich-btn-item rich-dropdown-trigger dropdown-trigger">
+                <span id="currentHeading">Normal</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="dropdown-menu">
+                <button class="dropdown-item" data-level="0">Paragraph</button>
+                <button class="dropdown-item" data-level="1">Heading 1</button>
+                <button class="dropdown-item" data-level="2">Heading 2</button>
+                <button class="dropdown-item" data-level="3">Heading 3</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Group 3: Formatting -->
+          <div class="rich-btn-group">
+            <button id="ttBold" class="rich-btn-item" title="Bold">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"/></svg>
+            </button>
+            <button id="ttItalic" class="rich-btn-item" title="Italic">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg>
+            </button>
+            <button id="ttStrike" class="rich-btn-item" title="Strike">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></svg>
+            </button>
+            <button id="ttCode" class="rich-btn-item" title="Code">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            </button>
+          </div>
+
+          <!-- Group 4: Alignment -->
+          <div class="rich-btn-group">
+            <button id="ttAlignLeft" class="rich-btn-item" title="Align Left">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 5H3"/><path d="M15 12H3"/><path d="M17 19H3"/></svg>
+            </button>
+            <button id="ttAlignCenter" class="rich-btn-item" title="Align Center">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 5H3"/><path d="M17 12H7"/><path d="M19 19H5"/></svg>
+            </button>
+            <button id="ttAlignRight" class="rich-btn-item" title="Align Right">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 5H3"/><path d="M21 12H9"/><path d="M21 19H7"/></svg>
+            </button>
+          </div>
+
+          <!-- Group 5: Lists & Quote -->
+          <div class="rich-btn-group">
+            <button id="ttBullet" class="rich-btn-item" title="Bullet List">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg>
+            </button>
+            <button id="ttOrdered" class="rich-btn-item" title="Ordered List">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M11 5h10"/><path d="M11 12h10"/><path d="M11 19h10"/><path d="M4 4h1v5"/><path d="M4 9h2"/><path d="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02"/></svg>
+            </button>
+            <button id="ttQuote" class="rich-btn-item" title="Blockquote">
+               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/></svg>
+            </button>
+          </div>
+
+          <!-- Group 6: Inserts & Color -->
+          <div class="rich-btn-group">
+<div class="rich-btn-item color-wrapper" title="Text Color">
+             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M19 3v4"/><path d="M21 5h-4"/></svg>
+             <input type="color" id="ttColor" class="color-input" value="#000000">
+          </div>
+            <button id="ttLink" class="rich-btn-item" title="Link">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            </button>
+            <button id="ttImage" class="rich-btn-item" title="Image">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/><line x1="16" x2="22" y1="5" y2="5"/><line x1="19" x2="19" y1="2" y2="8"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+            </button>
+          </div>
+
+<!-- EDITOR MODE SWITCHER (Rich Toolbar) -->
+          <div class="tools-dropdown ml-auto">
+            <!-- Trigger -->
+            <button id="editorModeTrigger" class="btn-group-item" style="border-radius: 8px; gap: 6px; min-width: 120px; justify-content: space-between;">
+              <span class="current-mode-label">Super Editor</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            
+<!-- The Dropdown Menu -->
+          <div id="editorModeDropdown" class="tools-dropdown-content hidden">
+            
+            <!-- OPTION 1: PLAIN TEXT -->
+            <button class="tool-vertical-btn mode-option" data-mode="plain">
+              <!-- Left Icon: Text -->
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18H3"/></svg>
+              <span>Plain Text</span>
+              <!-- Right Icon: Checkmark -->
+              <svg class="mode-check-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+
+            <!-- OPTION 2: SUPER EDITOR -->
+            <button class="tool-vertical-btn mode-option" data-mode="rich">
+              <div style="display:flex; align-items:center; gap:10px; flex:1;">
+                <!-- Left Icon: Sparkles -->
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M19 3v4"/><path d="M21 5h-4"/></svg>
+                <span>Super Editor</span>
+                
+                <!-- Lock Icon (Hidden via CSS if Premium) -->
+                <svg class="lock-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px; height:14px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              </div>
+              
+              <!-- Right Icon: Checkmark -->
+              <svg class="mode-check-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+
+          </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+    
+    <!-- Rich Editor Body -->
+    <div class="editor-left">
+      <div id="tiptapEditor" class="tiptap-content"></div>
+    </div>
+  </div>
+
+</div>
 
       <!-- RIGHT: Sidebar (FULLY INDEPENDENT, FULL HEIGHT) -->
       <aside class="editor-right">
@@ -599,6 +814,104 @@
       <button id="cancelUpgradeBtn" style="margin-top: 12px; background: none; border: none; color: #64748b; font-size: 13px; font-weight: 500; cursor: pointer;">
         Maybe later
       </button>
+
+    </div>
+  </div>
+</div>
+
+<!-- RICH EDITOR SANDBOX MODAL -->
+<div id="richPreviewModal" class="st-modal hidden">
+  <!-- CHANGED: max-width increased to 880px -->
+  <div class="st-card" style="height: auto; max-width: 880px; overflow: hidden; display: flex; flex-direction: column;">
+    
+    <!-- Header -->
+    <div class="st-header" style="padding: 16px 24px; background: #f8fafc; border-bottom:none;">
+      <div class="st-user-summary" style="gap:10px;">
+        <div class="st-avatar-large" style="background:#eef2ff; color:#4f46e5; width:36px; height:36px; font-size:16px;">
+          <svg class="btn-icon" style="width:20px;height:20px;"><use href="#icon-crown"/></svg>
+        </div>
+        <div class="st-user-details">
+          <h3 style="font-size:15px;">Super Editor (Interactive Demo)</h3>
+          <span style="font-size:12px;">Experience the power of rich formatting.</span>
+        </div>
+      </div>
+      <button id="closeRichPreview" class="st-close-btn">
+        <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
+    </div>
+
+    <!-- SANDBOX BODY -->
+    <div class="sandbox-editor-container">
+      
+      <!-- SANDBOX TOOLBAR (IDs prefixed with prev_) -->
+      <div class="toolbar-panel rich-panel simple-toolbar" style="border-bottom: 1px solid #e2e8f0; background: #fff; padding: 8px 12px;">
+        
+        <!-- Group 1: History -->
+        <div class="rich-btn-group">
+          <button id="prev_ttUndo" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
+          <button id="prev_ttRedo" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 3.7"/></svg></button>
+        </div>
+
+        <!-- Group 2: Headings -->
+        <div class="rich-btn-group">
+           <div class="dropdown" id="prev_headingDropdown">
+            <button class="rich-btn-item rich-dropdown-trigger dropdown-trigger">
+              <span>Heading</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="dropdown-menu">
+              <button class="dropdown-item" data-level="0">Paragraph</button>
+              <button class="dropdown-item" data-level="1">Heading 1</button>
+              <button class="dropdown-item" data-level="2">Heading 2</button>
+              <button class="dropdown-item" data-level="3">Heading 3</button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Group 3: Formatting -->
+        <div class="rich-btn-group">
+          <button id="prev_ttBold" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"/></svg></button>
+          <button id="prev_ttItalic" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg></button>
+          <button id="prev_ttStrike" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></svg></button>
+          <button id="prev_ttCode" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
+        </div>
+
+        <!-- Group 4: Alignment -->
+        <div class="rich-btn-group">
+          <button id="prev_ttAlignLeft" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 5H3"/><path d="M15 12H3"/><path d="M17 19H3"/></svg></button>
+          <button id="prev_ttAlignCenter" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 5H3"/><path d="M17 12H7"/><path d="M19 19H5"/></svg></button>
+          <button id="prev_ttAlignRight" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 5H3"/><path d="M21 12H9"/><path d="M21 19H7"/></svg></button>
+        </div>
+
+        <!-- Group 5: Lists -->
+        <div class="rich-btn-group">
+          <button id="prev_ttBullet" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg></button>
+          <button id="prev_ttOrdered" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M11 5h10"/><path d="M11 12h10"/><path d="M11 19h10"/><path d="M4 4h1v5"/><path d="M4 9h2"/><path d="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02"/></svg></button>
+          <button id="prev_ttQuote" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/></svg></button>
+        </div>
+
+        <!-- Group 6: Inserts -->
+        <div class="rich-btn-group">
+          <div class="rich-btn-item color-wrapper" title="Text Color" style="padding:0; width:36px;">
+             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M19 3v4"/><path d="M21 5h-4"/></svg>
+             <input type="color" id="prev_ttColor" class="color-input" value="#000000">
+          </div>
+          <button id="prev_ttLink" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+          <button id="prev_ttImage" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/><line x1="16" x2="22" y1="5" y2="5"/><line x1="19" x2="19" y1="2" y2="8"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></button>
+        </div>
+
+      </div>
+
+      <!-- SANDBOX EDITOR INSTANCE -->
+      <div id="previewEditorBody"></div>
+
+      <!-- STICKY FOOTER -->
+      <div class="sandbox-footer">
+        <div class="sandbox-text">✨ You are in interactive demo mode. Content is not saved.</div>
+        <button id="upgradeFromPreviewBtn" class="st-btn-primary small">
+          Unlock Pro to Save
+        </button>
+      </div>
 
     </div>
   </div>
