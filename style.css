@@ -1329,25 +1329,28 @@ html, body, #app {
    PREVIEW BANNER
    ================================================ */
 .preview-banner {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: linear-gradient(to top, #ffffff, #f8fafc);
-  border-top: 1px solid #e2e8f0;
-  padding: 12px 18px;
+  /* Changed from absolute/bottom to relative flex item */
+  position: relative; 
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 14.5px;
-  font-weight: 500;
-  color: #1e293b;
-  z-index: 30;
-  box-shadow: 0 -4px 12px rgba(0,0,0,0.08);
-  border-radius: 0 0 10px 10px;
+  
+  /* Match Toolbar dimensions */
   width: 100%;
+  height: 46px; /* Slightly taller than toolbar buttons for emphasis */
+  padding: 0 16px;
+  
+  background: #fffbeb; /* Light Amber/Yellow for "Warning/Preview" context */
+  border-bottom: 1px solid #e2e8f0;
+  
+  font-size: 14px;
+  font-weight: 500;
+  color: #92400e; /* Amber-800 */
+  z-index: 50;
+  flex-shrink: 0; /* Prevents squishing */
   box-sizing: border-box;
 }
+
 .preview-banner .banner-text {
   flex: 1;
   white-space: nowrap;
@@ -1355,43 +1358,37 @@ html, body, #app {
   text-overflow: ellipsis;
   font-weight: 600;
 }
+
 .preview-banner .banner-actions {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   flex-shrink: 0;
 }
 .preview-banner button {
-  padding: 8px 18px;
-  border-radius: 8px;
-  font-size: 13.5px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  min-width: 82px;
-  transition: all 0.22s ease;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
 }
 #restoreBtn {
   background: #3b82f6;
   color: white;
-  border: 1px solid #3b82f6;
-  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
 }
 #restoreBtn:hover {
   background: #2563eb;
-  transform: translateY(-1px);
-  box-shadow: 0 6px 12px rgba(59, 130, 246, 0.35);
 }
 #cancelBtn {
   background: #ffffff;
   color: #475569;
-  border: 1px solid #cbd5e1;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  border-color: #cbd5e1;
 }
 #cancelBtn:hover {
-  background: #f8fafc;
-  border-color: #94a3b8;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+  background: #f1f5f9;
+  color: #1e293b;
 }
 
 /* ================================================
@@ -2272,30 +2269,32 @@ html, body, #app {
 
 /* --- Color Picker Button --- */
 .color-wrapper {
-  position: relative; /* Essential for the input overlay */
-  overflow: hidden;
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  
-  /* Reset fixed sizes so it matches other buttons */
-  width: auto !important;
-  height: auto !important;
+  width: auto !important; /* Remove fixed width */
+  padding: 11px 14px !important; /* Match button padding */
+  cursor: pointer;
 }
-.color-wrapper:hover {
-  background: rgba(99,102,241,.1);
-}
+
+/* Ensure the color input covers the entire area */
 .color-input {
   position: absolute;
-  top: 0; left: 0; 
-  width: 100%; height: 100%;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   opacity: 0;
   cursor: pointer;
   padding: 0;
   margin: 0;
   border: none;
 }
-
+.color-wrapper:hover {
+  background-color: #f9fafb !important;
+  z-index: 2;
+}
 /* --- Switch Mode Button (Align with toolbar height) --- */
 .simple-toolbar .switch-mode-btn {
   margin-left: auto !important; 
@@ -2560,8 +2559,10 @@ html, body, #app {
 
 /* Hover State */
 .rich-btn-item:hover {
-  background-color: #f9fafb; /* gray-50 */
-  z-index: 2;
+  background-color: #eef2ff; /* Light Indigo background */
+  color: #4338ca;            /* Dark Indigo text */
+  border-color: #c7d2fe;     /* Light Indigo border */
+  z-index: 2;                /* Ensure border overlaps neighbors */
 }
 
 /* Active / Focus State (Blue Theme) */
@@ -2688,4 +2689,19 @@ html, body, #app {
   border-top: 3px solid #3b82f6 !important;
   border-top-left-radius: 4px; /* Slight adjustment to look good with the line */
   border-top-right-radius: 4px;
+}
+/* Fix for rich toolbar icons */
+.rich-btn-item > .btn-icon,
+#tiptapToolbar .btn-icon {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
+}
+
+/* Override any existing btn-icon styling for toolbar */
+.toolbar-panel .btn-icon {
+    width: 16px !important;
+    height: 16px !important;
+    margin: 0 !important;
 }
