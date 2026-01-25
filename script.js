@@ -247,6 +247,7 @@ async function initPocketBase() {
           // Re-establish active file/tab info
           const activeFile = state.files.find(f => f.id === state.activeId);
           updateSidebarInfo(activeFile);
+          if(activeFile) updateVersionHistory(activeFile);
       }
   }
 
