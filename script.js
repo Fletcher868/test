@@ -1,925 +1,3581 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>KryptNote | End-to-End Encrypted Notes</title>
-  <link rel="stylesheet" href="style.css" />
-<link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
-  <!-- Favicon -->
- <link rel="icon" type="image/png" href="/favicon/favicon-96x96.png" sizes="96x96" />
-<link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg" />
-<link rel="shortcut icon" href="/favicon/favicon.ico" />
-<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png" />
-<meta name="apple-mobile-web-app-title" content="MyWebSite" />
-<link rel="manifest" href="/favicon/site.webmanifest" />
-  <!-- Description (important for SEO) -->
-  <meta name="description" content="KryptNote: Secure, end-to-end encrypted note-taking app. Private notes with AES-GCM 256-bit encryption, Zero-knowledge, no tracking, and version history.">
-  <!-- Keywords – 2025 optimized for KryptNote -->
-  <meta name="keywords" content="encrypted notes, secure notes app, private note taking, end-to-end encrypted notes, e2ee notes, zero knowledge notes, aes-256 notes, offline notes app, open source notes, privacy focused notes, secure notepad, encrypted notepad, version history notes, standard notes alternative, joplin alternative, obsidian alternative, evernote alternative secure">
-  <meta name="author" content="KryptNote">
+import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.es.mjs';
+import { 
+  deriveMasterKey, generateDataKey, wrapDataKey, unwrapDataKey, 
+  exportKeyToString, storeDataKeyInSession, loadDataKeyFromSession, 
+  encryptBlob, decryptBlob, randomSalt, arrayToB64, b64ToArray ,
+  generateShareKey, exportKeyToUrl
+} from './crypto.js';
 
-  <style>
-    .btn-icon { width:18px; height:18px; margin-right:6px; vertical-align:middle; fill:currentColor; }
-  </style>
-</head>
-<body>
-  <div class="app">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-<div class="sb-head">
-<a href="/" class="logo-link">
-  <!-- Style A: Sticky Note Icon -->
-  <svg class="logo-icon" viewBox="0 0 24 24">
-    <use href="#icon-logo"/>
-  </svg>
-  <div class="logo-text">Krypt<span>Note</span></div>
-</a>
-      </div>
-      <div id="filesList" class="files"></div>
+import { Editor } from 'https://esm.sh/@tiptap/core@2.2.4';
+import StarterKit from 'https://esm.sh/@tiptap/starter-kit@2.2.4';
+import TextStyle from 'https://esm.sh/@tiptap/extension-text-style@2.2.4';
+import { Color } from 'https://esm.sh/@tiptap/extension-color@2.2.4';
+import Link from 'https://esm.sh/@tiptap/extension-link@2.2.4';
+import Image from 'https://esm.sh/@tiptap/extension-image@2.2.4';
+import TextAlign from 'https://esm.sh/@tiptap/extension-text-align@2.2.4';
+import Placeholder from 'https://esm.sh/@tiptap/extension-placeholder@2.2.4';
+import { initSettings } from './settings.js'; 
+import { setupExport } from './export.js'; 
+
+// NEW: PocketBase default category IDs for new user initialization
+const DEFAULT_CATEGORY_IDS = {
+    WORK: 'work',
+    TRASH: 'trash'
+};
+// NEW: Guest storage key and structure
+const GUEST_STORAGE_KEY = 'kryptNoteLocalData';
+let tiptapEditor = null;
+const SESSION_ID = crypto.randomUUID();
+let isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; // Load preference
+let previewMode = false;        
+let previewVersion = null;      
+let originalBeforePreview = ''; 
+const PB_URL = 'https://nonpending-teisha-depletory.ngrok-free.dev/';
+let pb = null, 
+    // UPDATE: Added categories and set default active category
+    state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK }, 
+    currentMenu = null, derivedKey = null;
+let originalContent = '';
+let isSavingVersion = false;
+
+let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') !== 'false';
+let finalizeUIUpdateTimeout = null;
+let isFinalizingUI = false;
+let versionHistoryController = null;
+let uiUpdateQueued = false;
+let originalEditorMode = null;
+// ===================================================================
+// 1. GUEST STORAGE BACKEND (localStorage)
+// ===================================================================
+const guestStorage = {
+  saveData(data) {
+    localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(data));
+  },
+  loadData() {
+    const data = localStorage.getItem(GUEST_STORAGE_KEY);
+    return data ? JSON.parse(data) : null;
+  },
+  // CRITICAL: Guest mode categories use the hardcoded string as their ID
+  initData() {
+    return {
+      categories: [
+        { id: DEFAULT_CATEGORY_IDS.WORK, name: 'Work', iconName: 'icon-work', sortOrder: 1 },
+        { id: DEFAULT_CATEGORY_IDS.TRASH, name: 'Trash', iconName: 'icon-delete', sortOrder: 2 },
+      ],
+      files: []
+    };
+  }
+};
+
+
+// NEW: Key for logged-in user cache
+const USER_CACHE_KEY = 'kryptNote_userCache';
+
+// Helper: Save current state to local storage (for fast reload)
+function saveToUserCache() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  // Only cache if logged in
+  if (!pb.authStore.isValid) return;
+  
+  try {
+    const cacheData = {
+      files: state.files,
+      categories: state.categories,
+      activeId: state.activeId,
+      activeCategoryId: state.activeCategoryId,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(USER_CACHE_KEY, JSON.stringify(cacheData));
+  } catch (e) {
+    console.warn("Cache quota exceeded or disabled", e);
+  }
+}
+
+// Helper: Load from local storage immediately
+function loadFromUserCache() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const data = localStorage.getItem(USER_CACHE_KEY);
+  if (!data) return false;
+
+  try {
+    const parsed = JSON.parse(data);
+    state.files = parsed.files || [];
+    state.categories = parsed.categories || [];
+    // Restore selection
+    state.activeId = parsed.activeId;
+    state.activeCategoryId = parsed.activeCategoryId || DEFAULT_CATEGORY_IDS.WORK;
+    return true;
+  } catch (e) {
+    console.error("Cache parse error", e);
+    return false;
+  }
+}
+
+/**
+ * Optimistically add version to cache for instant feedback
+ */
+function optimisticallyAddToVersionCache(fileId, content, editorMode) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === fileId);
+  if (!file) return;
+  
+  // Create optimistic version object
+  const optimisticVersion = {
+    id: `temp_version_${Date.now()}`,
+    created: new Date().toISOString(),
+    content: content,
+    editor: editorMode || 'plain'
+  };
+  
+  // Initialize cache if needed
+  if (!file.versionsCache) {
+    file.versionsCache = [];
+  }
+  
+  // Add to beginning of array (most recent first)
+  file.versionsCache.unshift(optimisticVersion);
+  
+  // Update cache immediately
+  saveToUserCache();
+  
+  return optimisticVersion;
+}
+
+/**
+ * Update cache with server version (replace temp with real) and refresh UI
+ */
+function updateVersionCacheWithServer(fileId, serverVersion, tempVersionId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === fileId);
+  if (!file || !file.versionsCache) return;
+  
+  // Find and replace temp version in the data cache
+  const index = file.versionsCache.findIndex(v => v.id === tempVersionId);
+  if (index !== -1) {
+    file.versionsCache[index] = {
+      id: serverVersion.id,
+      created: serverVersion.created,
+      content: serverVersion.content,
+      editor: serverVersion.editor || 'plain'
+    };
+  } else {
+    // Fallback: Add new if temp not found (rare race condition)
+    file.versionsCache.unshift({
+      id: serverVersion.id,
+      created: serverVersion.created,
+      content: serverVersion.content,
+      editor: serverVersion.editor || 'plain'
+    });
+  }
+  
+  // Keep cache reasonable size
+  if (file.versionsCache.length > 50) {
+    file.versionsCache = file.versionsCache.slice(0, 50);
+  }
+  
+  // Save updated cache
+  saveToUserCache();
+  
+  // FIXED: Fully re-render the list to attach correct event listeners with new IDs
+  const currentActiveId = state.activeId;
+  const historyPanel = document.getElementById('version-history');
+  
+  if (currentActiveId === fileId && historyPanel && historyPanel.classList.contains('active')) {
+     renderVersionList(file, file.versionsCache);
+  }
+}
+
+
+// ===================================================================
+// POCKETBASE & AUTH
+// ===================================================================
+// --- RICH PREVIEW SANDBOX LOGIC ---
+let previewEditor = null;
+
+function initPreviewEditor() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (previewEditor) return;
+
+  previewEditor = new Editor({
+    element: document.getElementById('previewEditorBody'),
+    extensions: [
+      StarterKit,
+      TextStyle, 
+      Color,
+      Link.configure({ openOnClick: false }),
+      Image,
+      TextAlign.configure({ types: ['heading', 'paragraph'] }),
+    ],
+    content: `
+      <h3>Welcome to the Super Editor! 🚀</h3>
+      <p>This is a <strong>live demo</strong>. You can type here, use the toolbar, and see how it feels.</p>
+      <ul>
+        <li>Rich formatting with <code>code blocks</code></li>
+        <li>Lists, Quotes, and Headings</li>
+        <li><span style="color: #6366f1">Colors</span> and Images</li>
+      </ul>
+      <p style="text-align: center">Centered text support!</p>
+    `,
+  });
+
+  // Helper to wire buttons
+  const cmd = (id, callback) => {
+    const btn = document.getElementById(id);
+    if(btn) {
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        callback(previewEditor.chain().focus());
+      });
+    }
+  };
+
+  // --- Wire Up Buttons ---
+  cmd('prev_ttUndo', (c) => c.undo().run());
+  cmd('prev_ttRedo', (c) => c.redo().run());
+  cmd('prev_ttBold', (c) => c.toggleBold().run());
+  cmd('prev_ttItalic', (c) => c.toggleItalic().run());
+  cmd('prev_ttStrike', (c) => c.toggleStrike().run());
+  cmd('prev_ttCode', (c) => c.toggleCode().run()); // Added
+  
+  cmd('prev_ttAlignLeft', (c) => c.setTextAlign('left').run()); // Added
+  cmd('prev_ttAlignCenter', (c) => c.setTextAlign('center').run()); // Added
+  cmd('prev_ttAlignRight', (c) => c.setTextAlign('right').run()); // Added
+
+  cmd('prev_ttBullet', (c) => c.toggleBulletList().run());
+  cmd('prev_ttOrdered', (c) => c.toggleOrderedList().run());
+  cmd('prev_ttQuote', (c) => c.toggleBlockquote().run()); // Added
+
+  // --- Colors & Inserts ---
+  document.getElementById('prev_ttColor')?.addEventListener('input', (e) => {
+    previewEditor.chain().focus().setColor(e.target.value).run();
+  });
+
+  document.getElementById('prev_ttLink')?.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const url = window.prompt('Enter Link URL');
+    if (url) previewEditor.chain().focus().setLink({ href: url }).run();
+  });
+
+  document.getElementById('prev_ttImage')?.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const url = window.prompt('Enter Image URL');
+    if (url) previewEditor.chain().focus().setImage({ src: url }).run();
+  });
+
+  // --- Preview Dropdown Logic ---
+  const dropdown = document.getElementById('prev_headingDropdown');
+  const trigger = dropdown?.querySelector('.dropdown-trigger');
+  
+  if (dropdown && trigger) {
+      trigger.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          dropdown.classList.toggle('is-open');
+      });
+      dropdown.querySelectorAll('.dropdown-item').forEach(item => {
+          item.addEventListener('mousedown', (e) => {
+              e.preventDefault(); 
+              const level = parseInt(e.target.getAttribute('data-level'));
+              if (level === 0) previewEditor.chain().focus().setParagraph().run();
+              else previewEditor.chain().focus().toggleHeading({ level }).run();
+              dropdown.classList.remove('is-open');
+          });
+      });
+      window.addEventListener('mousedown', (e) => {
+          if (!dropdown.contains(e.target)) dropdown.classList.remove('is-open');
+      });
+  }
+}
+
+function showRichPreviewModal() {
+  const modal = document.getElementById('richPreviewModal');
+  modal.classList.remove('hidden');
+  
+  // Initialize the editor if it hasn't been yet
+  setTimeout(() => {
+    initPreviewEditor();
+    if(previewEditor) previewEditor.commands.focus();
+  }, 100);
+}
+
+// Close logic for Preview Modal
+document.getElementById('closeRichPreview')?.addEventListener('click', () => {
+  document.getElementById('richPreviewModal').classList.add('hidden');
+});
+document.getElementById('upgradeFromPreviewBtn')?.addEventListener('click', () => {
+  window.location.href = 'Pricing.html';
+});
+
+async function initPocketBase() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  pb = new PocketBase(PB_URL);
+
+  initTiptap();
+  setupEditorSwitching();
+
+  // 1. Instant Render from Cache (Stale data)
+  if (pb.authStore.isValid) {
+    if (loadFromUserCache()) {
+      applyEditorMode();
+      updateEditorModeUI();
+      renderFiles();
+      loadActiveToEditor();
+    }
+  }
+
+  // 2. Network Sync & Auth Refresh (Fresh data)
+  if (pb.authStore.isValid) {
+    try {
+      // This fetches the LATEST plan_status and plan_expires from server
+      await pb.collection('users').authRefresh();
       
-      <div class="sb-profile">
-        <!-- Profile Button with Dots -->
-        <button id="profileBtn" class="profile-btn">
-          <div class="avatar">U</div>
-          <div class="info">
-            <div class="name" title="Guest User">Guest User</div>
-            <div class="status guest">Guest</div>
-          </div>
-          <div class="profile-dots">⋯</div>
+      // CRITICAL: Reset the premium memoization so it re-calculates from the fresh model
+      memoizedIsPremium = null; 
+      
+      await restoreEncryptionKeyAndLoad();
+      
+      // 3. Force UI Update to show/hide locks immediately
+      updateProfileState();
+      updateEditorModeUI(); 
+      finalizeUIUpdate();
+
+    } catch (err) {
+      console.warn("Session expired:", err);
+      logout();
+    }
+  } else {
+    loadUserFiles();
+    updateProfileState();
+  }
+
+  initSettings(pb, state, derivedKey, loadUserFiles, saveFile, renderFiles, loadActiveToEditor);
+}
+
+async function restoreEncryptionKeyAndLoad() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  try {
+    derivedKey = await loadDataKeyFromSession();
+    
+    if (derivedKey) {
+      await loadUserFiles();
+      updateProfileState();
+      setupRealtimeSubscription(); 
+      setupExport(pb, derivedKey, showToast);
+      return;
+    }
+
+    const user = pb.authStore.model;
+    if (!user.encryptionSalt || !user.wrappedKey) {
+      alert('Security data missing. Please log in again.');
+      logout();
+      return;
+    }
+
+    const password = prompt('Session expired. Enter password to unlock notes:');
+    if (!password) { logout(); return; }
+
+    const salt = b64ToArray(user.encryptionSalt);
+    const masterKey = await deriveMasterKey(password, salt);
+    
+    const wrappedJson = JSON.parse(atob(user.wrappedKey)); 
+    
+    derivedKey = await unwrapDataKey({
+        iv: b64ToArray(wrappedJson.iv),
+        authTag: b64ToArray(wrappedJson.authTag),
+        ciphertext: b64ToArray(wrappedJson.ct)
+    }, masterKey);
+
+    const dkStr = await exportKeyToString(derivedKey);
+    storeDataKeyInSession(dkStr);
+
+    await loadUserFiles();
+    updateProfileState();
+    setupRealtimeSubscription(); 
+    setupExport(pb, derivedKey, showToast);
+
+  } catch (e) {
+    console.error(e);
+    alert('Failed to unlock: Wrong password or corrupted key.');
+    logout();
+  }
+}
+
+async function login(email, password) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+    // Exit preview mode if currently in preview
+  if (previewMode) {
+    exitPreviewMode();
+    highlightSelectedVersion(null);
+  }
+
+  try {
+    await pb.collection('users').authWithPassword(email, password);
+    const user = pb.authStore.model;
+
+    if (!user.wrappedKey) {
+        throw new Error("Account missing wrapped key (Legacy account?)");
+    }
+
+    const salt = b64ToArray(user.encryptionSalt);
+    const masterKey = await deriveMasterKey(password, salt);
+
+    const wrappedJson = JSON.parse(atob(user.wrappedKey));
+    derivedKey = await unwrapDataKey({
+        iv: b64ToArray(wrappedJson.iv),
+        authTag: b64ToArray(wrappedJson.authTag),
+        ciphertext: b64ToArray(wrappedJson.ct)
+    }, masterKey);
+
+    const dkStr = await exportKeyToString(derivedKey);
+    storeDataKeyInSession(dkStr);
+
+    localStorage.removeItem(GUEST_STORAGE_KEY); 
+    
+    await loadUserFiles();
+    showMenu();
+    updateProfileState();
+    setupRealtimeSubscription(); 
+    setupExport(pb, derivedKey, showToast);
+
+    document.getElementById('profileDropdown').classList.add('hidden');
+    showToast('Logged in! Envelope Open.');
+    return true;
+  } catch (e) {
+    alert('Login failed: ' + e.message);
+    return false;
+  }
+}
+
+async function signup(name, email, password) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  try {
+    const saltArray = randomSalt();
+    const saltB64 = arrayToB64(saltArray);
+    const masterKey = await deriveMasterKey(password, saltArray);
+
+    const dataKey = await generateDataKey();
+
+    const wrapped = await wrapDataKey(dataKey, masterKey);
+    
+    const wrappedObj = {
+        iv: arrayToB64(wrapped.iv),
+        authTag: arrayToB64(wrapped.authTag),
+        ct: arrayToB64(wrapped.ciphertext)
+    };
+    const wrappedB64 = btoa(JSON.stringify(wrappedObj));
+
+    await pb.collection('users').create({ 
+      name, 
+      email, 
+      password, 
+      passwordConfirm: password, 
+      encryptionSalt: saltB64,
+      wrappedKey: wrappedB64
+    });
+    
+    return await login(email, password);
+  } catch (e) {
+    alert('Signup failed: ' + e.message);
+    return false;
+  }
+}
+
+
+
+function logout() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (previewMode) {
+    exitPreviewMode();
+  }
+  
+  // CRITICAL FIX: Unsubscribe from Realtime *before* clearing authStore.
+  if (pb) {
+    pb.realtime.unsubscribe('files');
+    pb.realtime.unsubscribe('categories');
+    console.log('Realtime subscription for files and categories stopped.');
+  }
+  
+  pb.authStore.clear();
+  sessionStorage.removeItem('dataKey');
+  derivedKey = null;
+  localStorage.removeItem(USER_CACHE_KEY); // Clear cache on logout
+  
+  // Fully reset state
+  state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK };
+  previewMode = false;
+  previewVersion = null;
+  originalBeforePreview = '';
+  originalContent = '';
+
+  // Clear Editors
+  const editor = document.getElementById('textEditor');
+  if (editor) editor.value = '';
+
+  if (tiptapEditor) {
+      tiptapEditor.commands.setContent('');
+  }
+  
+  loadUserFiles();
+
+  updateProfileState();
+  updateVersionFooter();
+  showMenu();
+  setupExport(pb, derivedKey, showToast);
+}
+
+function setupRealtimeSubscription() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (!pb.authStore.isValid || !derivedKey) return;
+
+  pb.realtime.unsubscribe('files');
+  pb.realtime.unsubscribe('categories'); 
+  pb.realtime.unsubscribe('versions');
+  
+  const decryptRecord = async (r) => { 
+      let plaintext = '';
+      if (r.iv && r.authTag && r.encryptedBlob) {
+          try {
+              plaintext = await decryptBlob(
+                  { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
+                  derivedKey
+              );
+          } catch (decErr) { plaintext = '[ERROR: Decryption Failed]'; }
+      }
+      return { 
+          id: r.id, name: r.name, content: plaintext, created: r.created, updated: r.updated, 
+          categoryId: r.category, editor: r.editor, lastEditor: r.lastEditor 
+      };
+  };
+
+  // --- 1. FILES ---
+  pb.realtime.subscribe('files', async function (e) {
+    if (e.record.user !== pb.authStore.model.id) return;
+    
+    // Suppression for Create/Update
+    if (e.record.lastEditor === SESSION_ID) return;
+
+    if (e.action === 'delete') {
+      // SILENT DELETE: If the note is already gone from our state, it was our own action.
+      const localFile = state.files.find(f => f.id === e.record.id);
+      if (!localFile) return; 
+
+      state.files = state.files.filter(f => f.id !== e.record.id);
+      if (state.activeId === e.record.id) selectCategory(state.activeCategoryId, true);
+      showToast(`Note deleted remotely: ${e.record.name}`);
+    } 
+    else {
+      // Remote Create or Update
+      const newFile = await decryptRecord(e.record);
+      
+      // Update cached preview so renderFiles is fast
+      newFile._cachedPreview = getPreviewText(newFile.content?.trim());
+      newFile._contentLastPreviewed = newFile.content;
+
+      const index = state.files.findIndex(f => f.id === newFile.id);
+      if (index !== -1) {
+          state.files[index] = { ...state.files[index], ...newFile };
+          showToast(`Note updated: ${newFile.name}`, 1500);
+      } else {
+          state.files.unshift(newFile);
+          showToast(`New note synced: ${newFile.name}`, 1500);
+      }
+    }
+    finalizeUIUpdate();
+  });
+  
+  // --- 2. CATEGORIES ---
+  pb.realtime.subscribe('categories', async function (e) {
+      if (e.record.user !== pb.authStore.model.id) return;
+      if (e.record.lastEditor === SESSION_ID) return;
+
+      if (e.action === 'delete') {
+          const localCat = state.categories.find(c => c.id === e.record.id);
+          if (!localCat) return; // Silent if we deleted it
+
+          state.categories = state.categories.filter(c => c.id !== e.record.id);
+          showToast(`Category deleted remotely: ${e.record.name}`);
+      } else {
+          const index = state.categories.findIndex(c => c.id === e.record.id);
+          if (index !== -1) state.categories[index] = e.record;
+          else state.categories.push(e.record);
+          state.categories.sort((a,b) => a.sortOrder - b.sortOrder);
+      }
+      finalizeUIUpdate();
+  });
+
+  // --- 3. VERSIONS ---
+  pb.realtime.subscribe('versions', async function (e) {
+      if (e.record.user !== pb.authStore.model.id) return;
+      if (e.record.lastEditor === SESSION_ID) return; // Don't echo our own snapshots
+      if (e.action !== 'create') return;
+
+      const file = state.files.find(f => f.id === e.record.file);
+      if (!file) return;
+
+      const decrypted = await decryptRecord(e.record);
+      if (!file.versionsCache) file.versionsCache = [];
+      
+      file.versionsCache.unshift({
+          id: decrypted.id, created: decrypted.created, content: decrypted.content, editor: decrypted.editor || 'plain'
+      });
+      saveToUserCache();
+      if (state.activeId === file.id) renderVersionList(file, file.versionsCache);
+  });
+}
+// ===================================================================
+// 2. LOAD & SELECT NOTES/CATEGORIES
+// ===================================================================
+/**
+ * Creates the default categories in PocketBase for a new user.
+ */
+async function createDefaultCategories() {
+    if (!pb.authStore.isValid) return [];
+    
+    const defaultCategories = [
+        // CRITICAL: Removed PERSONAL
+        { name: 'Work', localId: DEFAULT_CATEGORY_IDS.WORK, iconName: 'icon-work', sortOrder: 1 },
+        { name: 'Trash', localId: DEFAULT_CATEGORY_IDS.TRASH, iconName: 'icon-delete', sortOrder: 3 },
+    ];
+    
+    const user = pb.authStore.model.id;
+    const createdCategories = [];
+
+    for (const cat of defaultCategories) {
+        try {
+            const record = await pb.collection('categories').create({
+                name: cat.name,
+                user: user,
+                sortOrder: cat.sortOrder,
+                iconName: cat.iconName
+            });
+            // CRITICAL: Push the PB record with the original localId property
+            createdCategories.push({ 
+                id: record.id, 
+                name: record.name,
+                localId: cat.localId, // Store the hardcoded string ID
+                iconName: record.iconName, 
+                sortOrder: record.sortOrder,
+            }); 
+        } catch (e) {
+            console.error(`Failed to create default category ${cat.name}:`, e);
+        }
+    }
+    
+    return createdCategories;
+}
+
+async function loadUserFiles() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  state.files = [];
+  state.categories = [];
+  state.activeId = null;
+  state.activeCategoryId = DEFAULT_CATEGORY_IDS.WORK; 
+
+  if (pb.authStore.isValid && derivedKey) {
+    try {
+      state.categories = await pb.collection('categories').getFullList({ sort: 'sortOrder, created' });
+      
+      if (state.categories.length === 0) {
+        state.categories = await createDefaultCategories();
+      } else {
+          state.categories = state.categories.map(c => {
+              if (c.iconName === 'icon-work') {
+                  c.localId = DEFAULT_CATEGORY_IDS.WORK;
+              }
+              else if (c.iconName === 'icon-delete') {
+                  c.localId = DEFAULT_CATEGORY_IDS.TRASH;
+              }
+              return c;
+          });
+      }
+
+      const records = await pb.collection('files').getFullList({
+        filter: `user = "${pb.authStore.model.id}"`, 
+        sort: '-updated',
+        expand: 'category' 
+      });
+
+      state.files = await Promise.all(records.map(async r => {
+        let plaintext = '';
+        if (r.iv && r.authTag && r.encryptedBlob) {
+          try {
+            plaintext = await decryptBlob(
+              { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
+              derivedKey
+            );
+          } catch (err) {
+            console.error(`Decryption failed for file ID ${r.id} (${r.name}):`, err);
+            plaintext = '[ERROR: Failed to decrypt note. Corrupted data, please delete this file.]';
+          }
+        }
+        
+        // PRE-CALCULATE AND CACHE PREVIEW
+        const trimmedContent = plaintext?.trim() || '';
+        return { 
+          id: r.id, name: r.name, content: plaintext, created: r.created, updated: r.updated, 
+          categoryId: r.category,
+          _cachedPreview: getPreviewText(trimmedContent),
+          _contentLastPreviewed: plaintext
+        };
+      }));
+    } catch (e) { 
+        console.error("PocketBase Load Failed:", e); 
+    }
+  } else {
+    let localData = guestStorage.loadData();
+    if (!localData || !localData.categories) {
+      localData = guestStorage.initData();
+      guestStorage.saveData(localData);
+    }
+    state.categories = localData.categories;
+    state.files = localData.files;
+    state.files.forEach(f => {
+        if (!f.categoryId) f.categoryId = DEFAULT_CATEGORY_IDS.WORK;
+        
+        // CACHE PREVIEW FOR GUEST FILES
+        if (f._cachedPreview === undefined) {
+          f._cachedPreview = getPreviewText(f.content?.trim() || '');
+          f._contentLastPreviewed = f.content;
+        }
+    });
+  }
+
+  if (state.files.length === 0) {
+    await createFile();
+  }
+  
+  selectCategory(state.activeCategoryId, true); 
+  
+  state.files.sort((a, b) => {
+      const dateA = new Date(a.updated).getTime();
+      const dateB = new Date(b.updated).getTime();
+      
+      if (dateB !== dateA) return dateB - dateA;
+      return b.id.localeCompare(a.id);
+  });
+  
+  saveToUserCache(); 
+  updateOriginalContent();
+  finalizeUIUpdate(); 
+}
+
+/**
+ * Sets the active category, finds the first note in it, and selects it.
+ */
+function selectCategory(categoryIdentifier, shouldSelectFile = true) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+    state.activeCategoryId = categoryIdentifier;
+    
+    // Resolve IDs
+    let pbCategoryId = categoryIdentifier; 
+    let localCategoryIdentifier = categoryIdentifier; 
+
+    if (pb.authStore.isValid) {
+        const activeCategoryObject = state.categories.find(c => c.localId === categoryIdentifier || c.id === categoryIdentifier);
+        if (activeCategoryObject) {
+            pbCategoryId = activeCategoryObject.id;
+            localCategoryIdentifier = activeCategoryObject.localId || activeCategoryObject.id;
+        }
+    }
+    
+    // Filter notes
+    const notesInCategory = state.files
+        .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier) 
+        .sort((a, b) => new Date(b.updated) - new Date(a.updated));
+
+    if (shouldSelectFile) {
+        if (notesInCategory.length > 0) {
+            // CRITICAL: Always select the first file in the filtered list
+            state.activeId = notesInCategory[0].id;
+            
+            // Only update editor if content is different (prevents cursor jumping)
+            const currentEditorVal = document.getElementById('textEditor').value;
+            if (notesInCategory[0].content !== currentEditorVal) {
+                loadActiveToEditor();
+            }
+        } else {
+            // No notes left? Clear everything
+            state.activeId = null;
+            document.getElementById('textEditor').value = '';
+        }
+    }
+}
+
+
+async function createFile() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (previewMode) {
+    exitPreviewMode();
+    highlightSelectedVersion(null);
+  }
+
+  const targetCategoryId = state.activeCategoryId;
+  if (targetCategoryId === DEFAULT_CATEGORY_IDS.TRASH) {
+      showToast('Cannot create a note in Trash.', 3000);
+      return; 
+  }
+
+  // 1. Generate name
+  const currentCategory = state.categories.find(c => c.id === targetCategoryId || c.localId === targetCategoryId);
+  const today = new Date().toISOString().slice(0, 10);
+  const baseName = `${currentCategory?.name || 'Note'} ${today}`;
+  const sameDay = state.files.filter(f => f.name?.startsWith(baseName));
+  const nextNum = sameDay.length ? Math.max(...sameDay.map(f => {
+    const m = f.name.match(/_(\d+)$/);
+    return m ? +m[1] : 0;
+  })) + 1 : 0;
+  const name = nextNum === 0 ? baseName : `${baseName}_${nextNum}`;
+
+  // 2. Create the optimistic file
+  // Force this timestamp to be slightly in the "future" compared to existing notes 
+  // to ensure it stays at the very top during the creation process.
+  const newestTimestamp = new Date(Date.now() + 1000).toISOString();
+
+  const tempId = `temp_${Date.now()}`; 
+  const newFile = {
+    id: tempId,
+    name,
+    content: '',
+    created: newestTimestamp,
+    updated: newestTimestamp,
+    categoryId: targetCategoryId,
+    _cachedPreview: '[Empty note]',
+    _contentLastPreviewed: ''
+  };
+
+  // 3. Immediate state update
+  state.files.unshift(newFile); 
+  state.activeId = tempId;
+  
+  // 4. Update UI NOW (Smoothness like guest mode)
+  finalizeUIUpdate();
+
+  // 5. Server call in background
+  if (pb.authStore.isValid && derivedKey) {
+    createFileOnServer(tempId, name, targetCategoryId);
+  } else {
+    guestStorage.saveData({ categories: state.categories, files: state.files });
+  }
+}
+
+async function createFileOnServer(tempId, name, targetCategoryId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  try {
+    const activeCatObj = state.categories.find(c => c.id === targetCategoryId || c.localId === targetCategoryId);
+    const pbCategoryId = activeCatObj?.id;
+
+    const { ciphertext, iv, authTag } = await encryptBlob('', derivedKey);
+
+    const result = await pb.collection('files').create({
+      name,
+      user: pb.authStore.model.id,
+      category: pbCategoryId,
+      iv: arrayToB64(iv),
+      authTag: arrayToB64(authTag),
+      encryptedBlob: arrayToB64(ciphertext),
+      lastEditor: SESSION_ID 
+    }); 
+    
+    const tempFile = state.files.find(f => f.id === tempId);
+    if (tempFile) {
+      tempFile.id = result.id; 
+      // Important: We keep our optimistic (newer) timestamp for a moment 
+      // so the note doesn't suddenly drop below a note you edited 0.5s ago.
+      // It will sync to the real server time on next refresh or next edit.
+      tempFile.created = result.created;
+      
+      if (state.activeId === tempId) {
+          state.activeId = result.id;
+      }
+    }
+    
+    // Finalize UI once to lock in the real ID
+    finalizeUIUpdate();
+
+  } catch (e) {
+    console.error('Server creation failed:', e);
+    // Remove the failed temp note
+    state.files = state.files.filter(f => f.id !== tempId);
+    if (state.activeId === tempId) state.activeId = null;
+    finalizeUIUpdate();
+  }
+}
+
+
+async function createCategory(name) {
+    console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+    if (!name?.trim()) return;
+    const trimmedName = name.trim();
+    const now = new Date().toISOString();
+    
+    const tempId = `cat_temp_${Date.now()}`; 
+    
+    const newCategory = {
+        id: tempId,
+        name: trimmedName,
+        iconName: 'icon-folder',
+        sortOrder: state.categories.length + 1,
+        created: now,
+        updated: now,
+        localId: tempId,
+        lastEditor: SESSION_ID
+    };
+    
+    // 1. Optimistic UI
+    state.categories.push(newCategory);
+    state.categories.sort((a,b) => a.sortOrder - b.sortOrder);
+    finalizeUIUpdate();
+    
+    let finalCategoryId = newCategory.id; 
+
+    if (pb.authStore.isValid) {
+        try {
+            const record = await pb.collection('categories').create({
+                name: trimmedName,
+                user: pb.authStore.model.id,
+                sortOrder: newCategory.sortOrder,
+                iconName: newCategory.iconName,
+                lastEditor: SESSION_ID // <--- REALTIME SUPPRESSION
+            });
+            
+            // 2. Swap Temp for Permanent
+            const index = state.categories.findIndex(c => c.id === tempId);
+            if (index !== -1) {
+                state.categories[index] = { 
+                    ...record, 
+                    localId: record.id,
+                    _cachedPreview: record.name // Categories just use name as preview
+                };
+            }
+
+            finalCategoryId = record.id;
+            state.activeCategoryId = finalCategoryId;
+            
+            await createFile(); // Create first note in new category
+            finalizeUIUpdate();
+            
+        } catch (e) {
+            console.error('Category creation failed:', e);
+            showToast('Failed to create category on server.', 3000);
+            state.categories = state.categories.filter(c => c.id !== tempId);
+            finalizeUIUpdate();
+        }
+    } else {
+        // Guest mode
+        newCategory.id = `cat_guest_${Date.now()}`;
+        newCategory.localId = newCategory.id;
+        guestStorage.saveData({ categories: state.categories, files: state.files });
+        state.activeCategoryId = newCategory.id;
+        await createFile();
+        finalizeUIUpdate();
+    }
+}
+async function saveFile(file) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  file.updated = new Date().toISOString();
+  if (file.id.startsWith('temp_')) return;
+  
+  if (pb.authStore.isValid && derivedKey) {
+    try {
+        const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
+        const categoryRecord = state.categories.find(c => c.localId === file.categoryId || c.id === file.categoryId);
+        const pbCategoryId = categoryRecord?.id || file.categoryId;
+
+        await pb.collection('files').update(file.id, {
+          name: file.name,
+          category: pbCategoryId, 
+          iv: arrayToB64(iv),
+          authTag: arrayToB64(authTag),
+          encryptedBlob: arrayToB64(ciphertext),
+          lastEditor: SESSION_ID // <--- ADDED
+        });
+    } catch (e) { console.error(e); }
+  } else {
+    guestStorage.saveData({ categories: state.categories, files: state.files });
+  }
+}
+
+// Helper: Extract plain text from TipTap JSON or return string as-is
+function getPreviewText(content) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (!content) return '';
+
+  // 1. Try to parse as JSON
+  try {
+    const json = JSON.parse(content);
+    
+    // 2. Check if it is a valid TipTap document structure
+    if (json.type === 'doc' && Array.isArray(json.content)) {
+      
+      // 3. Recursive function to find all "text" nodes
+      const extractText = (node) => {
+        if (node.type === 'text' && node.text) {
+          return node.text;
+        }
+        if (node.content && Array.isArray(node.content)) {
+          return node.content.map(child => extractText(child)).join(' ');
+        }
+        return '';
+      };
+
+      return extractText(json);
+    }
+  } catch (e) {
+    // Not JSON, so it's already plain text
+  }
+
+  // Fallback: Return original string (Plain text)
+  return content;
+}
+
+async function clearTrash() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (!confirm('Are you sure you want to permanently delete ALL notes in the Trash? This action cannot be undone.')) {
+    return;
+  }
+  
+  const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH; // "trash"
+  let trashPbId = null;
+  let trashLocalId = trashIdentifier;
+  
+  // 1. Resolve IDs to find everything visible in the Trash folder
+  if (pb.authStore.isValid) {
+    const trashCat = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
+    if (trashCat) {
+        trashPbId = trashCat.id;             
+        if (trashCat.localId) trashLocalId = trashCat.localId;
+    }
+  }
+
+  // 2. Identify files to delete (Server ID OR Local ID)
+  const filesToDelete = state.files.filter(f => 
+      (trashPbId && f.categoryId === trashPbId) || f.categoryId === trashLocalId
+  );
+  
+  if (filesToDelete.length === 0) {
+      showToast('Trash is already empty.', 2000);
+      return;
+  }
+  
+  // 3. Batch Delete from Server
+  if (pb.authStore.isValid) {
+    try {
+        const batch = pb.createBatch();
+        let hasOps = false;
+        
+        for (const file of filesToDelete) {
+            // Only delete synced files
+            if (!file.id.startsWith('temp_')) {
+                batch.collection('files').delete(file.id);
+                hasOps = true;
+            }
+        }
+        
+        if (hasOps) await batch.send();
+        
+    } catch (e) {
+        console.error('Batch delete failed:', e);
+        if (e.status !== 0) {
+            showToast('Failed to clear some notes from server.', 3000);
+        }
+    }
+  }
+
+  // 4. Local State Cleanup
+  const deletedIds = new Set(filesToDelete.map(f => f.id));
+  state.files = state.files.filter(f => !deletedIds.has(f.id));
+  
+  if (!pb.authStore.isValid) {
+    guestStorage.saveData({ categories: state.categories, files: state.files });
+  }
+
+  // 5. Handle active file selection clearing
+  if (state.activeId && deletedIds.has(state.activeId)) {
+      state.activeId = null;
+      document.getElementById('textEditor').value = '';
+      updateOriginalContent(); 
+  }
+
+  // 6. Refresh UI
+  showToast(`${filesToDelete.length} notes permanently deleted.`, 3000);
+  
+  // Ensure we are viewing the (now empty) trash category correctly
+  if (state.activeCategoryId === trashIdentifier || state.activeCategoryId === trashPbId) {
+     selectCategory(trashIdentifier, false);
+  }
+  
+  finalizeUIUpdate();
+}
+
+async function deleteFile(id) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === id);
+  if (!file) return;
+
+  // ... (Keep your Trash ID logic) ...
+
+  if (!confirm(`Delete "${file.name}"?`)) return;
+
+  // 1. Update state FIRST (Makes the UI snappy and realtime event silent)
+  state.files = state.files.filter(f => f.id !== id);
+  if (state.activeId === id) {
+      state.activeId = null;
+      selectCategory(state.activeCategoryId, true);
+  }
+  
+  // 2. Refresh UI immediately
+  finalizeUIUpdate();
+
+  // 3. Talk to server in background
+  if (pb.authStore.isValid) {
+      pb.collection('files').delete(id).catch(err => {
+          console.error("Delete failed, reverting state", err);
+          // Optional: Re-insert file into state if delete failed
+      });
+  } else {
+      guestStorage.saveData({ categories: state.categories, files: state.files });
+  }
+}
+
+async function createVersionSnapshot(pb, derivedKey, fileId, content, editorMode) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  try {
+    const { ciphertext, iv, authTag } = await encryptBlob(content, derivedKey);
+    return await pb.collection('versions').create({
+      file: fileId,
+      user: pb.authStore.model.id,
+      encryptedBlob: arrayToB64(ciphertext),
+      iv: arrayToB64(iv),
+      authTag: arrayToB64(authTag),
+      editor: editorMode || 'plain',
+      lastEditor: SESSION_ID // <--- ADDED
+    });
+  } catch (err) { console.error(err); throw err; }
+}
+
+/**
+ * Load & decrypt all versions for a file
+ */
+async function getVersions(pb, derivedKey, fileId, signal) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  try {
+    const records = await pb.collection('versions').getFullList({
+      filter: `file = "${fileId}"`,
+      sort: '-created',
+      signal: signal, 
+    });
+
+    const versions = await Promise.all(
+      records.map(async (r) => {
+        let content = '[Decryption failed]';
+        try {
+          content = await decryptBlob(
+            {
+              iv: b64ToArray(r.iv),
+              authTag: b64ToArray(r.authTag),
+              ciphertext: b64ToArray(r.encryptedBlob),
+            },
+            derivedKey
+          );
+        } catch (decErr) {
+          console.error('Version decryption error:', decErr);
+        }
+        
+        // Determine editor mode if not specified
+        let editorMode = r.editor;
+        if (!editorMode) {
+          editorMode = content.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain';
+        }
+        
+        return {
+          id: r.id,
+          created: r.created,
+          content: content,
+          editor: editorMode // Ensure editor property is always present
+        };
+      })
+    );
+
+    versions.sort((a, b) => {
+      const dateA = new Date(a.created).getTime();
+      const dateB = new Date(b.created).getTime();
+      return dateB - dateA;
+    });
+
+    return versions;
+  } catch (err) {
+    if (err.name === 'AbortError' || err.isAbort || err.status === 0) {
+      throw err;
+    }
+    
+    console.error('Failed to load versions:', err);
+    return [];
+  }
+}
+
+// === Helper function to create a folder item (with SVG icon) ===
+function createFolderItem(name, id, isActive = false, iconName = 'icon-folder', noteCount = 0, isDeletable = false, isTrash = false) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const folderDiv = document.createElement('div');
+  folderDiv.className = 'folder-item' + (isActive ? ' active' : '');
+  folderDiv.dataset.folderId = id;
+
+  const iconSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  iconSvg.setAttribute('class', 'btn-icon folder-icon');
+  iconSvg.setAttribute('width', '20');
+  iconSvg.setAttribute('height', '20');
+  iconSvg.setAttribute('viewBox', '0 0 24 24');
+  iconSvg.setAttribute('fill', 'none');
+
+  const useElement = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  useElement.setAttribute('href', `#${iconName}`);
+  iconSvg.appendChild(useElement);
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'folder-name';
+  nameSpan.textContent = name;
+  
+  // NEW: Note Count Span
+  const countSpan = document.createElement('span');
+  countSpan.className = 'folder-count';
+  countSpan.textContent = noteCount;
+
+  folderDiv.appendChild(iconSvg);
+  folderDiv.appendChild(nameSpan);
+  folderDiv.appendChild(countSpan); // <-- ADDED
+
+  // NEW: Add the dots menu button for category actions
+  const moreBtn = document.createElement('button');
+  moreBtn.className = 'more-btn';
+  moreBtn.textContent = '⋯';
+  moreBtn.type = 'button';
+  moreBtn.style.marginLeft = '10px'; 
+  moreBtn.style.padding = '0 6px'; 
+  moreBtn.style.alignSelf = 'center';
+  moreBtn.style.flexShrink = '0';
+  
+  moreBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      showCategoryMenu(moreBtn, id, name, isDeletable, isTrash); 
+  });
+  
+  folderDiv.appendChild(moreBtn);
+
+  return folderDiv;
+}
+
+function renderFiles() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const list = document.getElementById('filesList');
+  if (!list) return;
+
+  list.innerHTML = '';
+
+  // 1. CATEGORIES HEADER
+  const categoriesHeader = document.createElement('div');
+  categoriesHeader.className = 'notes-header-row category-toggle-header';
+
+  const title = document.createElement('span');
+  title.className = 'categories-title';
+  title.textContent = 'Categories';
+
+  const addFolderBtn = document.createElement('button');
+  addFolderBtn.className = 'new-note-btn-small';
+  addFolderBtn.textContent = '+';
+  addFolderBtn.title = 'New category';
+
+  if (isCategoriesExpanded) {
+    addFolderBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!isUserPremium()) {
+          showUpgradeModal();
+          return;
+      }
+      const name = prompt('New category name:');
+      if (name?.trim()) createCategory(name);
+    });
+  } else {
+    addFolderBtn.style.visibility = 'hidden';
+    addFolderBtn.style.pointerEvents = 'none';
+  }
+
+  categoriesHeader.addEventListener('click', (e) => {
+    if (!e.target.closest('.new-note-btn-small')) {
+      isCategoriesExpanded = !isCategoriesExpanded;
+      localStorage.setItem('kryptNote_categoriesExpanded', isCategoriesExpanded.toString());
+      renderFiles();
+    }
+  });
+
+  categoriesHeader.appendChild(title);
+  categoriesHeader.appendChild(addFolderBtn);
+  list.appendChild(categoriesHeader);
+
+  // 2. FOLDERS SECTION
+  if (isCategoriesExpanded) {
+    const foldersSection = document.createElement('div');
+    foldersSection.className = 'folders-section';
+
+    const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH;
+    const workIdentifier = DEFAULT_CATEGORY_IDS.WORK; 
+
+    const categoryMap = state.files.reduce((acc, file) => {
+        const catId = file.categoryId;
+        acc[catId] = (acc[catId] || 0) + 1;
+        return acc;
+    }, {});
+    
+    const getNoteCount = (cat) => {
+        const pbId = cat.id;
+        const localId = cat.localId;
+        let count = categoryMap[pbId] || 0;
+        if (localId && localId !== pbId) {
+            count += categoryMap[localId] || 0;
+        }
+        return count;
+    };
+    
+    const trashCategory = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
+    
+    let sortedCategories = state.categories
+        .filter(c => c.localId !== trashIdentifier && (pb.authStore.isValid ? c.id !== trashCategory?.id : c.id !== trashIdentifier))
+        .filter((category, index, self) => index === self.findIndex((c) => c.id === category.id))
+        .sort((a,b) => a.sortOrder - b.sortOrder);
+    
+    if (trashCategory) sortedCategories.push(trashCategory);
+    
+    sortedCategories.forEach(c => {
+        const identifier = c.localId || c.id;
+        const isActive = identifier === state.activeCategoryId;
+        const isTrash = identifier === trashIdentifier;
+        const isWork = identifier === workIdentifier; 
+        const isDeletable = !isTrash && !isWork; 
+        
+        const folderItem = createFolderItem(c.name, identifier, isActive, c.iconName, getNoteCount(c), isDeletable, isTrash);
+        folderItem.addEventListener('click', e => {
+            if (e.target.closest('.more-btn')) return; 
+            selectCategory(identifier);
+            finalizeUIUpdate(); 
+        });
+        foldersSection.appendChild(folderItem);
+    });
+
+    list.appendChild(foldersSection);
+    const divider = document.createElement('div');
+    divider.className = 'folders-divider'; 
+    list.appendChild(divider);
+  }
+
+  // 3. NOTES HEADER
+  const notesHeader = document.createElement('div');
+  notesHeader.className = 'notes-header-row' + (isCategoriesExpanded ? '' : ' notes-header-collapsed');
+  
+  const activeCategory = state.categories.find(c => c.localId === state.activeCategoryId || c.id === state.activeCategoryId);
+
+  const notesTitle = document.createElement('span');
+  notesTitle.className = 'categories-title';
+  notesTitle.textContent = activeCategory ? `${activeCategory.name} Notes` : 'Your Notes'; 
+
+  const newNoteBtnSmall = document.createElement('button');
+  newNoteBtnSmall.className = 'new-note-btn-small';
+  newNoteBtnSmall.textContent = '+';
+  newNoteBtnSmall.title = 'Create New Note';
+  newNoteBtnSmall.addEventListener('click', (e) => {
+      e.stopPropagation();
+      createFile();
+  });
+
+  notesHeader.appendChild(notesTitle);
+  notesHeader.appendChild(newNoteBtnSmall);
+  list.appendChild(notesHeader);
+  
+  // 4. FILTERED NOTES LIST
+  let pbCategoryId = state.activeCategoryId; 
+  let localCategoryIdentifier = state.activeCategoryId; 
+
+  if (pb.authStore.isValid && activeCategory) {
+      pbCategoryId = activeCategory.id;
+      localCategoryIdentifier = activeCategory.localId || activeCategory.id;
+  }
+  
+  const filteredFiles = state.files
+    .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier)
+    .sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime());
+
+  if (filteredFiles.length === 0) {
+      const emptyMsg = document.createElement('div');
+      emptyMsg.className = 'file-item muted';
+      emptyMsg.style.justifyContent = 'center';
+      emptyMsg.style.minHeight = '30px';
+      emptyMsg.innerHTML = '<span class="file-preview">[No notes in this category]</span>';
+      list.appendChild(emptyMsg);
+      return;
+  }
+  
+  filteredFiles.forEach(f => {
+    const d = document.createElement('div');
+    d.className = 'file-item' + (f.id === state.activeId ? ' active' : '');
+    d.dataset.id = f.id;
+
+    // OPTIMIZED PREVIEW CHECK
+    if (f._cachedPreview === undefined || f._contentLastPreviewed !== f.content) {
+        f._cachedPreview = getPreviewText(f.content?.trim() || '');
+        f._contentLastPreviewed = f.content;
+    }
+
+    const rawText = f._cachedPreview;
+    let previewText = '';
+
+    if (!rawText) {
+      previewText = '[Empty note]';
+    } else {
+      const firstLine = rawText.split('\n')[0];
+      previewText = firstLine.length > 35 
+        ? firstLine.substring(0, 35) + '...' 
+        : firstLine;
+    }
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'file-content';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'file-name';
+    nameSpan.textContent = f.name || 'Untitled';
+    nameSpan.title = f.name || 'Untitled';
+
+    const previewSpan = document.createElement('span');
+    previewSpan.className = 'file-preview';
+    previewSpan.textContent = previewText;
+
+    const moreBtn = document.createElement('button');
+    moreBtn.className = 'more-btn';
+    moreBtn.textContent = '⋯';
+    moreBtn.type = 'button';
+
+    contentDiv.appendChild(nameSpan);
+    contentDiv.appendChild(previewSpan);
+    d.appendChild(contentDiv);
+    d.appendChild(moreBtn);
+
+    d.addEventListener('click', e => {
+      if (!e.target.closest('.more-btn')) selectFile(f.id);
+    });
+
+    moreBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      showFileMenu(moreBtn, f.id, f.name);
+    });
+
+    list.appendChild(d);
+  });
+}
+
+
+function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (currentMenu) currentMenu.remove();
+  
+  const menu = document.createElement('div');
+  menu.className = 'file-context-menu'; 
+  
+  let menuHTML = '';
+
+  if (isTrash) {
+    // TRASH MENU: Clear Trash
+    menuHTML = `
+      <button class="ctx-delete ctx-clear-trash danger-item">
+        <div class="icon-box"><svg class="btn-icon"><use href="#icon-delete"></use></svg></div>
+        <span>Clear Trash</span>
+      </button>
+    `;
+  } else {
+    // WORK / CUSTOM CATEGORY MENU: Rename
+    menuHTML += `
+      <button class="ctx-rename">
+        <svg class="btn-icon"><use href="#icon-rename"></use></svg>
+        Rename
+      </button>
+    `;
+    
+    if (isDeletable) {
+      // CUSTOM CATEGORY MENU: Delete (Move to Trash + Delete Category)
+      menuHTML += `
+        <button class="ctx-delete ctx-delete-category danger-item">
+          <div class="icon-box"><svg class="btn-icon"><use href="#icon-delete"></use></svg></div>
+          <span>Delete Category</span>
         </button>
+      `;
+    }
+  }
+
+  menu.innerHTML = menuHTML;
+  document.body.appendChild(menu);
+
+  const r = btn.getBoundingClientRect();
+  
+  // Position the menu
+  let top = r.bottom + 4;
+  if (top + menu.offsetHeight > window.innerHeight) {
+    top = r.top - menu.offsetHeight - 4;
+  }
+  
+  menu.style.top = top + 'px';
+  menu.style.left = r.left + 'px';
+  
+  if (r.left + menu.offsetWidth > window.innerWidth) {
+      menu.style.left = r.right - menu.offsetWidth + 'px'; 
+  }
+
+  // --- Event Listeners ---
+  
+  // 1. Clear Trash
+  if (isTrash) {
+    menu.querySelector('.ctx-clear-trash').onclick = () => {
+      menu.remove();
+      clearTrash();
+    };
+  } 
+  
+  // 2. Rename Category (For Work and Custom Categories)
+  if (!isTrash) {
+    menu.querySelector('.ctx-rename').onclick = async () => {
+        menu.remove();
         
-        <div id="profileDropdown" class="profile-dropdown hidden">
+        const newName = prompt(`Rename category "${name}" to:`, name);
+        if (!newName?.trim() || newName.trim() === name) { return; }
+
+        const trimmedName = newName.trim();
+        const category = state.categories.find(c => c.id === id || c.localId === id);
+        if (!category) { return; }
         
-          <!-- === GUEST MENU (Logged Out) === -->
-          <div id="menuDefault" class="dropdown-content">
-            <div class="menu-section">
-              <button id="loginBtn" class="dropdown-item">
-                <div class="icon-box"><svg class="btn-icon"><use href="#icon-login"/></svg></div>
-                <span>Log in</span>
-              </button>
-              <button id="signupBtn" class="dropdown-item">
-                <div class="icon-box"><svg class="btn-icon"><use href="#icon-user"/></svg></div>
-                <span>Sign up</span>
-              </button>
-            </div>
+        const oldName = category.name;
+        category.name = trimmedName; // Optimistic update
+        
+        if (id === state.activeCategoryId) {
+           const activeCategoryTitle = document.querySelector('.categories-title');
+           if(activeCategoryTitle) activeCategoryTitle.textContent = `${trimmedName} Notes`;
+        }
+        finalizeUIUpdate();
 
-            <div class="menu-divider"></div>
-
-            <div class="menu-section">
-              <button class="dropdown-item dropdown-option">
-                <div class="icon-box"><svg class="btn-icon"><use href="#icon-help"/></svg></div>
-                <span>Help & Pricing</span>
-                <span class="arrow-right">›</span>
-                
-                <!-- Submenu -->
-                <div class="submenu">
-                  <a href="Pricing.html" class="dropdown-item">
-                    <svg class="btn-icon"><use href="#icon-pricing"/></svg> Pricing
-                  </a>
-                  <a href="faq.html" class="dropdown-item">
-                    <svg class="btn-icon"><use href="#icon-faq"/></svg> FAQ
-                  </a>
-                  <a href="contact.html" class="dropdown-item">
-                    <svg class="btn-icon"><use href="#icon-contact"/></svg> Contact
-                  </a>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          <!-- === USER MENU (Logged In) === -->
-          <div id="menuLoggedIn" class="dropdown-content hidden">
-            
-            <!-- Section 1: Premium CTA -->
-            <div class="menu-section">
-              <button id="upgradeBtn" class="dropdown-item upgrade-item" style="display:none;">
-                <div class="icon-box special"><svg class="btn-icon"><use href="#icon-crown"/></svg></div>
-                <div class="text-col">
-                  <span class="item-title">Upgrade to Pro</span>
-                </div>
-              </button>
-            </div>
-
-            <!-- Section 2: Tools -->
-            <div class="menu-section">
-              <button id="settingsBtn" class="dropdown-item">
-                <div class="icon-box"><svg class="btn-icon"><use href="#icon-settings"/></svg></div>
-                <span>Settings</span>
-              </button>
-              <button id="exportAll" class="dropdown-item">
-                <div class="icon-box"><svg class="btn-icon"><use href="#icon-export"/></svg></div>
-                <span>Export Data</span>
-              </button>
-            </div>
-
-            <div class="menu-divider"></div>
-
-            <!-- Section 3: Support & Logout -->
-            <div class="menu-section">
-              <button class="dropdown-item dropdown-option">
-                <div class="icon-box"><svg class="btn-icon"><use href="#icon-help"/></svg></div>
-                <span>Help & Pricing</span>
-                <span class="arrow-right">›</span>
-                <div class="submenu">
-                  <a href="Pricing.html" class="dropdown-item">
-                    <svg class="btn-icon"><use href="#icon-pricing"/></svg> Plans
-                  </a>
-                  <a href="faq.html" class="dropdown-item">
-                    <svg class="btn-icon"><use href="#icon-faq"/></svg> FAQ
-                  </a>
-                  <a href="contact.html" class="dropdown-item">
-                    <svg class="btn-icon"><use href="#icon-contact"/></svg> Contact
-                  </a>
-                </div>
-              </button>
+        if (pb.authStore.isValid) {
+            if (category.id && !category.id.startsWith('cat_temp_') && !category.id.startsWith('cat_guest_')) {
               
-              <button id="logoutBtn" class="dropdown-item danger-item">
-                <div class="icon-box"><svg class="btn-icon"><use href="#icon-logout"/></svg></div>
-                <span>Log out</span>
-              </button>
-            </div>
-          </div>
 
-          <!-- === FORMS (Login / Signup) === -->
-          <!-- Login Form -->
-          <div id="loginForm" class="dropdown-content form-content hidden">
-            <div class="form-header">
-              <h4>Welcome back</h4>
-              <p>Log in to sync your notes</p>
-            </div>
-            <div class="input-group">
-              <input type="email" id="loginEmail" placeholder="name@example.com" required />
-            </div>
-            <div class="input-group">
-              <input type="password" id="loginPassword" placeholder="Password" required />
-            </div>
-            <div class="form-actions-stacked">
-              <button id="submitLogin" class="btn-primary">Log in</button>
-              <button id="backToMenu" class="btn-menu">Cancel</button>
-            </div>
-          </div>
+                try {
+                        await pb.collection('categories').update(category.id, { 
+        name: trimmedName,
+        lastEditor: SESSION_ID // <--- ADDED
+    }); 
+                    showToast(`Category renamed to: ${trimmedName}`, 2000); 
+                }
+                catch (e) { 
+                    console.error('Rename failed on server:', e); 
+                    category.name = oldName; // Revert
+                    showToast('Category rename failed', 3000); 
+                    finalizeUIUpdate(); 
+                }
+            }
+        } else {
+             guestStorage.saveData({ categories: state.categories, files: state.files });
+             showToast(`Category renamed to: ${trimmedName}!`, 2000); 
+             finalizeUIUpdate();
+        }
+    };
+  }
 
-<!-- Signup Form -->
-          <div id="signupForm" class="dropdown-content form-content hidden">
-            <div class="form-header">
-              <h4>Create Account</h4>
-            </div>
-            
-            <!-- START: E2EE WARNING -->
-<div class="offline-message" style="margin-bottom: 12px;">
-  <!-- Lock icon -->
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-    <use href="#icon-lock"/>
-  </svg>
-  <div class="offline-text">
-            <strong>Critical Warning:</strong>
-            <small>Your notes are end-to-end encrypted.If you lose your password, we cannot recover your account or notes.
-</small>
-
-              </div>
-            </div>
-            <!-- END: E2EE WARNING -->
-            
-            <div class="input-group">
-              <!-- Changed placeholder from "Full Name" to "Username" -->
-              <input type="text" id="signupName" placeholder="Username" required />
-            </div>
-            <div class="input-group">
-              <input type="email" id="signupEmail" placeholder="Email" required />
-            </div>
-            <div class="input-group">
-              <!-- Updated placeholder for complexity rule -->
-              <input type="password" id="signupPassword" placeholder="Create Password (min 10 chars)" required />
-            </div>
-            <!-- ADDED CONFIRM PASSWORD FIELD -->
-            <div class="input-group">
-                <input type="password" id="signupPasswordConfirm" placeholder="Confirm Password" required />
-            </div>
-            <div class="form-actions-stacked">
-              <button id="submitSignup" class="btn-primary">Create Account</button>
-              <button id="backToMenuSignup" class="btn-menu">Cancel</button>
-            </div>
-          </div>
-
-        </div>
-      </div>
-
-    </aside>
-
-   <!-- Workspace -->
-    <main class="workspace">
-      
-<!-- LEFT: Toolbar + Editor (ONE container, full height) -->
-<div class="editor-container">
-
-  <!-- === MODE 1: PLAIN TEXT (Your Existing Setup) === -->
-<!-- === MODE 1: PLAIN TEXT === -->
-  <div id="plainWrapper" class="editor-mode-wrapper">
-    <!-- TOOLBAR -->
-<!-- TOOLBAR -->
-    <div class="toolbar-container">
-      <div class="toolbar-slider">
+  // 3. Delete Category
+  if (isDeletable) {
+    menu.querySelector('.ctx-delete-category').onclick = async () => {
+        if (!confirm(`Are you sure you want to delete category "${name}"? All notes in it will be moved to Trash.`)) {
+            return;
+        }
+        menu.remove();
         
-        <!-- GROUP 1: Undo / Redo -->
-        <div class="btn-group">
-          <button id="undoBtn" class="rich-btn-item"  title="Undo">
-            <svg class="btn-icon"><use href="#icon-undo"/></svg>
-            <span class="btn-text">Undo</span>
-          </button>
-          <button id="redoBtn" class="rich-btn-item"  title="Redo">
-            <svg class="btn-icon"><use href="#icon-redo"/></svg>
-            <span class="btn-text">Redo</span>
-          </button>
-        </div>
+        const categoryToDelete = state.categories.find(c => c.id === id || c.localId === id);
+        if (!categoryToDelete) { return; }
+        
+        const categoryToDeleteId = pb.authStore.isValid ? categoryToDelete.id : categoryToDelete.localId || categoryToDelete.id;
+        const filesToMove = state.files.filter(f => f.categoryId === categoryToDeleteId);
+        
+        const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH;
+        const trashCategory = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
+        const trashCategoryId = pb.authStore.isValid ? trashCategory?.id : trashIdentifier;
+        
+        if (!trashCategoryId) {
+            showToast('Cannot delete: Trash category not found.', 4000);
+            return;
+        }
 
-        <!-- GROUP 2: Clipboard (With NEW ICONS) -->
-        <div class="btn-group">
-          <!-- Copy -->
-          <button id="copyBtn" class="btn-group-item" title="Copy">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M8.66667 15.3333V19.3333C8.66667 20.8061 9.86057 22 11.3333 22H19.3333C20.8061 22 22 20.8061 22 19.3333V11.3333C22 9.86057 20.8061 8.66667 19.3333 8.66667H15.3333M4.66667 15.3333H12.6667C14.1394 15.3333 15.3333 14.1394 15.3333 12.6667V4.66667C15.3333 3.19391 14.1394 2 12.6667 2H4.66667C3.19391 2 2 3.19391 2 4.66667V12.6667C2 14.1394 3.19391 15.3333 4.66667 15.3333Z" stroke="#111827" stroke-width="1.6" stroke-linecap="round" class="my-path"></path>
-            </svg>
-            <span class="btn-text">Copy</span>
-          </button>
+        if (pb.authStore.isValid) {
+            const promises = filesToMove.map(f => 
+                pb.collection('files').update(f.id, { category: trashCategoryId })
+                .then(() => f.categoryId = trashCategoryId) 
+                .catch(e => console.error(`Failed to move file ${f.id} to trash:`, e))
+            );
+            await Promise.all(promises);
+        } else {
+            filesToMove.forEach(f => f.categoryId = trashCategoryId);
+        }
 
-          <!-- Cut -->
-          <button id="cutBtn" class="btn-group-item" title="Cut">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M8.52464 15.8155C9.58965 17.0908 9.4241 18.9922 8.15487 20.0624C6.88565 21.1325 4.99338 20.9661 3.92838 19.6908C2.86337 18.4155 3.02892 16.5141 4.29815 15.4439C5.56737 14.3738 7.45964 14.5401 8.52464 15.8155ZM8.52464 15.8155L19.2493 6.77307" stroke="#111827" stroke-width="1.6" stroke-linecap="round" class="my-path"></path>
-              <path d="M8.71703 8.18449C7.65202 9.45984 5.75975 9.62619 4.49053 8.55605C3.22131 7.48591 3.05575 5.58452 4.12076 4.30917C5.18576 3.03383 7.07803 2.86748 8.34726 3.93762C9.61648 5.00776 9.78203 6.90915 8.71703 8.18449ZM8.71703 8.18449L19.4416 17.2269" stroke="#111827" stroke-width="1.6" stroke-linecap="round" class="my-path"></path>
-              <path d="M17 12H19M21 12H22" stroke="#111827" stroke-width="1.6" stroke-linecap="round" class="my-path"></path>
-            </svg>
-            <span class="btn-text">Cut</span>
-          </button>
+        if (pb.authStore.isValid && categoryToDelete.id) {
+            try {
+                await pb.collection('categories').delete(categoryToDelete.id);
+            } catch (e) {
+                console.error('Category deletion failed:', e);
+                showToast('Category deletion failed on server.', 4000);
+            }
+        }
 
-          <!-- Paste -->
-          <button id="pasteBtn" class="btn-group-item" title="Paste">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M20 8.25V18C20 21 18.21 22 16 22H8C5.79 22 4 21 4 18V8.25C4 5 5.79 4.25 8 4.25C8 4.87 8.24997 5.43 8.65997 5.84C9.06997 6.25 9.63 6.5 10.25 6.5H13.75C14.99 6.5 16 5.49 16 4.25C18.21 4.25 20 5 20 8.25Z" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M16 4.25C16 5.49 14.99 6.5 13.75 6.5H10.25C9.63 6.5 9.06997 6.25 8.65997 5.84C8.24997 5.43 8 4.87 8 4.25C8 3.01 9.01 2 10.25 2H13.75C14.37 2 14.93 2.25 15.34 2.66C15.75 3.07 16 3.63 16 4.25Z" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M8 13H12" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M8 17H16" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <span class="btn-text">Paste</span>
-          </button>
-        </div>
+        state.categories = state.categories.filter(c => c.id !== id && c.localId !== id);
+        
+        if (!pb.authStore.isValid) {
+            guestStorage.saveData({ categories: state.categories, files: state.files });
+        }
+        
+        if (state.activeCategoryId === id) {
+            selectCategory(DEFAULT_CATEGORY_IDS.WORK, true); 
+        }
 
-        <!-- GROUP 3: Editing Tools -->
-        <div class="btn-group">
-          <button id="selectAllBtn" class="btn-group-item" title="Select All">
-            <svg class="btn-icon"><use href="#icon-select-all"/></svg>
-            <span class="btn-text">Select All</span>
-          </button>
-          <button id="findDockBtn" class="btn-group-item" title="Find">
-            <svg class="btn-icon"><use href="#icon-search"/></svg>
-            <span class="btn-text">Find</span>
-          </button>
-          <button id="replaceDockBtn" class="btn-group-item" title="Replace">
-            <svg class="btn-icon"><use href="#icon-replace"/></svg>
-            <span class="btn-text">Replace</span>
-          </button>
-        </div>
-          
-        <!-- Tools Dropdown (Kept separate or grouped) -->
-        <div class="tools-dropdown">
-          <button id="toolsMenuBtn" class="btn-group-item" style="border-radius: 8px;">
-            <svg class="btn-icon"><use href="#icon-tools"/></svg>
-            <span class="btn-text">Tools</span>
-          </button>
-<div id="toolsDropdown" class="tools-dropdown-content hidden">
-            <button id="tool_remove_duplicates" class="tool-vertical-btn">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M6 18L18 6M6 6l12 12" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              Remove Duplicates
-            </button>
-            <button id="tool_sort_lines" class="tool-vertical-btn">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M3 6h18M3 12h12M3 18h6" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              Sort Lines
-            </button>
-            <button id="tool_remove_empty_lines" class="tool-vertical-btn">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M21 10H3M21 6H3M21 14H3M21 18H3" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M6 2L18 22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-opacity="0.5"/>
-              </svg>
-              Remove Empty Lines
-            </button>
-          </div>
-        </div>
+        showToast(`Category "${name}" deleted. Notes moved to Trash.`, 4000);
+        finalizeUIUpdate();
+    };
+  }
 
-<!-- EDITOR MODE SWITCHER (Plain Toolbar) -->
-<div class="tools-dropdown ml-auto">
-  <!-- Trigger -->
-  <button id="editorModeTriggerPlain" class="btn-group-item" style="border-radius: 8px; gap: 6px; min-width: 120px; justify-content: space-between;">
-    <span class="current-mode-label">Plain Text</span>
-    <svg class="btn-icon"><use href="#icon-chevron-down"/></svg>
-  </button>
+  // --- Menu Close Logic ---
+  const close = (e) => {
+    if (!menu.contains(e.target) && !btn.contains(e.target)) {
+      menu.remove();
+      document.removeEventListener('click', close);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+
+  currentMenu = menu;
+}
+
+function showFileMenu(btn, id, name) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (currentMenu) currentMenu.remove();
+
+  const file = state.files.find(f => f.id === id);
+  if (!file) return;
   
-  <!-- The Dropdown Menu -->
-    <div id="editorModeDropdownPlain" class="tools-dropdown-content hidden">
-    
-    <!-- OPTION 1: PLAIN TEXT -->
-    <button class="tool-vertical-btn mode-option" data-mode="plain">
-      <!-- Left Icon: Text -->
-      <svg class="btn-icon"><use href="#icon-text"/></svg>
-      <span>Plain Text</span>
-      <!-- Right Icon: Checkmark -->
-      <svg class="mode-check-icon"><use href="#icon-check"/></svg>
-    </button>
+  // Determine if the file is in the Trash category
+  const isTrash = file.categoryId === DEFAULT_CATEGORY_IDS.TRASH || 
+                  (pb.authStore.isValid && state.categories.find(c => c.localId === DEFAULT_CATEGORY_IDS.TRASH)?.id === file.categoryId);
 
-    <!-- OPTION 2: SUPER EDITOR -->
-    <button class="tool-vertical-btn mode-option" data-mode="rich">
-      <div style="display:flex; align-items:center; gap:10px; flex:1;">
-        <!-- Left Icon: Sparkles -->
-        <svg class="btn-icon"><use href="#icon-sparkles"/></svg>
-        <span>Super Editor</span>
-        
-        <!-- Lock Icon (Hidden via CSS if Premium) -->
-        <svg class="lock-icon"><use href="#icon-lock"/></svg>
-      </div>
-      
-      <!-- Right Icon: Checkmark -->
-      <svg class="mode-check-icon"><use href="#icon-check"/></svg>
-    </button>
+  const deleteText = isTrash ? 'Permanently Delete' : 'Move to Trash';
 
-  </div>
-</div>
+  const menu = document.createElement('div');
+  menu.className = 'file-context-menu';
+  menu.innerHTML = `
+<button class="ctx-rename">
+  <svg class="btn-icon"><use href="#icon-rename"></use></svg>
+  Rename
+</button>
 
-      </div>
-    </div>
+<button class="ctx-info">
+  <svg class="btn-icon"><use href="#icon-info"></use></svg>
+  Note Info
+</button>
 
-    <!-- Existing Editor & Find Dock -->
-    <div class="editor-left">
-      <textarea id="textEditor" placeholder="Write or edit your text here..."></textarea>
-      <!-- Find/Replace Dock (Kept exactly as is) -->
-      <div id="findDock" class="find-dock hidden" role="region" aria-label="Find and Replace">
-        <div class="find-dock-row">
-          <input id="dock_find" type="text" placeholder="Find..." />
-          <input id="dock_replace" type="text" placeholder="Replace with..." />
-          <label class="dock-checkbox"><input id="dock_regex" type="checkbox" /> Regex</label>
-          <button id="dock_find_btn">Find</button>
-          <button id="dock_replace_btn">Replace</button>
-          <button id="dock_replace_all_btn">Replace All</button>
-          <button id="dock_close" class="close-btn" title="Close">X</button>
-        </div>
-      </div>
-    </div>
-  </div>
+<button class="ctx-versions">
+  <svg class="btn-icon"><use href="#icon-history"></use></svg>
+  Versions
+</button>
 
-<!-- === MODE 2: RICH TEXT (TipTap) === -->
-<div id="richWrapper" class="editor-mode-wrapper hidden">
-  <!-- Rich Toolbar -->
-  <div class="toolbar-container">
-    <div class="toolbar-slider">
-      <!-- Added 'simple-toolbar' for layout and 'rich-panel' for specific styling -->
-      <div class="toolbar-panel rich-panel simple-toolbar" id="tiptapToolbar">
-        
-        <!-- Group 1: History -->
-        <div class="rich-btn-group">
-          <button id="ttUndo" class="rich-btn-item" title="Undo">
-            <svg class="btn-icon"><use href="#icon-undo"/></svg>
-          </button>
-          <button id="ttRedo" class="rich-btn-item" title="Redo">
-            <svg class="btn-icon"><use href="#icon-redo"/></svg>
-          </button>
-        </div>
+<button class="ctx-download">
+  <svg class="btn-icon"><use href="#icon-download"></use></svg>
+  Download
+</button>
 
-        <!-- Group 2: Headings (Dropdown) -->
-        <div class="rich-btn-group">
-           <div class="dropdown" id="headingDropdown">
-            <button class="rich-btn-item rich-dropdown-trigger dropdown-trigger">
-              <span id="currentHeading">Normal</span>
-              <svg class="btn-icon"><use href="#icon-chevron-down"/></svg>
-            </button>
-            <div class="dropdown-menu">
-              <button class="dropdown-item" data-level="0">Paragraph</button>
-              <button class="dropdown-item" data-level="1">Heading 1</button>
-              <button class="dropdown-item" data-level="2">Heading 2</button>
-              <button class="dropdown-item" data-level="3">Heading 3</button>
-            </div>
-          </div>
-        </div>
+<button class="ctx-share">
+  <svg class="btn-icon"><use href="#icon-export"/></svg> <!-- Reusing export icon or add a share icon -->
+  Share
+</button>
 
-        <!-- Group 3: Formatting -->
-        <div class="rich-btn-group">
-          <button id="ttBold" class="rich-btn-item" title="Bold">
-            <svg class="btn-icon"><use href="#icon-bold"/></svg>
-          </button>
-          <button id="ttItalic" class="rich-btn-item" title="Italic">
-            <svg class="btn-icon"><use href="#icon-italic"/></svg>
-          </button>
-          <button id="ttStrike" class="rich-btn-item" title="Strike">
-            <svg class="btn-icon"><use href="#icon-strikethrough"/></svg>
-          </button>
-          <button id="ttCode" class="rich-btn-item" title="Code">
-            <svg class="btn-icon"><use href="#icon-code"/></svg>
-          </button>
-        </div>
+<button class="ctx-delete">
+  <svg class="btn-icon"><use href="#icon-delete"></use></svg>
+  ${deleteText}
+</button>
+  `;
 
-        <!-- Group 4: Alignment -->
-        <div class="rich-btn-group">
-          <button id="ttAlignLeft" class="rich-btn-item" title="Align Left">
-            <svg class="btn-icon"><use href="#icon-align-left"/></svg>
-          </button>
-          <button id="ttAlignCenter" class="rich-btn-item" title="Align Center">
-            <svg class="btn-icon"><use href="#icon-align-center"/></svg>
-          </button>
-          <button id="ttAlignRight" class="rich-btn-item" title="Align Right">
-            <svg class="btn-icon"><use href="#icon-align-right"/></svg>
-          </button>
-        </div>
+  document.body.appendChild(menu);
 
-        <!-- Group 5: Lists & Quote -->
-        <div class="rich-btn-group">
-          <button id="ttBullet" class="rich-btn-item" title="Bullet List">
-            <svg class="btn-icon"><use href="#icon-list"/></svg>
-          </button>
-          <button id="ttOrdered" class="rich-btn-item" title="Ordered List">
-            <svg class="btn-icon"><use href="#icon-list-ordered"/></svg>
-          </button>
-          <button id="ttQuote" class="rich-btn-item" title="Blockquote">
-            <svg class="btn-icon"><use href="#icon-quote"/></svg>
-          </button>
-        </div>
+  const r = btn.getBoundingClientRect();
+  
+  // SIMPLE FIX: Position the menu
+  let top = r.bottom + 4;
+  
+  // Check if menu would go off-screen
+  if (top + menu.offsetHeight > window.innerHeight) {
+    // Move it above the button instead
+    top = r.top - menu.offsetHeight - 4;
+  }
+  
+  menu.style.top = top + 'px';
+  menu.style.left = r.left + 'px';
 
-        <!-- Group 6: Inserts & Color -->
-        <div class="rich-btn-group">
-          <div class="rich-btn-item color-wrapper" title="Text Color">
-            <svg class="btn-icon"><use href="#icon-color-picker"/></svg>
-            <input type="color" id="ttColor" class="color-input" value="#000000">
-          </div>
-          <button id="ttLink" class="rich-btn-item" title="Link">
-            <svg class="btn-icon"><use href="#icon-link"/></svg>
-          </button>
-          <button id="ttImage" class="rich-btn-item" title="Image">
-            <svg class="btn-icon"><use href="#icon-image"/></svg>
-          </button>
-        </div>
+  const close = (e) => {
+    if (!menu.contains(e.target) && e.target !== btn) {
+      menu.remove();
+      document.removeEventListener('click', close);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
 
-        <!-- EDITOR MODE SWITCHER (Rich Toolbar) -->
-        <div class="tools-dropdown ml-auto">
-          <!-- Trigger -->
-            <button id="editorModeTriggerRich" class="btn-group-item" style="border-radius: 8px; gap: 6px; min-width: 120px; justify-content: space-between;">
-    <span class="current-mode-label">Super Editor</span>
-    <svg class="btn-icon"><use href="#icon-chevron-down"/></svg>
-  </button>
+  currentMenu = menu;
+
+  // Rename handler
+  menu.querySelector('.ctx-rename').onclick = async () => {
+    const newName = prompt('New name:', name);
+    if (!newName?.trim()) { menu.remove(); return; }
+
+    const trimmedName = newName.trim();
+    const file = state.files.find(f => f.id === id);
+    if (!file) { menu.remove(); return; }
+
+    if (file.name !== trimmedName) {
+        const oldName = file.name;
+        file.name = trimmedName;
+
+        if (pb.authStore.isValid) {
           
-          <!-- The Dropdown Menu -->
-            <div id="editorModeDropdownRich" class="tools-dropdown-content hidden">
-            
-            <!-- OPTION 1: PLAIN TEXT -->
-            <button class="tool-vertical-btn mode-option" data-mode="plain">
-              <!-- Left Icon: Text -->
-              <svg class="btn-icon"><use href="#icon-text"/></svg>
-              <span>Plain Text</span>
-              <!-- Right Icon: Checkmark -->
-              <svg class="mode-check-icon"><use href="#icon-check"/></svg>
-            </button>
 
-            <!-- OPTION 2: SUPER EDITOR -->
-            <button class="tool-vertical-btn mode-option" data-mode="rich">
-              <div style="display:flex; align-items:center; gap:10px; flex:1;">
-                <!-- Left Icon: Sparkles -->
-                <svg class="btn-icon"><use href="#icon-color-picker"/></svg>
-                <span>Super Editor</span>
-                
-                <!-- Lock Icon (Hidden via CSS if Premium) -->
-                <svg class="lock-icon"><use href="#icon-lock"/></svg>
-              </div>
+          try { 
+            await pb.collection('files').update(id, { name: trimmedName }); 
+            showToast(`Note renamed to: ${trimmedName}`, 2000); 
+          }
+          catch (e) { 
+            console.error(e); 
+            file.name = oldName; // Revert
+            showToast('Rename failed', 3000); 
+          }
+        } else {
+          guestStorage.saveData({ categories: state.categories, files: state.files });
+          showToast(`Note renamed to: ${trimmedName}`, 2000); 
+        }
+        
+        renderFiles();
+        finalizeUIUpdate();
+    }
+    
+    menu.remove();
+  };
+
+  menu.querySelector('.ctx-info').onclick = () => {
+    selectFile(id);
+    openSidebarTab('note-info');
+    menu.remove();
+  };
+
+  menu.querySelector('.ctx-versions').onclick = () => {
+    selectFile(id);
+    openSidebarTab('version-history');
+    menu.remove();
+  };
+
+  menu.querySelector('.ctx-download').onclick = () => {
+    downloadNote(file);
+    menu.remove();
+  };
+
+  menu.querySelector('.ctx-share').onclick = () => {
+    openShareModal(id);
+    menu.remove();
+  };
+
+  menu.querySelector('.ctx-delete').onclick = () => {
+    deleteFile(id); // deleteFile now handles the soft/hard delete logic internally
+    menu.remove();
+  };
+}
+
+function loadActiveToEditor() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const f = state.files.find(x => x.id === state.activeId);
+  const newContent = f ? f.content : '';
+
+  // --- STANDARD NOTES LOGIC ---
+  if (isUserPremium()) {
+    if (newContent.trim().startsWith('{"type":"doc"')) {
+      isRichMode = true;
+    } else if (newContent.trim().length > 0) {
+      isRichMode = false;
+    } else {
+      isRichMode = false; 
+    }
+  } else {
+    isRichMode = false;
+  }
+  
+  applyEditorMode(); 
+  updateEditorModeUI();
+
+  // 1. Load Plain Text Editor
+  const textarea = document.getElementById('textEditor');
+  if (textarea.value !== newContent) {
+    textarea.value = newContent;
+  }
+
+  // 2. Load Rich Text Editor WITH SAFE LOADING
+  if (tiptapEditor) {
+    // Temporarily disable the onUpdate handler to prevent auto-save
+    const originalOnUpdate = tiptapEditor.options.onUpdate;
+    tiptapEditor.options.onUpdate = undefined;
+    
+    try {
+      if (!newContent) {
+        tiptapEditor.commands.setContent('');
+      } else {
+        try {
+          const json = JSON.parse(newContent);
+          tiptapEditor.commands.setContent(json);
+        } catch (e) {
+          // Manual JSON construction
+          const lines = newContent.split('\n');
+          const docStructure = {
+            type: 'doc',
+            content: lines.map(line => ({
+              type: 'paragraph',
+              content: line ? [{ type: 'text', text: line }] : [] 
+            }))
+          };
+          tiptapEditor.commands.setContent(docStructure);
+        }
+      }
+    } finally {
+      // Restore the onUpdate handler after a short delay
+      setTimeout(() => {
+        tiptapEditor.options.onUpdate = originalOnUpdate;
+      }, 100);
+    }
+  }
+  
+  originalContent = newContent;
+}
+
+function openSidebarTab(tabName) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  });
+  
+  document.querySelectorAll('.tab-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.id === tabName);
+  });
+  
+  const file = state.files.find(f => f.id === state.activeId);
+  
+  if (tabName === 'note-info') {
+    updateSidebarInfo(file);
+  } else if (tabName === 'version-history') {
+    updateVersionHistory(file); 
+    updateVersionFooter(); 
+  }
+}
+
+function updateSidebarInfo(file = null) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const infoFileNameDisplay = document.getElementById('infoFileName');
+  const infoFileId = document.getElementById('infoFileId');
+  const infoCreated = document.getElementById('infoCreated');
+  const infoModified = document.getElementById('infoModified');
+  const encryptionOffline = document.getElementById('encryptionOffline');
+  const encryptionOnline = document.getElementById('encryptionOnline');
+  
+  // Select buttons
+  const infoDownload = document.getElementById('infoDownload');
+  const infoShare = document.getElementById('infoShare'); // <--- NEW
+  
+  if (infoFileNameDisplay) {
+    infoFileNameDisplay.onblur = null;
+    infoFileNameDisplay.onkeydown = null;
+    infoFileNameDisplay.onclick = null; 
+  }
+
+  // --- NO FILE SELECTED ---
+  if (!file) {
+    if (infoFileNameDisplay) infoFileNameDisplay.textContent = '—';
+    if (infoFileId) infoFileId.textContent = '—';
+    if (infoCreated) infoCreated.textContent = '—';
+    if (infoModified) infoModified.textContent = '—';
+
+    // Disable buttons
+    if (infoDownload) { infoDownload.disabled = true; infoDownload.onclick = null; }
+    if (infoShare) { infoShare.disabled = true; infoShare.onclick = null; } // <--- NEW
+    
+    if (encryptionOffline) encryptionOffline.style.display = 'flex';
+    if (encryptionOnline) encryptionOnline.style.display = 'none';
+
+    return;
+  }
+
+  // --- FILE SELECTED ---
+  const isLoggedIn = pb.authStore.isValid && derivedKey;
+  
+  if (infoFileNameDisplay) infoFileNameDisplay.textContent = file.name;
+  if (infoFileId) infoFileId.textContent = file.id;
+  if (infoCreated) infoCreated.textContent = formatDate(file.created);
+  if (infoModified) infoModified.textContent = formatDate(file.updated);
+
+  if (encryptionOffline && encryptionOnline) {
+      encryptionOffline.style.display = isLoggedIn ? 'none' : 'flex';
+      encryptionOnline.style.display = isLoggedIn ? 'flex' : 'none';
+  }
+  
+  // Enable Download
+  if (infoDownload) {
+    infoDownload.disabled = false;
+    infoDownload.onclick = () => downloadNote(file);
+  }
+
+  // Enable Share (NEW)
+  if (infoShare) {
+    infoShare.disabled = false;
+    infoShare.onclick = () => openShareModal(file.id);
+  }
+}
+async function saveVersionIfChanged() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === state.activeId);
+  if (!file) return;
+
+  let currentContent = '';
+  let versionMode = 'plain'; 
+  let isEmpty = false;
+
+  if (isRichMode && tiptapEditor) {
+    isEmpty = tiptapEditor.isEmpty;
+    currentContent = JSON.stringify(tiptapEditor.getJSON());
+    versionMode = 'rich';
+  } else {
+    const rawVal = document.getElementById('textEditor').value;
+    isEmpty = !rawVal || rawVal.trim().length === 0;
+    currentContent = rawVal;
+    versionMode = 'plain';
+  }
+
+  if (currentContent === originalContent) return;
+  if (isEmpty) return; 
+
+  if (isSavingVersion) return;
+  
+  isSavingVersion = true;
+
+  try {
+    // 1. Create optimistic version (Has ID: temp_version_...)
+    const tempVersion = optimisticallyAddToVersionCache(
+      file.id, 
+      originalContent, 
+      isRichMode ? 'rich' : 'plain'
+    );
+    
+    // Update UI (Shows "Saving..." initially)
+    const historyPanel = document.getElementById('version-history');
+    if (historyPanel && historyPanel.classList.contains('active')) {
+      renderVersionList(file, file.versionsCache || []);
+    }
+    
+    if (pb.authStore.isValid && derivedKey) {
+      // --- LOGGED IN LOGIC ---
+      createVersionSnapshot(pb, derivedKey, file.id, originalContent, versionMode)
+        .then(result => {
+          updateVersionCacheWithServer(file.id, {
+            id: result.id,
+            created: result.created,
+            content: originalContent,
+            editor: versionMode
+          }, tempVersion.id);
+        })
+        .catch(e => {
+          console.error('Version save failed:', e);
+          if (file && file.versionsCache) {
+            file.versionsCache = file.versionsCache.filter(v => v.id !== tempVersion.id);
+            saveToUserCache();
+            if (historyPanel && historyPanel.classList.contains('active')) {
+              renderVersionList(file, file.versionsCache);
+            }
+          }
+        });
+    } else {
+      // --- GUEST LOGIC ---
+      
+      // 1. Generate a permanent ID immediately (No server roundtrip needed)
+      const finalGuestId = `ver_${Date.now()}`;
+      
+      // 2. Fix the ID in the ephemeral cache (so "Saving..." goes away)
+      if (file.versionsCache) {
+        const cachedItem = file.versionsCache.find(v => v.id === tempVersion.id);
+        if (cachedItem) {
+          cachedItem.id = finalGuestId;
+          // Sort to be safe, though unshift probably put it first
+          file.versionsCache.sort((a,b) => new Date(b.created) - new Date(a.created));
+        }
+      }
+      
+      // 3. Save to permanent local storage
+      if (!file.versions) file.versions = [];
+      file.versions.unshift({
+        id: finalGuestId,
+        created: tempVersion.created,
+        content: originalContent,
+        editor: versionMode
+      });
+      if (file.versions.length > 50) file.versions.length = 50;
+      
+      guestStorage.saveData({ categories: state.categories, files: state.files });
+      
+      // 4. Force Re-render to show the new ID (removes "Saving..." spinner)
+      if (historyPanel && historyPanel.classList.contains('active')) {
+          renderVersionList(file, file.versionsCache || file.versions);
+      }
+    }
+
+    originalContent = currentContent;
+    
+  } catch (e) {
+    console.error('Version save failed:', e);
+  } finally {
+    isSavingVersion = false;
+  }
+}
+
+function updateOriginalContent() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (isRichMode && tiptapEditor) {
+      originalContent = JSON.stringify(tiptapEditor.getJSON());
+  } else {
+      originalContent = document.getElementById('textEditor').value;
+  }
+}
+
+async function updateVersionHistory(file = null) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const versionList = document.getElementById('versionList');
+  if (!versionList) return;
+
+  if (versionHistoryController) {
+    versionHistoryController.abort();
+    versionHistoryController = null; 
+  }
+  
+  if (!file || !file.id) {
+    versionList.innerHTML = '<li class="muted">No note selected.</li>';
+    return;
+  }
+
+  // OPTIMIZATION: If this is a new temporary file, it HAS no history. 
+  // Don't even try to fetch or render history.
+  if (file.id.startsWith('temp_')) {
+    versionList.innerHTML = `
+      <li class="version-current">
+        <strong>Current version</strong>
+        <small>${formatDate(file.updated)}</small>
+      </li>
+      <li class="muted">History will be available after saving.</li>
+    `;
+    return;
+  }
+
+  const currentFileId = versionList.dataset.currentFileId;
+  if (currentFileId === file.id && versionList.children.length > 1) {
+    return; // Already showing this file
+  }
+  
+  versionList.dataset.currentFileId = file.id;
+
+  // UI Setup (Badge logic)
+  const titleElement = document.querySelector('#version-history h4');
+  const isPremium = isUserPremium(); 
+  if (titleElement) {
+    const badgeHTML = !pb.authStore.isValid ? 'Guest (3 Days)' : (isPremium ? 'Pro (Unlimited)' : 'Free (7 Days)');
+    const badgeClass = !pb.authStore.isValid ? 'badge-guest' : (isPremium ? 'badge-premium' : 'badge-free');
+    const iconName = isPremium ? 'icon-crown' : 'icon-history';
+    titleElement.innerHTML = `<svg class="btn-icon"><use href="#${iconName}"/></svg><div class="version-title-group"><span>History</span><span class="version-badge ${badgeClass}">${badgeHTML}</span></div>`;
+  }
+
+  // Check Cache
+  if (file.versionsCache && file.versionsCache.length > 0) {
+    renderVersionList(file, file.versionsCache);
+    if (pb.authStore.isValid && derivedKey) fetchFreshVersionsInBackground(file);
+    return; 
+  }
+
+  versionList.innerHTML = '<li class="muted" style="padding:12px;">Loading...</li>';
+  versionList.classList.add('loading');
+
+  if (pb.authStore.isValid && derivedKey) {
+    versionHistoryController = new AbortController();
+    try {
+      const versions = await getVersions(pb, derivedKey, file.id, versionHistoryController.signal);
+      file.versionsCache = versions;
+      renderVersionList(file, versions);
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      versionList.innerHTML = '<li class="muted">History temporarily unavailable</li>';
+    } finally {
+      versionList.classList.remove('loading');
+    }
+  }
+}
+
+function renderVersionList(file, versions) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const versionList = document.getElementById('versionList');
+  if (!versionList) return;
+  
+  versionList.classList.remove('loading');
+  
+  // Set current file ID for safety checks
+  versionList.dataset.currentFileId = file.id;
+
+  let html = `
+    <li class="version-current">
+      <strong>Current version</strong>
+      <small>${formatDate(file.updated)}</small>
+    </li>
+  `; 
+
+  // Filter out versions that match current content AND filter duplicates
+  const filteredVersions = [];
+  const seenContent = new Set();
+  
+  versions.forEach(v => {
+    // 1. Don't show if content matches current file content
+    if (v.content === file.content) return;
+    
+    // 2. Don't show empty versions (Cleaning up old bad data)
+    if (!v.content || v.content.trim() === '' || v.content === '{"type":"doc","content":[{"type":"paragraph"}]}') return;
+
+    // 3. Don't show duplicates
+    if (seenContent.has(v.content)) return;
+    
+    seenContent.add(v.content);
+    filteredVersions.push(v);
+  });
+
+  if (filteredVersions.length === 0) {
+    html += `<li class="muted">No previous versions saved yet.</li>`;
+  } else {
+    filteredVersions.forEach(v => {
+      const rawText = getPreviewText(v.content);
+      const preview = rawText.length > 50 ? rawText.substring(0, 50) + '...' : rawText || '[empty]';
+      
+      const loadingClass = v.id.startsWith('temp_version_') ? ' version-loading' : '';
+      const loadingIndicator = v.id.startsWith('temp_version_') ? ' <span class="loading-dots">Saving...</span>' : '';
+      
+      html += `
+        <li class="version-item${loadingClass}" data-version-id="${v.id}">
+          <strong>${formatDate(v.created)}${loadingIndicator}</strong>
+          <small>${preview}</small>
+        </li>
+      `;
+    });
+  }
+
+  versionList.innerHTML = html;
+
+  // Re-attach listeners
+  versionList.querySelector('.version-current')?.addEventListener('click', () => {
+    exitPreviewMode();
+    loadActiveToEditor();
+    highlightSelectedVersion(null);
+  });
+
+  versionList.querySelectorAll('.version-item').forEach(item => {
+    item.addEventListener('click', () => {
+      // Don't allow clicking on temp versions
+      if (item.classList.contains('version-loading')) {
+        showToast('Please wait, version is still saving...', 1500);
+        return;
+      }
+      
+      const versionId = item.dataset.versionId;
+      // CRITICAL: We find the version in the array passed to this function
+      const version = versions.find(v => v.id === versionId); 
+      
+      if (version) {
+        enterPreviewMode(version);
+        highlightSelectedVersion(versionId);
+      } else {
+         // Fallback: If not found (rare), try to find in file cache
+         const fallbackVersion = file.versionsCache?.find(v => v.id === versionId);
+         if(fallbackVersion) {
+            enterPreviewMode(fallbackVersion);
+            highlightSelectedVersion(versionId);
+         }
+      }
+    });
+  });
+
+  if (previewMode && previewVersion) highlightSelectedVersion(previewVersion.id);
+  else highlightSelectedVersion(null);
+}
+
+/**
+ * Fetch fresh versions in background (for cache updates)
+ */
+async function fetchFreshVersionsInBackground(file) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  try {
+    const freshVersions = await getVersions(pb, derivedKey, file.id);
+    
+    // Sort
+    freshVersions.sort((a, b) => {
+      const dateA = new Date(a.created).getTime();
+      const dateB = new Date(b.created).getTime();
+      return dateB - dateA;
+    });
+    
+    // Update cache if different
+    const currentCache = file.versionsCache || [];
+    const isDifferent = JSON.stringify(freshVersions) !== JSON.stringify(currentCache);
+    
+    if (isDifferent) {
+      file.versionsCache = freshVersions;
+      saveToUserCache();
+      
+      // Only update UI if we're still viewing the same file
+      const currentActiveId = state.activeId;
+      if (currentActiveId === file.id) {
+        // Check if history tab is active
+        const historyPanel = document.getElementById('version-history');
+        if (historyPanel && historyPanel.classList.contains('active')) {
+          renderVersionList(file, freshVersions);
+        }
+      }
+    }
+  } catch (e) {
+    // Silently fail - we have cache to fall back on
+    console.log("Background version refresh failed (non-critical):", e);
+  }
+}
+
+// Helper function to handle toolbar visibility
+function setToolbarVisibility(visible) {
+  document.querySelectorAll('.toolbar-container').forEach(el => {
+    el.style.display = visible ? '' : 'none';
+  });
+}
+
+function enterPreviewMode(version) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  // Capture original state
+  if (originalBeforePreview === '') {
+    originalBeforePreview = isRichMode && tiptapEditor 
+      ? JSON.stringify(tiptapEditor.getJSON())
+      : document.getElementById('textEditor').value;
+    originalEditorMode = isRichMode;
+  }
+
+  // Determine version mode and ensure it has editor property
+  const versionIsRich = version.editor === 'rich' || 
+    (!version.editor && version.content.trim().startsWith('{"type":"doc"'));
+
+  // Set editor property if missing
+  if (!version.editor) {
+    version.editor = versionIsRich ? 'rich' : 'plain';
+  }
+
+  // Hide toolbars
+  setToolbarVisibility(false);
+
+  // Show the correct wrapper and load content
+  const plainWrap = document.getElementById('plainWrapper');
+  const richWrap = document.getElementById('richWrapper');
+
+  if (versionIsRich) {
+    plainWrap.classList.add('hidden');
+    richWrap.classList.remove('hidden');
+    
+    try {
+      tiptapEditor.commands.setContent(JSON.parse(version.content));
+    } catch(e) {
+      tiptapEditor.commands.setContent(`<p>${version.content}</p>`);
+    }
+    
+    tiptapEditor.setOptions({ editable: false });
+    document.querySelector('.ProseMirror')?.classList.add('preview-mode');
+  } else {
+    richWrap.classList.add('hidden');
+    plainWrap.classList.remove('hidden');
+    
+    const textarea = document.getElementById('textEditor');
+    textarea.value = version.content;
+    textarea.disabled = true;
+    textarea.classList.add('preview-mode');
+  }
+
+  // Create banner
+  createPreviewBanner(version.created);
+
+  previewMode = true;
+  previewVersion = version;
+}
+
+// And update exitPreviewMode to restore editability:
+function exitPreviewMode() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  // Restore original mode
+  isRichMode = originalEditorMode;
+  applyEditorMode();
+
+  // Restore content
+  if (isRichMode) {
+    try {
+      const json = JSON.parse(originalBeforePreview);
+      tiptapEditor.commands.setContent(json);
+    } catch(e) {
+      const lines = originalBeforePreview.split('\n');
+      const docStructure = {
+        type: 'doc',
+        content: lines.map(line => ({
+          type: 'paragraph',
+          content: line ? [{ type: 'text', text: line }] : []
+        }))
+      };
+      tiptapEditor.commands.setContent(docStructure);
+    }
+    
+    // CRITICAL: Restore editability
+    tiptapEditor.setOptions({ editable: true });
+    document.querySelector('.ProseMirror')?.classList.remove('preview-mode');
+    document.querySelector('.ProseMirror')?.setAttribute('contenteditable', 'true');
+  } else {
+    document.getElementById('textEditor').value = originalBeforePreview;
+  }
+
+  // Clean up preview state
+  document.getElementById('textEditor').disabled = false;
+  document.getElementById('textEditor').classList.remove('preview-mode');
+
+  // Remove banner and show toolbars
+  document.getElementById('previewBanner')?.remove();
+  setToolbarVisibility(true);
+
+  // Reset state
+  previewMode = false;
+  previewVersion = null;
+  originalBeforePreview = '';
+}
+
+// Simplified createPreviewBanner
+function createPreviewBanner(date) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  // Remove existing banner
+  document.getElementById('previewBanner')?.remove();
+
+  const banner = document.createElement('div');
+  banner.id = 'previewBanner';
+  banner.className = 'preview-banner';
+  banner.innerHTML = `
+    <div class="banner-text">Previewing version from ${formatDate(date)} (Read Only)</div>
+    <div class="banner-actions">
+      <button id="restoreBtn">Restore This Version</button>
+      <button id="cancelBtn">Exit Preview</button>
+    </div>
+  `;
+
+  // Insert into active wrapper before editor
+  const activeWrapper = document.querySelector('.editor-mode-wrapper:not(.hidden)');
+  const editorArea = activeWrapper?.querySelector('.editor-left');
+  
+  if (activeWrapper && editorArea) {
+    activeWrapper.insertBefore(banner, editorArea);
+  }
+
+  // Attach events
+  banner.querySelector('#restoreBtn').onclick = handleRestore;
+  banner.querySelector('#cancelBtn').onclick = () => {
+    exitPreviewMode();
+    highlightSelectedVersion(null);
+  };
+}
+
+async function handleRestore() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === state.activeId);
+  if (!file) return;
+
+  // 1. Lock to prevent interference from blur events
+  if (isSavingVersion) return;
+  isSavingVersion = true;
+
+  try {
+    // 2. Exit preview mode FIRST and capture the version
+    const versionToRestore = previewVersion; 
+    exitPreviewMode();
+    
+    if (!versionToRestore) {
+      showToast('No version to restore', 2000);
+      return;
+    }
+
+    // 3. Save the content we want to restore
+    const contentToRestore = versionToRestore.content;
+    const restoredFromTimestamp = versionToRestore.created;
+    
+    // 4. Determine editor mode safely
+    const editorMode = versionToRestore.editor || 
+                      (contentToRestore.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain');
+    
+    // 5. SMART BACKUP: Save CURRENT content as a version only if it differs from the latest snapshot
+    // This prevents the "000" duplicate issue.
+    if (file.content !== '' && pb.authStore.isValid && derivedKey) {
+        let shouldBackup = true;
+        
+        // Check against the cache (which is populated if the history tab is open)
+        if (file.versionsCache && file.versionsCache.length > 0) {
+            // Compare current content with the most recent version in history
+            const latestVersion = file.versionsCache[0];
+            if (latestVersion.content === file.content) {
+                shouldBackup = false; // It's already saved, don't duplicate
+            }
+        }
+
+        if (shouldBackup) {
+            await createVersionSnapshot(pb, derivedKey, file.id, file.content, isRichMode ? 'rich' : 'plain');
+        }
+    }
+    
+    // 6. Update the file with NEW timestamp locally
+    const now = new Date().toISOString();
+    file.content = contentToRestore;
+    file.updated = now;
+    
+    // 7. Load into editor based on content type
+    if (editorMode === 'rich' || contentToRestore.trim().startsWith('{"type":"doc"')) {
+      isRichMode = true;
+      updateEditorModeUI();
+      if (tiptapEditor) {
+        try {
+          const json = JSON.parse(contentToRestore);
+          tiptapEditor.commands.setContent(json);
+        } catch (e) {
+          // Fallback to plain text
+          const lines = contentToRestore.split('\n');
+          const docStructure = {
+            type: 'doc',
+            content: lines.map(line => ({
+              type: 'paragraph',
+              content: line ? [{ type: 'text', text: line }] : []
+            }))
+          };
+          tiptapEditor.commands.setContent(docStructure);
+        }
+      }
+    } else {
+      isRichMode = false;
+      updateEditorModeUI();
+      const textarea = document.getElementById('textEditor');
+      if (textarea) {
+        textarea.value = contentToRestore;
+        textarea.dispatchEvent(new Event('input'));
+      }
+    }
+
+    // 8. CRITICAL: Update baseline to prevent blur-save
+    if (isRichMode && tiptapEditor) {
+        originalContent = JSON.stringify(tiptapEditor.getJSON());
+    } else {
+        originalContent = contentToRestore;
+    }
+
+    // 9. Save the file (Update "Current Version" on server)
+    await saveFile(file);
+    
+    // 10. Save for guest users (Simple Append)
+    if (!pb.authStore.isValid) {
+      if (!file.versions) file.versions = [];
+      file.versions.unshift({
+        id: `restored_${Date.now()}`,
+        created: now,
+        content: contentToRestore,
+        editor: editorMode
+      });
+      guestStorage.saveData({ categories: state.categories, files: state.files });
+    }
+
+    // 11. Force refresh UI
+    renderFiles();
+    updateSidebarInfo(file);
+    
+    // Invalidate cache so the new "Backup" (if created) appears
+    file.versionsCache = null; 
+    
+    // NEW: Clear the version cache from localStorage too
+    clearVersionCache(file.id);
+    
+    await updateVersionHistory(file);
+    
+    showToast(`Version from ${formatDate(restoredFromTimestamp)} restored!`, 2000);
+
+  } catch (e) {
+    console.error("Restore failed:", e);
+    showToast("Failed to restore version", 3000);
+  } finally {
+    // Unlock always
+    isSavingVersion = false;
+  }
+}
+
+
+
+function showToast(message, duration = 2500) {
+  const oldToast = document.getElementById('appToast');
+  if (oldToast) oldToast.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'appToast';
+  toast.className = 'app-toast';
+  toast.textContent = message;
+
+  document.body.appendChild(toast);
+
+  toast.offsetHeight;
+
+  toast.classList.add('show');
+
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+// NEW: Cache premium status to avoid constant Date object creation
+let memoizedIsPremium = null; 
+
+function isUserPremium() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  // If we already have a verified status from the server, use it
+  if (memoizedIsPremium !== null) return memoizedIsPremium;
+  
+  if (!pb.authStore.isValid || !pb.authStore.model) {
+    memoizedIsPremium = false;
+    return false;
+  }
+  
+  const user = pb.authStore.model;
+  if (!user.plan_expires) {
+    memoizedIsPremium = false;
+    return false;
+  }
+  
+  const expiry = new Date(user.plan_expires);
+  memoizedIsPremium = expiry > new Date();
+  return memoizedIsPremium;
+}
+
+
+
+function highlightSelectedVersion(versionId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const versionList = document.getElementById('versionList');
+  if (!versionList) return;
+
+  versionList.querySelectorAll('.version-item, .version-current').forEach(el => {
+    el.classList.remove('selected');
+  });
+
+  if (versionId) {
+    versionList.querySelector(`.version-item[data-version-id="${versionId}"]`)?.classList.add('selected');
+  } else {
+    versionList.querySelector('.version-current')?.classList.add('selected');
+  }
+}
+
+function formatDate(dateString) {
+  if (!dateString) return '—';
+  const date = new Date(dateString);
+  return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function downloadNote(file) {
+  const blob = new Blob([file.content], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${file.name}.txt`;
+  a.click();
+}
+
+// Auto-save
+let saveTimeout = null;
+document.getElementById('textEditor')?.addEventListener('input', () => {
+  const file = state.files.find(f => f.id === state.activeId);
+  if (!file) return;
+  file.content = document.getElementById('textEditor').value;
+  const now = new Date().toISOString();
+  file.updated = now;
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => saveFile(file), 800);
+  renderFiles();
+  updateSidebarInfo(file);
+});
+
+document.getElementById('textEditor')?.addEventListener('blur', async () => {
+  await saveVersionIfChanged();
+});
+
+function selectFile(id) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  // 1. Exit Preview if active
+  if (previewMode) {
+    exitPreviewMode();
+    highlightSelectedVersion(null);
+  }
+
+  // 2. Update State
+  state.activeId = id;
+  const file = state.files.find(f => f.id === id);
+
+  // 3. Update Category State (Keep consistency)
+  if (file) {
+      const targetCategory = state.categories.find(c => c.id === file.categoryId || c.localId === file.categoryId);
+      if (targetCategory) {
+          state.activeCategoryId = targetCategory.localId || targetCategory.id;
+      }
+  }
+
+  // 4. FAST UI UPDATE (Toggle CSS instead of re-rendering list)
+  const prevActive = document.querySelector('.file-item.active');
+  if (prevActive) prevActive.classList.remove('active');
+
+  const nextActive = document.querySelector(`.file-item[data-id="${id}"]`);
+  if (nextActive) nextActive.classList.add('active');
+
+  // 5. Load Content
+  loadActiveToEditor();
+  updateSidebarInfo(file);
+
+  // 6. SMART HISTORY FETCH
+  // Only fetch versions if the History tab is currently VISIBLE AND we don't have cache
+  const historyPanel = document.getElementById('version-history');
+  if (historyPanel && historyPanel.classList.contains('active')) {
+    if (file) {
+      // Check if we already have cached versions
+      if (file.versionsCache && file.versionsCache.length > 0) {
+        // Use cache immediately
+        renderVersionList(file, file.versionsCache);
+      } else {
+        // Fetch fresh data
+        updateVersionHistory(file).catch(err => console.error(err));
+      }
+    }
+  } else {
+    // If tab is hidden, clear the list to avoid showing old data later
+    const versionList = document.getElementById('versionList');
+    if (versionList) {
+      versionList.innerHTML = ''; 
+      delete versionList.dataset.currentFileId;
+    }
+  }
+}
+/**
+ * Clear version cache for a specific file
+ */
+function clearVersionCache(fileId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === fileId);
+  if (file) {
+    file.versionsCache = null;
+  }
+  
+  // Also clear from localStorage cache
+  const cacheData = localStorage.getItem(USER_CACHE_KEY);
+  if (cacheData) {
+    try {
+      const parsed = JSON.parse(cacheData);
+      if (parsed.versions && parsed.versions[fileId]) {
+        delete parsed.versions[fileId];
+        localStorage.setItem(USER_CACHE_KEY, JSON.stringify(parsed));
+      }
+    } catch (e) {
+      console.error("Failed to clear version cache:", e);
+    }
+  }
+}
+
+
+function finalizeUIUpdate() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (isFinalizingUI) {
+      uiUpdateQueued = true; 
+      return;
+  }
+  
+  clearTimeout(finalizeUIUpdateTimeout);
+
+  finalizeUIUpdateTimeout = setTimeout(() => {
+    if (isFinalizingUI) { uiUpdateQueued = true; return; }
+    
+    isFinalizingUI = true;
+    uiUpdateQueued = false;
+
+    try {
+      const file = state.files.find(f => f.id === state.activeId);
+      
+      // STABLE SORT: Primary by updated date, Secondary by ID string
+      state.files.sort((a, b) => {
+        const timeA = new Date(a.updated).getTime();
+        const timeB = new Date(b.updated).getTime();
+        
+        if (timeB !== timeA) return timeB - timeA;
+        // Tie-breaker: Newer IDs (higher strings) first
+        return b.id.localeCompare(a.id); 
+      });
+      
+      renderFiles();
+      loadActiveToEditor();
+      updateSidebarInfo(file);
+
+      const historyPanel = document.getElementById('version-history');
+      if (historyPanel && historyPanel.classList.contains('active')) {
+          if (file && !file.id.startsWith('temp_')) {
+              if (file.versionsCache) renderVersionList(file, file.versionsCache);
+              else updateVersionHistory(file);
+          } else {
+              const vList = document.getElementById('versionList');
+              if (vList) vList.innerHTML = file ? '<li class="version-current"><strong>Current version</strong></li><li class="muted">No history yet.</li>' : '';
+          }
+      }
+      
+      updateVersionFooter();
+
+    } catch(e) {
+      console.error("UI Update failed:", e);
+    } finally {
+      isFinalizingUI = false;
+      if (uiUpdateQueued) finalizeUIUpdate();
+    }
+  }, 16); 
+}
+
+
+// NEW: Save version on page unload (optional)
+window.addEventListener('beforeunload', async (event) => {
+  if (document.getElementById('textEditor').value !== originalContent) {
+    await saveVersionIfChanged();
+  }
+});
+// Toolbar Slider
+
+
+// Toolbar Buttons
+['undo','redo'].forEach(id => document.getElementById(id+'Btn')?.addEventListener('click', () => document.execCommand(id)));
+document.getElementById('copyBtn')?.addEventListener('click', () => { const el = document.activeElement; if (el?.tagName === 'TEXTAREA' || el?.tagName === 'INPUT') el.select(); document.execCommand('copy'); });
+['cut','paste'].forEach(id => document.getElementById(id+'Btn')?.addEventListener('click', () => document.execCommand(id)));
+document.getElementById('selectAllBtn')?.addEventListener('click', () => {
+  document.getElementById('textEditor')?.select();
+});
+
+
+document.getElementById('tool_remove_duplicates')?.addEventListener('click', () => {
+  const e = document.getElementById('textEditor');
+  e.value = e.value.split('\n').filter((l,i,a) => l.trim() && a.indexOf(l) === i).join('\n');
+  e.dispatchEvent(new Event('input'));
+});
+document.getElementById('tool_sort_lines')?.addEventListener('click', () => {
+  const e = document.getElementById('textEditor');
+  e.value = e.value.split('\n').filter(l => l.trim()).sort((a,b) => a.localeCompare(b)).join('\n');
+  e.dispatchEvent(new Event('input'));
+});
+document.getElementById('tool_remove_empty_lines')?.addEventListener('click', () => {
+  const e = document.getElementById('textEditor');
+  e.value = e.value.split('\n').filter(line => line.trim() !== '').join('\n');
+  e.dispatchEvent(new Event('input'));
+});
+
+// Find/Replace Dock
+const dock = document.getElementById('findDock'), findIn = document.getElementById('dock_find'), repIn = document.getElementById('dock_replace'), regex = document.getElementById('dock_regex');
+let last = 0;
+function openDock(m) { dock.classList.remove('hidden'); (m==='find'?findIn:repIn).focus(); }
+function closeDock() { dock.classList.add('hidden'); findIn.value = repIn.value = ''; last = 0; }
+document.getElementById('findDockBtn')?.addEventListener('click', () => dock.classList.contains('hidden') || document.activeElement !== findIn ? openDock('find') : closeDock());
+document.getElementById('replaceDockBtn')?.addEventListener('click', () => dock.classList.contains('hidden') || document.activeElement !== repIn ? openDock('replace') : closeDock());
+document.getElementById('dock_close')?.addEventListener('click', closeDock);
+
+document.getElementById('dock_find_btn')?.addEventListener('click', () => {
+  const q = findIn.value; if (!q) return alert('Enter text');
+  const e = document.getElementById('textEditor');
+  const p = regex.checked ? new RegExp(q,'g') : new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),'g');
+  p.lastIndex = last; const m = p.exec(e.value);
+  if (m) { const s = m.index, en = s + m[0].length; e.setSelectionRange(s,en); e.focus(); last = en; }
+  else { last = 0; alert('No match'); }
+});
+
+document.getElementById('dock_replace_btn')?.addEventListener('click', () => {
+  const q = findIn.value, r = repIn.value; if (!q) return alert('Enter text');
+  const e = document.getElementById('textEditor'), isReg = regex.checked;
+  const p = isReg ? new RegExp(q) : new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (e.selectionStart !== e.selectionEnd) {
+    const sel = e.value.slice(e.selectionStart, e.selectionEnd);
+    if (p.test(sel)) {
+      const rep = sel.replace(p, r);
+      e.value = e.value.slice(0,e.selectionStart) + rep + e.value.slice(e.selectionEnd);
+      e.setSelectionRange(e.selectionStart, e.selectionStart + rep.length);
+      e.dispatchEvent(new Event('input'));
+    } else alert('No match');
+  } else {
+    const m = p.exec(e.value);
+    if (m) {
+      const s = m.index, en = s + m[0].length;
+      e.value = e.value.slice(0,s) + m[0].replace(p,r) + e.value.slice(en);
+      e.setSelectionRange(s, s + (m[0].replace(p,r)).length);
+      e.dispatchEvent(new Event('input'));
+    } else alert('No match');
+  }
+});
+
+document.getElementById('dock_replace_all_btn')?.addEventListener('click', () => {
+  const q = findIn.value, r = repIn.value; if (!q) return alert('Enter text');
+  const e = document.getElementById('textEditor');
+  const p = regex.checked ? new RegExp(q,'g') : new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),'g');
+  e.value = e.value.replace(p, r);
+  e.dispatchEvent(new Event('input'));
+  alert('Done');
+});
+
+
+
+
+const pBtn = document.getElementById('profileBtn'), pDrop = document.getElementById('profileDropdown'),
+  mDef = document.getElementById('menuDefault'), mLog = document.getElementById('menuLoggedIn'),
+  lForm = document.getElementById('loginForm'), sForm = document.getElementById('signupForm');
+
+function toggleDrop() {
+  const isHidden = pDrop.classList.contains('hidden');
+  pDrop.classList.toggle('hidden');
+  if (!isHidden) resetDropdownState();
+}
+function resetDropdownState() {
+  lForm.classList.add('hidden'); sForm.classList.add('hidden');
+  if (pb.authStore.isValid) {
+    mDef.classList.add('hidden'); mLog.classList.remove('hidden');
+  } else {
+    mDef.classList.remove('hidden'); mLog.classList.add('hidden');
+  }
+}
+function showMenu() { resetDropdownState(); }
+function showLogin() { mDef.classList.add('hidden'); mLog.classList.add('hidden'); sForm.classList.add('hidden'); lForm.classList.remove('hidden'); document.getElementById('loginEmail').focus(); }
+function showSignup() { mDef.classList.add('hidden'); mLog.classList.add('hidden'); lForm.classList.add('hidden'); sForm.classList.remove('hidden'); document.getElementById('signupName').focus(); }
+
+function updateProfileState() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const user = pb.authStore.model;
+  const isLoggedIn = pb.authStore.isValid;
+  
+  // Reset memoization here to be extra safe during profile updates
+  memoizedIsPremium = null;
+  const isPremium = isUserPremium(); 
+
+  const rawName = user?.name || user?.email?.split('@')[0] || 'Guest User';
+  const firstLetter = rawName.charAt(0);
+  
+  let statusText = isLoggedIn ? (isPremium ? 'Premium Plan' : 'Free Plan') : 'Guest';
+  let statusClass = isLoggedIn ? (isPremium ? 'premium' : 'free') : 'guest';
+
+  const pBtn = document.getElementById('profileBtn');
+  if (pBtn) {
+    pBtn.innerHTML = `
+        <div class="avatar">${firstLetter}</div>
+        <div class="info">
+            <div class="name" title="${rawName}">${rawName}</div>
+            <div class="status ${statusClass}">${statusText}</div>
+        </div>
+        <div class="profile-dots">⋯</div>
+    `;
+  }
+
+  // Show/Hide Upgrade button based on fresh status
+  const upgradeBtn = document.getElementById('upgradeBtn');
+  if (upgradeBtn) {
+    upgradeBtn.style.display = (isLoggedIn && !isPremium) ? 'flex' : 'none';
+  }
+
+  showMenu(); 
+  updateVersionFooter();
+}
+
+function updateVersionFooter() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  // 1. Check if user previously dismissed the footer
+  if (localStorage.getItem('kryptNote_dismissFooter') === 'true') {
+    return;
+  }
+
+  const historyPanel = document.getElementById('version-history');
+  if (!historyPanel) return;
+
+  const existingFooter = document.getElementById('versionFooter');
+  if (existingFooter) {
+    existingFooter.remove();
+  }
+
+  // Refactored: Use helper instead of manual date check
+  const isPremium = isUserPremium();
+
+  if (isPremium) {
+    return;
+  }
+
+  let footerContent;
+
+  if (!pb.authStore.isValid) {
+    footerContent = `
+      <div class="sign-in-text">Sign in to keep the last 7 days</div>
+      <div class="pro-text">
+        <a href="Pricing.html" style="color:var(--accent1);text-decoration:none;">Go Pro</a> for unlimited versions
+      </div>
+    `;
+  }
+  else {
+    footerContent = `
+      <div class="pro-text">
+        <a href="Pricing.html" style="color:var(--accent1);text-decoration:none;">Upgrade</a> to restore all previous versions.
+      </div>
+    `;
+  }
+
+  // 2. Add the button HTML (×)
+  const fullFooterHTML = `
+    <div class="sticky-bottom-box" id="versionFooter">
+      ${footerContent}
+      <button id="dismissFooterBtn" class="footer-close-btn" title="Dismiss">×</button>
+    </div>
+  `;
+
+  historyPanel.insertAdjacentHTML('beforeend', fullFooterHTML);
+
+  // 3. Add Event Listener to Dismiss and Save to Storage
+  document.getElementById('dismissFooterBtn').addEventListener('click', (e) => {
+    e.stopPropagation(); // Prevent triggering any parent clicks
+    const footer = document.getElementById('versionFooter');
+    if (footer) footer.remove();
+    
+    // Save preference so it doesn't appear again on reload
+    localStorage.setItem('kryptNote_dismissFooter', 'true');
+  });
+}
+
+pBtn?.addEventListener('click', toggleDrop);
+document.getElementById('loginBtn')?.addEventListener('click', showLogin);
+document.getElementById('signupBtn')?.addEventListener('click', showSignup);
+document.getElementById('logoutBtn')?.addEventListener('click', () => { logout(); toggleDrop(); });
+document.getElementById('submitLogin')?.addEventListener('click', async () => {
+  const e = document.getElementById('loginEmail').value.trim(), p = document.getElementById('loginPassword').value;
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(e)) {
+    return alert('Please enter a valid email address.');
+  }
+  if (e && p) await login(e, p);
+});
+document.getElementById('submitSignup')?.addEventListener('click', async () => {
+  const n = document.getElementById('signupName').value.trim();
+  const e = document.getElementById('signupEmail').value.trim();
+  const p = document.getElementById('signupPassword').value;
+  const pc = document.getElementById('signupPasswordConfirm').value;
+
+  if (!n || !e || !p || !pc) {
+    return alert('Please fill in all fields.');
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(e)) {
+    return alert('Please enter a valid email address.');
+  }
+
+  if (p !== pc) {
+    return alert('Passwords do not match.');
+  }
+  
+  if (p.length < 10) {
+    return alert('Password must be at least 10 characters long.');
+  }
+
+  await signup(n, e, p);
+});
+document.querySelectorAll('#backToMenu, #backToMenuSignup').forEach(b => b.addEventListener('click', showMenu));
+document.addEventListener('click', e => {
+  if (!pBtn.contains(e.target) && !pDrop.contains(e.target)) pDrop.classList.add('hidden');
+});
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    openSidebarTab(btn.dataset.tab);
+  });
+});
+document.querySelectorAll('.submenu .dropdown-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.getElementById('profileDropdown').classList.add('hidden');
+  });
+});
+// --- Upgrade Modal Logic ---
+const upgradeModal = document.getElementById('upgradeModal');
+const closeUpgradeBtn = document.getElementById('closeUpgradeModal');
+const cancelUpgradeBtn = document.getElementById('cancelUpgradeBtn');
+const goToPricingBtn = document.getElementById('goToPricingBtn');
+
+function showUpgradeModal() {
+    upgradeModal.classList.remove('hidden');
+}
+
+function hideUpgradeModal() {
+    upgradeModal.classList.add('hidden');
+}
+
+if (closeUpgradeBtn) closeUpgradeBtn.addEventListener('click', hideUpgradeModal);
+if (cancelUpgradeBtn) cancelUpgradeBtn.addEventListener('click', hideUpgradeModal);
+
+if (goToPricingBtn) {
+    goToPricingBtn.addEventListener('click', () => {
+        window.location.href = 'Pricing.html';
+    });
+}
+
+// Close modal when clicking outside
+if (upgradeModal) {
+    upgradeModal.addEventListener('click', (e) => {
+        if (e.target === upgradeModal) hideUpgradeModal();
+    });
+}
+
+// ==========================================
+// SHARE MODAL LOGIC
+// ==========================================
+
+const shareModal = document.getElementById('shareModal');
+const closeShareModalBtn = document.getElementById('closeShareModal'); // Renamed for clarity
+const shareLinkInput = document.getElementById('shareLinkInput');
+const shareStepConfig = document.getElementById('shareStepConfig');
+const shareResult = document.getElementById('shareResult');
+let currentShareFileId = null;
+
+// 1. Define reusable Close/Reset function
+function hideShareModal() {
+    shareModal.classList.add('hidden');
+    
+    // Reset the view state after the fade-out animation (200ms)
+    setTimeout(() => {
+        if (shareStepConfig && shareResult) {
+            shareStepConfig.classList.remove('hidden');
+            shareResult.classList.add('hidden');
+        }
+        if (shareLinkInput) shareLinkInput.value = '';
+    }, 200);
+}
+
+// 2. Attach Close Event to 'X' Button
+if (closeShareModalBtn) {
+    closeShareModalBtn.onclick = hideShareModal;
+}
+
+// 3. Attach Close Event to Backdrop (Click Outside)
+if (shareModal) {
+    shareModal.addEventListener('click', (e) => {
+        // If the click target is the modal container itself (not the card inside)
+        if (e.target === shareModal) {
+            hideShareModal();
+        }
+    });
+}
+
+// ===================================================================
+// TIPTAP & SWITCHING LOGIC
+// ===================================================================
+
+function initTiptap() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  tiptapEditor = new Editor({
+    element: document.getElementById('tiptapEditor'),
+    extensions: [
+      StarterKit,
+      TextStyle, 
+      Color, 
+      Link.configure({ openOnClick: false }),
+      Image, 
+      Placeholder.configure({ placeholder: 'Write rich text...' }),
+      // --- FIX: Add TextAlign Extension ---
+      TextAlign.configure({
+        types: ['heading', 'paragraph'],
+      }),
+    ],
+    content: '',
+    onUpdate: ({ editor }) => {
+      updateTiptapToolbar(editor);
+      const json = JSON.stringify(editor.getJSON());
+      handleAutoSave(json);
+    },
+    onSelectionUpdate: ({ editor }) => updateTiptapToolbar(editor),
+    onBlur: async () => {
+        if(isRichMode) await saveVersionIfChanged();
+    }
+  });
+  
+  setupTiptapButtons();
+}
+
+function setupEditorSwitching() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  // 1. GENERIC DROPDOWN LOGIC (Handles Editor Mode AND Tools Menu)
+  const dropdownGroups = [
+      { trigger: 'editorModeTriggerPlain', menu: 'editorModeDropdownPlain' },
+      { trigger: 'editorModeTriggerRich', menu: 'editorModeDropdownRich' },
+      { trigger: 'toolsMenuBtn', menu: 'toolsDropdown' }
+  ];
+
+  dropdownGroups.forEach(group => {
+      const btn = document.getElementById(group.trigger);
+      const menu = document.getElementById(group.menu);
+
+      if (btn && menu) {
+          btn.addEventListener('click', (e) => {
+              e.stopPropagation();
               
-              <!-- Right Icon: Checkmark -->
-              <svg class="mode-check-icon"><use href="#icon-check"/></svg>
-            </button>
+              // Close ALL other dropdowns first
+              dropdownGroups.forEach(g => {
+                  const otherMenu = document.getElementById(g.menu);
+                  if (otherMenu && otherMenu !== menu) {
+                      otherMenu.classList.add('hidden');
+                  }
+              });
 
-          </div>
-        </div>
+              // Toggle the specific menu
+              menu.classList.toggle('hidden');
+              
+              // If we just opened the Tools menu, we might want to attach listeners to its items
+              if (!menu.classList.contains('hidden') && group.trigger === 'toolsMenuBtn') {
+                  const toolBtns = menu.querySelectorAll('button');
+                  toolBtns.forEach(b => {
+                      b.onclick = () => menu.classList.add('hidden');
+                  });
+              }
+          });
+      }
+  });
 
-      </div>
-    </div>
-  </div>
+  // 2. GLOBAL CLOSE (Clicking outside closes everything)
+  window.addEventListener('click', () => {
+      dropdownGroups.forEach(group => {
+          const menu = document.getElementById(group.menu);
+          if (menu) menu.classList.add('hidden');
+      });
+  });
+
+  // 3. EDITOR MODE SPECIFIC LOGIC (Handling the Plain/Rich switch)
+  const options = document.querySelectorAll('.mode-option');
+  const textarea = document.getElementById('textEditor');
+
+  options.forEach(opt => {
+    opt.addEventListener('click', () => {
+      const targetMode = opt.getAttribute('data-mode');
+
+      // Close all dropdowns after selection
+      dropdownGroups.forEach(group => {
+        const menu = document.getElementById(group.menu);
+        if (menu) menu.classList.add('hidden');
+      });
+
+      // --- CASE A: SWITCHING TO RICH ---
+      if (targetMode === 'rich') {
+        if (!isUserPremium()) {
+           showRichPreviewModal(); 
+           return; 
+        }
+
+        if (isRichMode) return; 
+
+        const raw = textarea.value;
+        
+        try {
+           const json = JSON.parse(raw);
+           if (json.type === 'doc') {
+               tiptapEditor.commands.setContent(json);
+           } else {
+               throw new Error("Not a doc");
+           }
+        } catch(e) {
+           const lines = raw.split('\n');
+           const docStructure = {
+               type: 'doc',
+               content: lines.map(line => ({
+                   type: 'paragraph',
+                   content: line ? [{ type: 'text', text: line }] : [] 
+               }))
+           };
+           tiptapEditor.commands.setContent(docStructure);
+        }
+
+        isRichMode = true;
+        updateEditorModeUI();
+        handleAutoSave(JSON.stringify(tiptapEditor.getJSON()));
+      }
+
+      // --- CASE B: SWITCHING TO PLAIN ---
+      else if (targetMode === 'plain') {
+        if (!isRichMode) return; 
+
+        if(!confirm("Switching to Plain Text will remove all formatting (images, colors). Continue?")) return;
+
+        const cleanText = tiptapEditor.getText({ blockSeparator: "\n" });
+        textarea.value = cleanText;
+
+        isRichMode = false;
+        updateEditorModeUI();
+        textarea.dispatchEvent(new Event('input'));
+      }
+    });
+  });
   
-  <!-- Rich Editor Body -->
-  <div class="editor-left">
-    <div id="tiptapEditor" class="tiptap-content"></div>
-  </div>
-</div>
+  updateEditorModeUI();
+}
 
-</div>
+function updateEditorModeUI() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  // 1. Switch the main editor wrappers
+  applyEditorMode(); 
 
-      <!-- RIGHT: Sidebar (FULLY INDEPENDENT, FULL HEIGHT) -->
-      <aside class="editor-right">
-        <div class="sidebar-tabs">
-          <button class="tab-btn" data-tab="note-info">Info</button>
-          <button class="tab-btn active" data-tab="version-history">History</button>
-        </div>
+  // 2. Update the Toolbar Button Labels (BOTH buttons)
+  const labelText = isRichMode ? "Super Editor" : "Plain Text";
+  document.querySelectorAll('.current-mode-label').forEach(el => el.textContent = labelText);
 
-        <div class="sidebar-content">
-          <!-- TAB: Note Info -->
-          <div id="note-info" class="tab-panel">
-            <div class="info-section">
-              <h4>Note Details</h4>
-              <div class="detail-row">
-                <label>Name:</label>
-                <span id="infoFileName" class="filename-display"></span>
-              </div>
-              <div class="detail-row">
-                <label>Created:</label>
-                <span id="infoCreated">—</span>
-              </div>
-              <div class="detail-row">
-                <label>Modified:</label>
-                <span id="infoModified">—</span>
-              </div>
-            </div>
-
-            <div class="info-section">
-              <h4>Encryption</h4>
-              <!-- Guest / Offline -->
-              <div id="encryptionOffline" class="offline-message">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
-                  <line x1="1" y1="1" x2="23" y2="23"></line>
-                </svg>
-                <div class="offline-text">
-                  <strong>You're offline</strong>
-                  <small>Sign in to save notes with end-to-end encryption</small>
-                </div>
-              </div>
-
-              <!-- Logged in -->
-              <div id="encryptionOnline" class="encryption-badge">
-                <svg class="btn-icon" style="fill:#10b981;"><use href="#icon-lock"/></svg>
-                <span>AES-GCM 256-bit (E2E)</span>
-              </div>
-            </div>
-
-<div class="info-section">
-  <h4>Actions</h4>
+  // 3. STRICT CHECKMARK UPDATE
+  const allOptions = document.querySelectorAll('.mode-option');
   
-  <!-- NEW Share Button -->
-  <button id="infoShare" class="sidebar-action-btn">
-    <svg class="btn-icon"><use href="#icon-share"/></svg>
-    Share Note
-  </button>
+  // Step A: Reset ALL options first (Fixes "Both Selected" bug)
+  allOptions.forEach(btn => btn.classList.remove('selected'));
 
-  <!-- Existing Download Button (Updated Class) -->
-  <button id="infoDownload" class="sidebar-action-btn">
-    <svg class="btn-icon"><use href="#icon-download"/></svg>
-    Download Note
-  </button>
-</div>
-          </div>
-
-
-         <!-- Version History TAB - Updated sticky bottom -->
-<!-- Version History TAB - Updated sticky bottom -->
-        <div id="version-history" class="tab-panel active">
-          <div class="info-section">
-            <h4>Version History</h4>
-            <ul id="versionList" class="version-list">
-              <!-- Filled by JS -->
-            </ul>
-          </div>
-          <!-- The footer will now be dynamically inserted here by JS -->
-        </div>
-        </div>
-      </aside>
-
-    </main>
-  </div>
-
-<!-- Share Modal (Redesigned) -->
-<div id="shareModal" class="st-modal hidden">
-  <div class="st-card" style="height: auto; min-height: auto; max-width: 440px; overflow: visible;">
+  // Step B: Select ONLY the correct ones based on current state
+  allOptions.forEach(btn => {
+    const mode = btn.getAttribute('data-mode');
     
-    <!-- Header -->
-    <div class="st-header" style="padding: 20px 24px 16px;">
-      <div class="st-user-summary" style="gap:12px;">
-        <!-- Share Icon Badge -->
-        <div class="st-avatar-large" style="background:#f0f9ff; color:#0ea5e9; box-shadow:none; width:40px; height:40px;">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
-        </div>
-        <div class="st-user-details">
-          <h3>Share Securely</h3>
-          <span>End-to-End Encrypted Link</span>
-        </div>
-      </div>
-      <button id="closeShareModal" class="st-close-btn">
-        <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"></path></svg>
-      </button>
-    </div>
+    if (isRichMode && mode === 'rich') {
+        btn.classList.add('selected');
+    } 
+    else if (!isRichMode && mode === 'plain') {
+        btn.classList.add('selected');
+    }
+  });
 
-    <!-- Body -->
-    <div class="st-body" style="padding: 24px; flex: 0 0 auto;">
+  // 4. Save preference
+  localStorage.setItem('kryptNote_editorMode', isRichMode ? 'rich' : 'plain');
+  
+  // 5. Toggle Premium Body Class (for styling locks)
+  if (isUserPremium()) {
+    document.body.classList.add('is-premium');
+  } else {
+    document.body.classList.remove('is-premium');
+  }
+}
+
+function applyEditorMode() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const plainWrap = document.getElementById('plainWrapper');
+  const richWrap = document.getElementById('richWrapper');
+  
+  if (isRichMode) {
+    plainWrap.classList.add('hidden');
+    richWrap.classList.remove('hidden');
+    setTimeout(() => tiptapEditor?.commands.focus(), 0);
+  } else {
+    richWrap.classList.add('hidden');
+    plainWrap.classList.remove('hidden');
+    setTimeout(() => document.getElementById('textEditor').focus(), 0);
+  }
+}
+
+function updateTiptapToolbar(editor) {
+  const set = (id, active) => {
+    const btn = document.getElementById(id);
+    if(btn) btn.classList.toggle('is-active', active);
+  };
+
+  // Standard Buttons
+  set('ttBold', editor.isActive('bold'));
+  set('ttItalic', editor.isActive('italic'));
+  set('ttStrike', editor.isActive('strike'));
+  set('ttCode', editor.isActive('code'));
+  set('ttBullet', editor.isActive('bulletList'));
+  set('ttOrdered', editor.isActive('orderedList'));
+  set('ttQuote', editor.isActive('blockquote'));
+  set('ttLink', editor.isActive('link'));
+  
+  // Alignment
+  set('ttAlignLeft', editor.isActive({ textAlign: 'left' }));
+  set('ttAlignCenter', editor.isActive({ textAlign: 'center' }));
+  set('ttAlignRight', editor.isActive({ textAlign: 'right' }));
+  
+  // Color
+  const colorInput = document.getElementById('ttColor');
+  if(colorInput && editor.getAttributes('textStyle').color) {
+      colorInput.value = editor.getAttributes('textStyle').color;
+  }
+
+  // Heading Dropdown Label
+  const currentLabel = document.getElementById('currentHeading');
+  if (currentLabel) {
+    if (editor.isActive('heading', { level: 1 })) currentLabel.textContent = 'Heading 1';
+    else if (editor.isActive('heading', { level: 2 })) currentLabel.textContent = 'Heading 2';
+    else if (editor.isActive('heading', { level: 3 })) currentLabel.textContent = 'Heading 3';
+    else currentLabel.textContent = 'Normal';
+  }
+}
+
+function setupTiptapButtons() {
+  
+  // 1. Specialized Handler for History (Undo/Redo)
+  const setupHistoryBtn = (id, action) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault(); // STOP focus loss
+      e.stopPropagation(); // Stop bubbling
       
-      <!-- STEP 1: Configuration (Visible by default) -->
-      <div id="shareStepConfig">
-        <p class="st-subtext" style="margin-bottom: 20px; line-height: 1.5;">
-          This creates a read-only snapshot of your note. The encryption key is embedded in the link and is never sent to the server.
-        </p>
-        
-        <div class="st-form-group">
-          <label class="st-label">Link Expiration</label>
-          <div style="position: relative;">
-            <select id="shareExpiration" class="st-input" style="appearance: none; cursor: pointer;">
-              <option value="1">1 Hour</option>
-              <option value="24">1 Day</option>
-              <option value="72">3 Days</option>
-              <option value="168">7 Days</option> <!-- Removed 'selected' from here -->
-              <option value="720">30 Days</option>
-              <option value="0" selected>Never</option> <!-- Added 'selected' here -->
-            </select>
-            <!-- Custom Chevron -->
-            <div style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); pointer-events: none; color:#64748b;">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
-            </div>
-          </div>
-        </div>
+      // Force focus back to editor immediately
+      tiptapEditor.view.focus();
+      
+      // Execute command
+      if (action === 'undo') {
+        tiptapEditor.commands.undo();
+      } else {
+        tiptapEditor.commands.redo();
+      }
+    });
+  };
 
-        <div class="st-actions-right" style="margin-top: 24px;">
-           <button id="generateShareBtn" class="st-btn-primary" style="width: 100%; justify-content: center; display: flex; gap: 8px;">
-             Generate Link
-           </button>
-        </div>
-      </div>
+  setupHistoryBtn('ttUndo', 'undo');
+  setupHistoryBtn('ttRedo', 'redo');
 
-      <!-- STEP 2: Result (Hidden by default) -->
-      <div id="shareResult" class="hidden">
-        
-        <div class="st-form-group">
-          <label class="st-label" style="color: #16a34a;">Link Generated Successfully</label>
-          <div class="share-input-group">
-            <input type="text" id="shareLinkInput" class="st-input share-input-readonly" readonly>
-            <button id="copyShareLinkBtn" class="st-btn-primary small">Copy</button>
-          </div>
-        </div>
-
-        <div class="st-info-box" style="margin-bottom: 0;">
-          <strong>Important:</strong> If you lose this link, we cannot recover it. The note content is fixed at the time of generation.
-        </div>
-      </div>
-
-    </div>
-  </div>
-</div>
-
-<!-- Settings Modal (New Professional Design) -->
-<div id="settingsModal" class="st-modal hidden">
-  <div class="st-card">
+  // 2. General Handler for Formatting (Bold, Italic, etc.)
+  const cmd = (id, callback) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
     
-    <!-- 1. Header: Profile & Close -->
-    <div class="st-header">
-      <div class="st-user-summary">
-        <div id="stAvatar" class="st-avatar-large">U</div>
-        <div class="st-user-details">
-          <h3 id="stName">User Name</h3>
-          <span id="stEmail">user@example.com</span>
-        </div>
-      </div>
-      <button id="closeSettings" class="st-close-btn">
-        <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"></path></svg>
-      </button>
-    </div>
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault(); // Stop focus loss
+      // Chain allows keeping selection state valid
+      callback(tiptapEditor.chain().focus()); 
+    });
+  };
 
-    <!-- 2. Tabs Navigation -->
-    <div class="st-tabs">
-      <button class="st-tab-btn active" data-target="tab-general">General</button>
-      <button class="st-tab-btn" data-target="tab-security">Security</button>
-      <button class="st-tab-btn" data-target="tab-data">Data</button>
-    </div>
+  // --- FORMATTING ---
+  cmd('ttBold', (chain) => chain.toggleBold().run());
+  cmd('ttItalic', (chain) => chain.toggleItalic().run());
+  cmd('ttStrike', (chain) => chain.toggleStrike().run());
+  cmd('ttCode', (chain) => chain.toggleCode().run());
 
-    <!-- 3. Content Body -->
-    <div class="st-body">
+  // --- ALIGNMENT ---
+  cmd('ttAlignLeft', (chain) => chain.setTextAlign('left').run());
+  cmd('ttAlignCenter', (chain) => chain.setTextAlign('center').run());
+  cmd('ttAlignRight', (chain) => chain.setTextAlign('right').run());
+
+  // --- LISTS & QUOTES ---
+  cmd('ttBullet', (chain) => chain.toggleBulletList().run());
+  cmd('ttOrdered', (chain) => chain.toggleOrderedList().run());
+  cmd('ttQuote', (chain) => chain.toggleBlockquote().run());
+
+  // --- SPECIAL INPUTS ---
+  
+  // Color Picker (FIXED)
+  const colorInput = document.getElementById('ttColor');
+  if (colorInput) {
+      // 1. Intercept the click to prevent the editor from losing focus (and selection)
+      colorInput.addEventListener('mousedown', (e) => {
+          e.preventDefault(); 
+          // Manually trigger the click after a tiny delay so the browser opens the picker
+          // without blurring the text editor field.
+          setTimeout(() => {
+             colorInput.click();
+          }, 10);
+      });
+
+      // 2. Apply the color
+      colorInput.addEventListener('input', (e) => {
+          tiptapEditor.chain().focus().setColor(e.target.value).run();
+      });
+  }
+  
+  // Link
+  document.getElementById('ttLink')?.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const previousUrl = tiptapEditor.getAttributes('link').href;
+    setTimeout(() => {
+        const url = window.prompt('URL', previousUrl);
+        if (url === null) return;
+        if (url === '') {
+            tiptapEditor.chain().focus().extendMarkRange('link').unsetLink().run();
+        } else {
+            tiptapEditor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+        }
+    }, 10);
+  });
+  
+  // Image
+  document.getElementById('ttImage')?.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    setTimeout(() => {
+        const url = window.prompt('Image URL');
+        if (url) {
+            tiptapEditor.chain().focus().setImage({ src: url }).run();
+        }
+    }, 10);
+  });
+
+  // --- HEADING DROPDOWN ---
+  const dropdown = document.getElementById('headingDropdown');
+  const trigger = dropdown?.querySelector('.dropdown-trigger');
+  
+  if (dropdown && trigger) {
+      trigger.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          dropdown.classList.toggle('is-open');
+      });
+
+      dropdown.querySelectorAll('.dropdown-item').forEach(item => {
+          item.addEventListener('mousedown', (e) => {
+              e.preventDefault(); 
+              const level = parseInt(e.target.getAttribute('data-level'));
+              if (level === 0) {
+                  tiptapEditor.chain().focus().setParagraph().run();
+              } else {
+                  tiptapEditor.chain().focus().toggleHeading({ level }).run();
+              }
+              dropdown.classList.remove('is-open');
+          });
+      });
+
+      window.addEventListener('mousedown', (e) => {
+          if (!dropdown.contains(e.target)) dropdown.classList.remove('is-open');
+      });
+  }
+}
+
+document.getElementById('textEditor')?.addEventListener('input', (e) => {
+  if (!isRichMode) {
+      handleAutoSave(e.target.value);
+  }
+});
+
+function handleAutoSave(newContent) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === state.activeId);
+  if (!file) return;
+
+  if (file.content !== newContent) {
+      file.content = newContent;
+      file.updated = new Date().toISOString();
       
-      <!-- TAB: General (Plan & Stats) -->
-      <div id="tab-general" class="st-tab-content active">
-        <!-- Plan Card -->
-        <div class="st-section-card" id="stPlanCard">
-          <div class="st-row-between">
-            <div>
-              <div class="st-label">Current Plan</div>
-              <div id="stPlanName" class="st-value-large">Free Plan</div>
-            </div>
-            <div id="stPlanBadge" class="st-badge">Free</div>
-          </div>
-          <div class="st-divider"></div>
-          <div class="st-row-between">
-            <span id="stPlanExpiry" class="st-subtext">Unlock all premium features</span>
-            <button id="stUpgradeBtn" class="st-btn-primary small">Upgrade to Pro</button>
-          </div>
-        </div>
+      // NEW: Update cache immediately as user types
+      file._cachedPreview = getPreviewText(newContent?.trim());
+      file._contentLastPreviewed = newContent;
 
-        <!-- Stats Grid -->
-        <div class="st-grid-2">
-          <div class="st-stat-box">
-            <span class="st-stat-label">Total Notes</span>
-            <span id="stNoteCount" class="st-stat-value">0</span>
-          </div>
-          <div class="st-stat-box">
-            <span class="st-stat-label">Member Since</span>
-            <span id="stJoinedDate" class="st-stat-value">—</span>
-          </div>
-        </div>
-      </div>
+      clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => saveFile(file), 800);
+      updateSidebarInfo(file);
+  }
+}
 
-      <!-- TAB: Security (Password) -->
-<div id="tab-security" class="st-tab-content">
-    <div class="st-form-group">
-        <label class="st-label">Change Password</label>
-        <input type="password" id="currentPassword" class="st-input" placeholder="Current password" />
-        <!-- Placeholder updated from min 6 chars to min 10 chars -->
-        <input type="password" id="newPassword" class="st-input" placeholder="New password (min 10 chars)" />
-        <input type="password" id="confirmPassword" class="st-input" placeholder="Confirm new password" />
-    </div>
-    <div class="st-info-box" style="background:#fff7ed; color:#c2410c; border-color:#fed7aa;">
-        <strong>Warning:</strong> We cannot recover your password. If you forget it, your notes will be lost forever.
-    </div>
-    <div class="st-actions-right">
-        <button id="changePasswordBtn" class="st-btn-primary">Update Password</button>
-    </div>
-</div>
-
-      <!-- TAB: Data (Import/Export/Delete) -->
-      <div id="tab-data" class="st-tab-content">
-        
-        <div class="st-label" style="margin-bottom:12px">Backup & Restore</div>
-        
-        <!-- Big Clickable Cards Grid -->
-        <div class="st-action-grid">
-          <button id="exportJsonBtn" class="st-action-card-btn">
-            <svg class="btn-icon"><use href="#icon-export"/></svg>
-            <span class="st-action-text">Export JSON</span>
-          </button>
-          
-          <button id="importJsonBtn" class="st-action-card-btn">
-            <svg class="btn-icon"><use href="#icon-download"/></svg>
-            <span class="st-action-text">Import JSON</span>
-          </button>
-        </div>
-
-        <input type="file" id="importFileInput" accept=".json" hidden />
-
-        <!-- Danger Zone at the bottom -->
-        <div class="st-danger-section">
-            <div class="st-label" style="color:#ef4444;">Danger Zone</div>
-            <div class="st-danger-row">
-              <div class="st-danger-info">
-                <strong>Delete Account</strong>
-                <p>This will erase all notes permanently.</p>
-              </div>
-              <button id="deleteAccountBtn" class="st-btn-danger">Delete</button>
-            </div>
-        </div>
-      </div>
-
-    </div>
-  </div>
-</div>
-<!-- Upgrade Feature Modal -->
-<div id="upgradeModal" class="st-modal hidden">
-  <div class="st-card" style="height: auto; max-height: 90vh; max-width: 400px; overflow: visible;">
+function openShareModal(fileId) {
+    if (!pb.authStore.isValid) {
+        showToast("You must be logged in to share notes.");
+        return;
+    }
+    currentShareFileId = fileId;
     
-    <!-- Header -->
-    <div class="st-header" style="border-bottom: none; padding-bottom: 0;">
-      <div class="st-user-summary"></div> <!-- Spacer -->
-      <button id="closeUpgradeModal" class="st-close-btn">
-        <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"></path></svg>
-      </button>
-    </div>
-
-    <!-- Body -->
-    <div class="st-body" style="text-align: center; padding-top: 0; padding-bottom: 32px; background: #fff;">
-      
-      <!-- Crown Icon Bubble -->
-      <div style="width: 64px; height: 64px; background: #fffbeb; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; color: #d97706;">
-        <svg class="btn-icon" style="width: 32px; height: 32px;"><use href="#icon-crown"/></svg>
-      </div>
-
-      <h3 style="font-size: 20px; font-weight: 700; color: #0f172a; margin-bottom: 10px;">Custom Categories</h3>
-      
-      <p style="font-size: 14px; color: #64748b; margin-bottom: 24px; line-height: 1.5;">
-        Organizing notes into custom folders is a <strong>Pro feature</strong>.<br>
-        Upgrade to unlock unlimited categories.
-      </p>
-
-      <button id="goToPricingBtn" class="st-btn-primary" style="width: 100%; justify-content: center; display: flex; align-items: center; gap: 8px;">
-        Upgrade to Pro
-      </button>
-      
-      <button id="cancelUpgradeBtn" style="margin-top: 12px; background: none; border: none; color: #64748b; font-size: 13px; font-weight: 500; cursor: pointer;">
-        Maybe later
-      </button>
-
-    </div>
-  </div>
-</div>
-
-<!-- RICH EDITOR SANDBOX MODAL -->
-<div id="richPreviewModal" class="st-modal hidden">
-  <!-- CHANGED: max-width increased to 880px -->
-  <div class="st-card" style="height: auto; max-width: 910px; overflow: hidden; display: flex; flex-direction: column;">
+    // Ensure correct initial state before showing
+    shareStepConfig.classList.remove('hidden');
+    shareResult.classList.add('hidden');
     
-    <!-- Header -->
-    <div class="st-header" style="padding: 16px 24px; background: #f8fafc; border-bottom:none;">
-      <div class="st-user-summary" style="gap:10px;">
-        <div class="st-avatar-large" style="background:#eef2ff; color:#4f46e5; width:36px; height:36px; font-size:16px;">
-          <svg class="btn-icon" style="width:20px;height:20px;"><use href="#icon-crown"/></svg>
-        </div>
-        <div class="st-user-details">
-          <h3 style="font-size:15px;">Super Editor (Interactive Demo)</h3>
-          <span style="font-size:12px;">Experience the power of rich formatting.</span>
-        </div>
-      </div>
-      <button id="closeRichPreview" class="st-close-btn">
-        <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12"></path></svg>
-      </button>
-    </div>
+    shareModal.classList.remove('hidden');
+}
 
-    <!-- SANDBOX BODY -->
-    <div class="sandbox-editor-container">
-      
-      <!-- SANDBOX TOOLBAR (IDs prefixed with prev_) -->
-      <div class="toolbar-panel rich-panel simple-toolbar" style="border-bottom: 1px solid #e2e8f0; background: #fff; padding: 8px 12px;">
+document.getElementById('generateShareBtn')?.addEventListener('click', async () => {
+    if (!currentShareFileId) return;
+    
+    const btn = document.getElementById('generateShareBtn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = 'Generating...';
+    btn.disabled = true;
+
+    try {
+        // 1. Get File
+        const file = state.files.find(f => f.id === currentShareFileId);
+        if (!file) throw new Error("File not found");
+
+        // 2. Generate Key & Encrypt
+        const shareKey = await generateShareKey();
+        const { ciphertext, iv, authTag } = await encryptBlob(file.content, shareKey);
+
+        // 3. Handle Expiration Logic
+        const expirationValue = document.getElementById('shareExpiration').value;
+        let expirationDate = ""; // Default to empty (Unlimited)
+
+        if (expirationValue !== "0") {
+            const hours = parseInt(expirationValue);
+            const date = new Date();
+            date.setTime(date.getTime() + (hours * 60 * 60 * 1000));
+            expirationDate = date.toISOString();
+        }
         
-        <!-- Group 1: History -->
-        <div class="rich-btn-group">
-          <button id="prev_ttUndo" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
-          <button id="prev_ttRedo" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 3.7"/></svg></button>
-        </div>
+        // 4. Upload
+        const record = await pb.collection('shared_notes').create({
+            user: pb.authStore.model.id,
+            file: currentShareFileId,
+            encryptedBlob: arrayToB64(ciphertext),
+            iv: arrayToB64(iv),
+            authTag: arrayToB64(authTag),
+            expires: expirationDate // Sends ISO string OR empty string
+        });
 
-        <!-- Group 2: Headings -->
-        <div class="rich-btn-group">
-           <div class="dropdown" id="prev_headingDropdown">
-            <button class="rich-btn-item rich-dropdown-trigger dropdown-trigger">
-              <span>Heading</span>
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
-            </button>
-            <div class="dropdown-menu">
-              <button class="dropdown-item" data-level="0">Paragraph</button>
-              <button class="dropdown-item" data-level="1">Heading 1</button>
-              <button class="dropdown-item" data-level="2">Heading 2</button>
-              <button class="dropdown-item" data-level="3">Heading 3</button>
-            </div>
-          </div>
-        </div>
+        // 5. Construct Link
+        const keyStr = await exportKeyToUrl(shareKey);
+        const shareUrl = `${window.location.origin}/share.html?id=${record.id}#key=${keyStr}`;
+
+        // 6. UI Transition
+        shareLinkInput.value = shareUrl;
         
-        <!-- Group 3: Formatting -->
-        <div class="rich-btn-group">
-          <button id="prev_ttBold" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"/></svg></button>
-          <button id="prev_ttItalic" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg></button>
-          <button id="prev_ttStrike" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></svg></button>
-          <button id="prev_ttCode" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
-        </div>
+        shareStepConfig.classList.add('hidden');
+        shareResult.classList.remove('hidden');
 
-        <!-- Group 4: Alignment -->
-        <div class="rich-btn-group">
-          <button id="prev_ttAlignLeft" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 5H3"/><path d="M15 12H3"/><path d="M17 19H3"/></svg></button>
-          <button id="prev_ttAlignCenter" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 5H3"/><path d="M17 12H7"/><path d="M19 19H5"/></svg></button>
-          <button id="prev_ttAlignRight" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 5H3"/><path d="M21 12H9"/><path d="M21 19H7"/></svg></button>
-        </div>
+    } catch (e) {
+        console.error(e);
+        showToast('Failed to generate link');
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+});
 
-        <!-- Group 5: Lists -->
-        <div class="rich-btn-group">
-          <button id="prev_ttBullet" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg></button>
-          <button id="prev_ttOrdered" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M11 5h10"/><path d="M11 12h10"/><path d="M11 19h10"/><path d="M4 4h1v5"/><path d="M4 9h2"/><path d="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02"/></svg></button>
-          <button id="prev_ttQuote" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/></svg></button>
-        </div>
+document.getElementById('copyShareLinkBtn')?.addEventListener('click', () => {
+    // 1. Get the text
+    const textToCopy = shareLinkInput.value;
 
-        <!-- Group 6: Inserts -->
-        <div class="rich-btn-group">
-          <div class="rich-btn-item color-wrapper" title="Text Color">
-  <svg class="btn-icon"><use href="#icon-color-picker"/></svg>
-  <input type="color" id="prev_ttColor" class="color-input" value="#000000">
-</div>
-          <button id="prev_ttLink" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
-          <button id="prev_ttImage" class="rich-btn-item"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/><line x1="16" x2="22" y1="5" y2="5"/><line x1="19" x2="19" y1="2" y2="8"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></button>
-        </div>
+    // 2. Use the modern Clipboard API
+    navigator.clipboard.writeText(textToCopy).then(() => {
+        // --- Success Animation ---
+        const copyBtn = document.getElementById('copyShareLinkBtn');
+        const originalText = copyBtn.textContent;
+        
+        copyBtn.textContent = "Copied!";
+        copyBtn.style.backgroundColor = "#10b981"; // Green
+        copyBtn.style.color = "#ffffff";
+        
+        setTimeout(() => {
+            copyBtn.textContent = originalText;
+            copyBtn.style.backgroundColor = ""; // Reset to default
+            copyBtn.style.color = "";
+        }, 2000);
+    }).catch(err => {
+        // Fallback for older browsers or if permission denied
+        console.error('Async: Could not copy text: ', err);
+        
+        // Optional: Keep execCommand as a backup if the above fails
+        shareLinkInput.select();
+        document.execCommand('copy');
+    });
+});
 
-      </div>
-
-      <!-- SANDBOX EDITOR INSTANCE -->
-      <div id="previewEditorBody"></div>
-
-      <!-- STICKY FOOTER -->
-      <div class="sandbox-footer">
-        <div class="sandbox-text">✨ You are in interactive demo mode. Content is not saved.</div>
-        <button id="upgradeFromPreviewBtn" class="st-btn-primary small">
-          Unlock Pro to Save
-        </button>
-      </div>
-
-    </div>
-  </div>
-</div>
-  <!-- Scripts -->
-  <!-- icons.js moved to the bottom of body to fix "null" error -->
-  <script src="icons.js"></script>
-  <script src="crypto.js" type="module"></script>
-  <script src="settings.js" type="module"></script>
-  <script src="export.js" type="module"></script>  <!-- ADD THIS LINE -->
-  <script src="script.js" type="module" defer></script>
-</body>
-</html>
+// Init
+initPocketBase();
