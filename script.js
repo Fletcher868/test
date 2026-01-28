@@ -5,7 +5,6 @@ import {
   encryptBlob, decryptBlob, randomSalt, arrayToB64, b64ToArray ,
   generateShareKey, exportKeyToUrl
 } from './crypto.js';
-import { createVersionSnapshot, getVersions } from './versions.js';
 
 import { Editor } from 'https://esm.sh/@tiptap/core@2.2.4';
 import StarterKit from 'https://esm.sh/@tiptap/starter-kit@2.2.4';
@@ -37,7 +36,7 @@ let pb = null,
     currentMenu = null, derivedKey = null;
 let originalContent = '';
 let isSavingVersion = false;
-let recentlySavedLocally = new Set(); 
+const pendingLocalSaves = new Map();
 let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') !== 'false';
 let finalizeUIUpdateTimeout = null;
 let isFinalizingUI = false;
@@ -73,6 +72,7 @@ const USER_CACHE_KEY = 'kryptNote_userCache';
 
 // Helper: Save current state to local storage (for fast reload)
 function saveToUserCache() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // Only cache if logged in
   if (!pb.authStore.isValid) return;
   
@@ -92,6 +92,7 @@ function saveToUserCache() {
 
 // Helper: Load from local storage immediately
 function loadFromUserCache() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const data = localStorage.getItem(USER_CACHE_KEY);
   if (!data) return false;
 
@@ -108,6 +109,95 @@ function loadFromUserCache() {
     return false;
   }
 }
+
+/**
+ * Optimistically add version to cache for instant feedback
+ */
+function optimisticallyAddToVersionCache(fileId, content, editorMode) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === fileId);
+  if (!file) return;
+  
+  // Create optimistic version object
+  const optimisticVersion = {
+    id: `temp_version_${Date.now()}`,
+    created: new Date().toISOString(),
+    content: content,
+    editor: editorMode || 'plain'
+  };
+  
+  // Initialize cache if needed
+  if (!file.versionsCache) {
+    file.versionsCache = [];
+  }
+  
+  // Add to beginning of array (most recent first)
+  file.versionsCache.unshift(optimisticVersion);
+  
+  // Update cache immediately
+  saveToUserCache();
+  
+  return optimisticVersion;
+}
+
+/**
+ * Update cache with server version (replace temp with real) and refresh UI
+ */
+function updateVersionCacheWithServer(fileId, serverVersion, tempVersionId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === fileId);
+  if (!file || !file.versionsCache) return;
+  
+  // Find and replace temp version in the data cache
+  const index = file.versionsCache.findIndex(v => v.id === tempVersionId);
+  if (index !== -1) {
+    file.versionsCache[index] = {
+      id: serverVersion.id,
+      created: serverVersion.created,
+      content: serverVersion.content,
+      editor: serverVersion.editor || 'plain'
+    };
+  } else {
+    // Fallback: Add new if temp not found (rare race condition)
+    file.versionsCache.unshift({
+      id: serverVersion.id,
+      created: serverVersion.created,
+      content: serverVersion.content,
+      editor: serverVersion.editor || 'plain'
+    });
+  }
+  
+  // Keep cache reasonable size
+  if (file.versionsCache.length > 50) {
+    file.versionsCache = file.versionsCache.slice(0, 50);
+  }
+  
+  // Save updated cache
+  saveToUserCache();
+  
+  // FIXED: Fully re-render the list to attach correct event listeners with new IDs
+  const currentActiveId = state.activeId;
+  const historyPanel = document.getElementById('version-history');
+  
+  if (currentActiveId === fileId && historyPanel && historyPanel.classList.contains('active')) {
+     renderVersionList(file, file.versionsCache);
+  }
+}
+
+function expectLocalEvent(id) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+    const currentCount = pendingLocalSaves.get(id) || 0;
+    pendingLocalSaves.set(id, currentCount + 1);
+
+    // Safety cleanup: If server event NEVER comes (e.g. offline/error), 
+    // clear this specific lock after 10 seconds to avoid permanently ignoring updates.
+    setTimeout(() => {
+        const count = pendingLocalSaves.get(id) || 0;
+        if (count > 0) {
+            pendingLocalSaves.set(id, count - 1);
+        }
+    }, 10000); 
+}
 // ===================================================================
 // POCKETBASE & AUTH
 // ===================================================================
@@ -115,6 +205,7 @@ function loadFromUserCache() {
 let previewEditor = null;
 
 function initPreviewEditor() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (previewEditor) return;
 
   previewEditor = new Editor({
@@ -227,6 +318,7 @@ document.getElementById('upgradeFromPreviewBtn')?.addEventListener('click', () =
 });
 
 async function initPocketBase() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // 1. Init PB
   pb = new PocketBase(PB_URL);
 
@@ -247,7 +339,6 @@ async function initPocketBase() {
           // Re-establish active file/tab info
           const activeFile = state.files.find(f => f.id === state.activeId);
           updateSidebarInfo(activeFile);
-          if(activeFile) updateVersionHistory(activeFile);
       }
   }
 
@@ -276,11 +367,11 @@ async function initPocketBase() {
     setupExport(pb, derivedKey, showToast);
   }
 
-  setupToolbarSlider();
   initSettings(pb, state, derivedKey, loadUserFiles, saveFile, renderFiles, loadActiveToEditor);
 }
 
 async function restoreEncryptionKeyAndLoad() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   try {
     derivedKey = await loadDataKeyFromSession();
     
@@ -329,6 +420,7 @@ async function restoreEncryptionKeyAndLoad() {
 }
 
 async function login(email, password) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
     // Exit preview mode if currently in preview
   if (previewMode) {
     exitPreviewMode();
@@ -374,6 +466,7 @@ async function login(email, password) {
 }
 
 async function signup(name, email, password) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   try {
     const saltArray = randomSalt();
     const saltB64 = arrayToB64(saltArray);
@@ -409,22 +502,23 @@ async function signup(name, email, password) {
 
 
 function logout() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (previewMode) {
     exitPreviewMode();
   }
   
   // CRITICAL FIX: Unsubscribe from Realtime *before* clearing authStore.
-  // This ensures the unsubscribe request is sent with the valid session token.
   if (pb) {
     pb.realtime.unsubscribe('files');
-    pb.realtime.unsubscribe('categories'); // Added categories unsubscribe
+    pb.realtime.unsubscribe('categories');
     console.log('Realtime subscription for files and categories stopped.');
   }
   
   pb.authStore.clear();
   sessionStorage.removeItem('dataKey');
   derivedKey = null;
-  localStorage.removeItem(USER_CACHE_KEY); 
+  localStorage.removeItem(USER_CACHE_KEY); // Clear cache on logout
+  
   // Fully reset state
   state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK };
   previewMode = false;
@@ -432,11 +526,10 @@ function logout() {
   originalBeforePreview = '';
   originalContent = '';
 
-  // Clear Plain Text Editor
+  // Clear Editors
   const editor = document.getElementById('textEditor');
   if (editor) editor.value = '';
 
-  // Clear Rich Text Editor
   if (tiptapEditor) {
       tiptapEditor.commands.setContent('');
   }
@@ -449,17 +542,18 @@ function logout() {
   setupExport(pb, derivedKey, showToast);
 }
 
-// From script.js
 
 function setupRealtimeSubscription() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (!pb.authStore.isValid || !derivedKey) {
     return;
   }
 
   pb.realtime.unsubscribe('files');
   pb.realtime.unsubscribe('categories'); 
+  pb.realtime.unsubscribe('versions');
   
-  // Helper to decrypt the record
+  // --- HELPER: Decrypt Record ---
   const decryptRecord = async (r, retries = 2) => { 
       let plaintext = '';
       if (r.iv && r.authTag && r.encryptedBlob) {
@@ -470,197 +564,212 @@ function setupRealtimeSubscription() {
               );
           } catch (decErr) {
               if (retries > 0) {
-                  // Wait a short period and try again for transient network/crypto errors
-                  console.warn(`Realtime decryption failed. Retrying in 100ms... (Retries left: ${retries - 1})`);
                   await new Promise(resolve => setTimeout(resolve, 100));
                   return decryptRecord(r, retries - 1);
               }
-              
-              // Final failure log
-              console.error("Realtime decryption failed after all retries:", decErr);
+              console.error("Realtime decryption failed:", decErr);
               plaintext = '[ERROR: Decryption Failed]';
           }
       }
       return { 
-          id: r.id, 
-          name: r.name, 
-          content: plaintext, 
-          created: r.created, 
-          updated: r.updated,
-          categoryId: r.category 
+          id: r.id, name: r.name, content: plaintext, created: r.created, updated: r.updated, 
+          categoryId: r.category, editor: r.editor 
       };
   };
 
-pb.realtime.subscribe('files', async function (e) {
-    
+  // --- 1. FILES SUBSCRIPTION ---
+  pb.realtime.subscribe('files', async function (e) {
     if (e.record.user !== pb.authStore.model.id) return;
     if (isFinalizingUI) return;
     
     const record = e.record;
+
+    // === START SUPPRESSION LOGIC ===
+    // 1. Check strict ID match (for Updates/Deletes)
+    if (e.action === 'update' || e.action === 'delete') {
+        const pendingCount = pendingLocalSaves.get(record.id) || 0;
+        if (pendingCount > 0) {
+            // This is OUR update echoing back. Ignore it.
+            pendingLocalSaves.set(record.id, pendingCount - 1);
+            console.log(`Ignoring local echo for ${record.id}`);
+            return; 
+        }
+    }
+
+    // 2. Special Check for Creates (ID might be temp_ in our Map)
+    // We scan for a matching temp file name to see if we are expecting this.
+    let isLocalCreate = false;
+    let matchingTempId = null;
     
-    // --- 1. Handle Delete ---
+    if (e.action === 'create') {
+        const tempFile = state.files.find(f => f.id.startsWith('temp_') && f.name === record.name);
+        if (tempFile) {
+            const tempPendingCount = pendingLocalSaves.get(tempFile.id) || 0;
+            if (tempPendingCount > 0) {
+                isLocalCreate = true;
+                matchingTempId = tempFile.id;
+                // Decrement the lock on the TEMP id
+                pendingLocalSaves.set(tempFile.id, tempPendingCount - 1);
+            }
+        }
+    }
+    // === END SUPPRESSION LOGIC ===
+    
     if (e.action === 'delete') {
       const fileIndex = state.files.findIndex(f => f.id === record.id);
       if (fileIndex !== -1) {
         state.files.splice(fileIndex, 1);
-        if (state.activeId === record.id) {
-            selectCategory(state.activeCategoryId, true);
-        }
+        if (state.activeId === record.id) selectCategory(state.activeCategoryId, true);
         showToast(`Note deleted: ${record.name}`, 3000);
       }
     } 
-    
-    // --- 2. Handle Create / Update ---
     else if (e.action === 'create' || e.action === 'update') {
-      
       const newFile = await decryptRecord(record);
       
-      // CRITICAL: Map category ID - check if we have a local temp ID that matches this PB ID
       const category = state.categories.find(c => c.id === newFile.categoryId);
       if (category && category.localId && category.localId !== category.id) {
-        // This is a sync from another device, update the local file's categoryId to the localId
         newFile.categoryId = category.localId;
       }
       
-      const isLocalAction = recentlySavedLocally.has(newFile.id); // Checks for local saves/renames
-      
-      // a. Check for local 'temp' file replacement (Creation success event)
-      const tempFile = state.files.find(f => f.id.startsWith('temp_') && f.name === record.name);
-      
-      if (e.action === 'create' && tempFile && recentlySavedLocally.has(tempFile.id)) {
-          // Case A: Local Optimistic Create Confirmation
-          
-          const tempIndex = state.files.findIndex(f => f.id === tempFile.id);
-          
+      // Handle Local Create Confirmation
+      if (e.action === 'create' && isLocalCreate) {
+          const tempIndex = state.files.findIndex(f => f.id === matchingTempId);
           if (tempIndex !== -1) {
-              // Preserve the client's newest 'updated' time from the temporary file.
               newFile.updated = state.files[tempIndex].updated; 
+              newFile.versionsCache = state.files[tempIndex].versionsCache; // Preserve Cache
               
-              // CRITICAL: Also preserve the categoryId mapping
-              const tempCategoryId = state.files[tempIndex].categoryId;
-              if (tempCategoryId && tempCategoryId.startsWith('cat_temp_')) {
-                newFile.categoryId = tempCategoryId;
+              // Swap temp file with real server file
+              state.files.splice(tempIndex, 1, newFile); 
+              
+              // Update selection if we were looking at the temp file
+              if (state.activeId === matchingTempId) {
+                  state.activeId = record.id;
               }
-              
-              state.files.splice(tempIndex, 1, newFile); // Replace temporary file
           }
-
-          if (state.activeId === tempFile.id) {
-              state.activeId = record.id; // Update active ID
-          }
-          recentlySavedLocally.delete(tempFile.id); // Clear the temp flag
-          showToast(`Note created: ${newFile.name}`, 2000);
-          
+          // NO TOAST HERE (Suppressed)
       } else {
-        // b. Handle Update of an existing permanent file or remote create
         const fileIndex = state.files.findIndex(f => f.id === record.id);
         
         if (fileIndex !== -1) {
-          // Case B: Update of an existing permanent file
-          
-          if (isLocalAction) { 
-              // If we are the originating device, IGNORE the immediate server-confirmation Realtime event.
-              return; 
-          } 
-            
-          // If we reach here, it is a remote update from another device.
-          
-          // CRITICAL FIX: The receiving device must apply a new local timestamp to force the note to the top.
+          // Remote Update
           newFile.updated = new Date().toISOString(); 
-            newFile.versionsCache = null; 
+          const oldCache = state.files[fileIndex].versionsCache;
+          newFile.versionsCache = oldCache; 
 
-          // Remove old file and unshift the new one.
-          state.files.splice(fileIndex, 1); // Remove old file
-          state.files.unshift(newFile);    // Insert new file at the top
+          state.files.splice(fileIndex, 1); 
+          state.files.unshift(newFile);    
           
-          // Remote Update Toast/UI
           showToast(`Note updated: ${newFile.name}`, 2000);
           
-          // If active note content changed remotely, force reload/exit preview
           if (state.activeId === newFile.id) {
               if (previewMode) exitPreviewMode();
               if (document.getElementById('textEditor').value !== newFile.content) {
                   loadActiveToEditor(); 
-                  showToast(`Active note content synced!`, 2500);
               }
           }
-        } 
-        // c. Handle Remote Create (If file was not created optimistically on this client)
-        else if (e.action === 'create' && !isLocalAction) {
-          // Case C: Remote Create (Synched Device)
-          // Force a full fetch from server
+        } else if (e.action === 'create') {
+          // Remote Create (Actually from another device)
           await loadUserFiles(); 
-          showToast(`New note created: ${newFile.name} (full sync)`, 3000);
-          return; // Exit here, loadUserFiles already calls finalizeUIUpdate
+          showToast(`New note created: ${newFile.name}`, 3000);
+          return; 
         }
       }
     }
-    
     finalizeUIUpdate();
-    
   });
   
-  // CRITICAL FIX: Subscribe to Categories for deletion and creation/update events
+  // --- 2. CATEGORIES SUBSCRIPTION ---
   pb.realtime.subscribe('categories', async function (e) {
       if (e.record.user !== pb.authStore.model.id) return;
-
       const record = e.record;
-      
+
+      // Category Suppression Logic
+      const pendingCount = pendingLocalSaves.get(record.id) || 0;
+      if (pendingCount > 0) {
+          pendingLocalSaves.set(record.id, pendingCount - 1);
+          return; // Ignore local category echo
+      }
+
       if (e.action === 'delete') {
-          // Remove the category from local state
-          const categoryId = record.id;
-          state.categories = state.categories.filter(c => c.id !== categoryId);
-          
-          // Re-evaluate active category if the deleted one was active
-          if (state.activeCategoryId === categoryId) {
-              selectCategory(DEFAULT_CATEGORY_IDS.WORK, true); 
-          }
-          
+          state.categories = state.categories.filter(c => c.id !== record.id);
+          if (state.activeCategoryId === record.id) selectCategory(DEFAULT_CATEGORY_IDS.WORK, true); 
           showToast(`Category deleted: ${record.name}`, 3000);
-
       } else if (e.action === 'create' || e.action === 'update') {
-          // New or updated category record
-          
-          // NEW: Suppression check for originating client
-          // Suppress the Realtime event if the category was just created by this client
-if ((e.action === 'create' || e.action === 'update') && recentlySavedLocally.has(record.id)) {
-    return; 
-}
-          
           const index = state.categories.findIndex(c => c.id === record.id);
-          
-          // CRITICAL FIX: If we receive a 'create' event and the permanent ID already exists in the state,
-          // it means this is the originating device's event, and the state was already updated in createCategory().
-          /* OLD CODE:
-          if (e.action === 'create' && index !== -1) {
-              return; // Suppress the redundant create event on the originating device
-          }
-          */
-          
-          // Ensure localId is preserved/updated for default categories
           const localId = state.categories[index]?.localId;
-
-          const newCategory = { 
-              ...record, 
-              localId: localId || record.id // Use existing localId or set to PB ID if custom
-          };
+          const newCategory = { ...record, localId: localId || record.id };
           
-          if (index !== -1) {
-              // Update
-              state.categories.splice(index, 1, newCategory);
-          } else {
-              // Create (should only happen for remote creations OR if the synchronous update was too slow)
-              state.categories.push(newCategory);
-          }
+          if (index !== -1) state.categories.splice(index, 1, newCategory);
+          else state.categories.push(newCategory);
           
-          // Sort categories by sortOrder
           state.categories.sort((a,b) => a.sortOrder - b.sortOrder);
       }
-      
       finalizeUIUpdate();
   });
 
-  console.log('PocketBase Realtime subscription established for files and categories collections.');
+// --- 3. VERSIONS SUBSCRIPTION ---
+  pb.realtime.subscribe('versions', async function (e) {
+      if (e.record.user !== pb.authStore.model.id) return;
+      // We only care about new versions created by other devices (or our own echo)
+      if (e.action !== 'create') return; 
+
+      const record = e.record;
+      const fileId = record.file;
+      
+      // 1. Find the file in local state
+      const file = state.files.find(f => f.id === fileId);
+      if (!file) return; // File not loaded locally? ignore.
+
+      // 2. Check if we already have this version ID (Local Echo Check 1)
+      // If the save finished fast, we already updated the cache with this ID.
+      if (file.versionsCache && file.versionsCache.some(v => v.id === record.id)) {
+          return; 
+      }
+
+      // 3. Decrypt and Prepare
+      // (Uses the decryptRecord helper defined at the top of setupRealtimeSubscription)
+      const decrypted = await decryptRecord(record);
+      
+      const newVersionObj = {
+          id: decrypted.id,
+          created: decrypted.created,
+          content: decrypted.content,
+          editor: decrypted.editor || (decrypted.content.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain')
+      };
+
+      // 4. Update Cache safely
+      if (!file.versionsCache) file.versionsCache = [];
+      
+      // Local Echo Check 2: Content Deduplication
+      // If we have a "temp" version with the exact same content, this is just the server 
+      // echoing back our save. We ignore it to prevent duplicates while the temp ID 
+      // is being swapped for the real ID by the main save function.
+      const isDuplicate = file.versionsCache.some(v => v.content === newVersionObj.content);
+      
+      if (!isDuplicate) {
+          // Add to top of list
+          file.versionsCache.unshift(newVersionObj);
+          
+          // Sort by date (Newest first)
+          file.versionsCache.sort((a, b) => new Date(b.created) - new Date(a.created));
+          
+          // Cap size to 50 versions
+          if (file.versionsCache.length > 50) file.versionsCache.length = 50;
+          
+          saveToUserCache();
+          
+          // 5. Update UI if viewing this specific file's history right now
+          if (state.activeId === fileId) {
+              const historyPanel = document.getElementById('version-history');
+              // Only re-render if the panel is actually visible
+              if (historyPanel && historyPanel.classList.contains('active')) {
+                  renderVersionList(file, file.versionsCache);
+              }
+          }
+      }
+  });
+
+  console.log('Realtime subscription established (Files, Categories, Versions).');
 }
 // ===================================================================
 // 2. LOAD & SELECT NOTES/CATEGORIES
@@ -705,6 +814,7 @@ async function createDefaultCategories() {
 }
 
 async function loadUserFiles() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   state.files = [];
   state.categories = [];
   state.activeId = null;
@@ -814,6 +924,7 @@ async function loadUserFiles() {
  * Sets the active category, finds the first note in it, and selects it.
  */
 function selectCategory(categoryIdentifier, shouldSelectFile = true) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
     state.activeCategoryId = categoryIdentifier;
     
     // Resolve IDs
@@ -853,6 +964,7 @@ function selectCategory(categoryIdentifier, shouldSelectFile = true) {
 
 
 async function createFile() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
     if (previewMode) {
     exitPreviewMode();
     highlightSelectedVersion(null);
@@ -918,8 +1030,11 @@ async function createFile() {
   }
 }
 
-async function createFileOnServer(tempId, name, targetCategoryId, timestamp) {
+// REMOVED 'timestamp' from arguments since PocketBase auto-generates it
+async function createFileOnServer(tempId, name, targetCategoryId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   try {
+    // 1. Resolve Category ID (Handle case where category was just created and has a temp ID)
     const activeCatObj = state.categories.find(c => 
       c.id === targetCategoryId || 
       c.localId === targetCategoryId ||
@@ -928,6 +1043,7 @@ async function createFileOnServer(tempId, name, targetCategoryId, timestamp) {
     
     let pbCategoryId = activeCatObj?.id;
 
+    // Retry loop: If category ID is still temporary, wait up to 2 seconds for it to resolve
     if (!pbCategoryId || pbCategoryId.startsWith('cat_temp_')) {
       for (let i = 0; i < 20; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -941,11 +1057,14 @@ async function createFileOnServer(tempId, name, targetCategoryId, timestamp) {
       }
     }
 
-    recentlySavedLocally.add(tempId);
+    // 2. REGISTER PENDING EVENT on the TEMP ID
+    // We expect a 'create' event from the server. The Realtime subscription will check 
+    // this map, see the count > 0, and ignore the event to prevent duplicate UI updates/toasts.
+    expectLocalEvent(tempId);
 
     const { ciphertext, iv, authTag } = await encryptBlob('', derivedKey);
 
-    // Disable auto-cancellation
+    // 3. Send to Server (PocketBase sets the actual created/updated timestamps)
     const result = await pb.collection('files').create({
       name,
       user: pb.authStore.model.id,
@@ -955,42 +1074,53 @@ async function createFileOnServer(tempId, name, targetCategoryId, timestamp) {
       encryptedBlob: arrayToB64(ciphertext)
     }, { requestKey: null }); 
     
+    // 4. Update Local State (Swap Temp ID for Real ID)
     const tempFileIndex = state.files.findIndex(f => f.id === tempId);
     if (tempFileIndex !== -1) {
       state.files[tempFileIndex].categoryId = pbCategoryId;
       state.files[tempFileIndex].id = result.id; 
+      
+      // CRITICAL: We overwrite our local optimistic timestamp with the 
+      // authoritative Server Timestamp to ensure consistency.
       state.files[tempFileIndex].created = result.created;
       state.files[tempFileIndex].updated = result.updated;
 
-      // CRITICAL FIX: Keep selection on this file when ID changes
+      // Keep selection active on the new real ID
       if (state.activeId === tempId) {
           state.activeId = result.id;
       }
-
-      recentlySavedLocally.add(result.id); 
-      recentlySavedLocally.delete(tempId); 
+      
+      // Note: We leave the expectLocalEvent lock active so the incoming 
+      // Realtime 'create' event is suppressed.
     }
     
     finalizeUIUpdate();
     
   } catch (e) {
-    if (e.status !== 0) {
+    // 5. Error Handling & Cleanup
+    if (e.status !== 0) { // 0 = Auto-cancelled
         console.error('Create failed on server:', e);
         showToast('Failed to create note on server.', 3000);
     }
     
+    // If creation failed, remove the temporary file from the UI
     const tempIndex = state.files.findIndex(f => f.id === tempId);
     if (tempIndex !== -1) {
       state.files.splice(tempIndex, 1);
       if (state.activeId === tempId) state.activeId = null;
     }
-    recentlySavedLocally.delete(tempId);
+
+    // Clean up the suppression lock immediately
+    const count = pendingLocalSaves.get(tempId) || 0;
+    if (count > 0) pendingLocalSaves.set(tempId, count - 1);
+
     finalizeUIUpdate();
   }
 }
 
 
 async function createCategory(name) {
+console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
     if (!name?.trim()) return;
     const trimmedName = name.trim();
     const now = new Date().toISOString();
@@ -1004,17 +1134,15 @@ async function createCategory(name) {
         sortOrder: state.categories.length + 1,
         created: now,
         updated: now,
-        localId: tempId // Use tempId as localId for consistency
+        localId: tempId 
     };
     
-    // Optimistic UI update (Add temp record to state)
+    // Optimistic UI update
     state.categories.push(newCategory);
     state.categories.sort((a,b) => a.sortOrder - b.sortOrder);
-    
-    // IMPORTANT: Update UI immediately to show the temp category
     finalizeUIUpdate();
     
-    let finalCategoryId = newCategory.id; // Default to tempId
+    let finalCategoryId = newCategory.id; 
 
     if (pb.authStore.isValid) {
         
@@ -1026,51 +1154,41 @@ async function createCategory(name) {
                 iconName: newCategory.iconName,
             });
             
+            // REGISTER PENDING: We expect the server to echo this 'create' event back
+            expectLocalEvent(record.id);
+
             const permanentCategory = { 
                 id: record.id, 
                 name: record.name,
-                localId: record.id, // IMPORTANT: Use permanent ID as localId
+                localId: record.id, 
                 iconName: record.iconName, 
                 sortOrder: record.sortOrder,
                 created: record.created,
                 updated: record.updated,
             };
 
-            // CRITICAL FIX: Remove ALL instances of the temporary category
+            // Swap temp with permanent
             state.categories = state.categories.filter(c => c.id !== tempId && c.localId !== tempId);
-            
-            // Add the permanent record
             state.categories.push(permanentCategory);
             state.categories.sort((a,b) => a.sortOrder - b.sortOrder);
 
-            recentlySavedLocally.add(record.id); // Add to suppression set for Realtime event
-            
-            finalCategoryId = record.id; // Set final ID to the permanent PB ID
+            finalCategoryId = record.id;
             showToast(`Category "${trimmedName}" created!`, 2000);
             
-            // CRITICAL: Update the UI with permanent category BEFORE creating the note
             finalizeUIUpdate();
             
-            // Now create the note with the permanent category ID
             state.activeCategoryId = finalCategoryId;
             await createFile();
             
         } catch (e) {
             console.error('Category creation failed:', e);
             showToast('Failed to create category.', 3000);
-            // Revert local state on server failure
             state.categories = state.categories.filter(c => c.id !== tempId && c.localId !== tempId);
             finalizeUIUpdate();
             return; 
-        } finally {
-             // Ensure the suppression flag is cleared
-             setTimeout(() => {
-                recentlySavedLocally.delete(finalCategoryId);
-            }, 200);
         }
-        
     } else {
-        // For guest mode, just update the ID and save
+        // Guest mode
         newCategory.id = `cat_guest_${Date.now()}`;
         newCategory.localId = newCategory.id;
         finalCategoryId = newCategory.id;
@@ -1078,35 +1196,34 @@ async function createCategory(name) {
         showToast(`Category "${trimmedName}" created locally!`, 2000);
         finalizeUIUpdate();
         
-        // Create note in guest mode
         state.activeCategoryId = finalCategoryId;
         await createFile();
     }
 }
 async function saveFile(file) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // 1. Optimistic Local Update
   file.updated = new Date().toISOString();
   
-  // Reorder list locally
   state.files = state.files.filter(f => f.id !== file.id);
   state.files.unshift(file); 
   
   renderFiles();
   updateSidebarInfo(file);
 
-  // 2. Skip server save for temporary files
   if (file.id.startsWith('temp_')) {
     return;
   }
   
   // 3. Save to PocketBase
   if (pb.authStore.isValid && derivedKey) {
-    recentlySavedLocally.add(file.id);
+    
+    // REGISTER PENDING: Expecting an 'update' event for this file
+    expectLocalEvent(file.id);
 
     try {
         const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
         
-        // --- Resolve Category ID ---
         let finalCategoryId = file.categoryId;
         const categoryRecord = state.categories.find(c => 
             c.localId === file.categoryId || c.id === file.categoryId
@@ -1116,7 +1233,6 @@ async function saveFile(file) {
             finalCategoryId = categoryRecord.id;
         }
         
-        // Fallback safety
         if (finalCategoryId === 'work' || finalCategoryId === 'trash') {
              const defaultCat = state.categories.find(c => c.localId === finalCategoryId);
              if (defaultCat && defaultCat.id) finalCategoryId = defaultCat.id;
@@ -1130,10 +1246,8 @@ async function saveFile(file) {
           encryptedBlob: arrayToB64(ciphertext)
         };
         
-        // Run server update (No await, let it run in background)
         pb.collection('files').update(file.id, updatePayload)
           .then((record) => {
-             // Sync local state
              const localFile = state.files.find(f => f.id === file.id);
              if (localFile) {
                  localFile.updated = record.updated;
@@ -1144,27 +1258,24 @@ async function saveFile(file) {
           })
           .catch(e => {
             console.error('Save failed on server:', e);
-          })
-          .finally(() => {
-             setTimeout(() => recentlySavedLocally.delete(file.id), 200);
+            // Optional: You could manually decrement expectLocalEvent here if you wanted,
+            // but the 10s safety timeout handles it fine.
           });
 
     } catch (e) {
         console.error('Encryption error:', e);
-        recentlySavedLocally.delete(file.id);
     }
 
   } else {
-    // Guest mode
     guestStorage.saveData({ categories: state.categories, files: state.files });
     finalizeUIUpdate();
   }
-    saveToUserCache();
-
+  saveToUserCache();
 }
 
 // Helper: Extract plain text from TipTap JSON or return string as-is
 function getPreviewText(content) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (!content) return '';
 
   // 1. Try to parse as JSON
@@ -1196,6 +1307,7 @@ function getPreviewText(content) {
 }
 
 async function clearTrash() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (!confirm('Are you sure you want to permanently delete ALL notes in the Trash? This action cannot be undone.')) {
     return;
   }
@@ -1274,6 +1386,7 @@ async function clearTrash() {
 }
 
 async function deleteFile(id) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === id);
   if (!file) return;
 
@@ -1347,8 +1460,95 @@ async function deleteFile(id) {
   finalizeUIUpdate();
 }
 
+/**
+ * Save a new encrypted version snapshot with Editor Mode.
+ * @param {string} editorMode - 'plain' or 'rich'
+ */
+async function createVersionSnapshot(pb, derivedKey, fileId, content, editorMode) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  try {
+    const { ciphertext, iv, authTag } = await encryptBlob(content, derivedKey);
+
+    const result = await pb.collection('versions').create({
+      file: fileId,
+      user: pb.authStore.model.id,
+      encryptedBlob: arrayToB64(ciphertext),
+      iv: arrayToB64(iv),
+      authTag: arrayToB64(authTag),
+      editor: editorMode || 'plain' 
+    });
+    
+    console.log(`Version saved (${editorMode}) for file:`, fileId, "Version ID:", result.id);
+    return result; // Return the created record
+  } catch (err) {
+    console.error('Failed to save version snapshot:', err);
+    throw err; // Re-throw so caller knows it failed
+  }
+}
+
+/**
+ * Load & decrypt all versions for a file
+ */
+async function getVersions(pb, derivedKey, fileId, signal) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  try {
+    const records = await pb.collection('versions').getFullList({
+      filter: `file = "${fileId}"`,
+      sort: '-created',
+      signal: signal, 
+    });
+
+    const versions = await Promise.all(
+      records.map(async (r) => {
+        let content = '[Decryption failed]';
+        try {
+          content = await decryptBlob(
+            {
+              iv: b64ToArray(r.iv),
+              authTag: b64ToArray(r.authTag),
+              ciphertext: b64ToArray(r.encryptedBlob),
+            },
+            derivedKey
+          );
+        } catch (decErr) {
+          console.error('Version decryption error:', decErr);
+        }
+        
+        // Determine editor mode if not specified
+        let editorMode = r.editor;
+        if (!editorMode) {
+          editorMode = content.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain';
+        }
+        
+        return {
+          id: r.id,
+          created: r.created,
+          content: content,
+          editor: editorMode // Ensure editor property is always present
+        };
+      })
+    );
+
+    versions.sort((a, b) => {
+      const dateA = new Date(a.created).getTime();
+      const dateB = new Date(b.created).getTime();
+      return dateB - dateA;
+    });
+
+    return versions;
+  } catch (err) {
+    if (err.name === 'AbortError' || err.isAbort || err.status === 0) {
+      throw err;
+    }
+    
+    console.error('Failed to load versions:', err);
+    return [];
+  }
+}
+
 // === Helper function to create a folder item (with SVG icon) ===
 function createFolderItem(name, id, isActive = false, iconName = 'icon-folder', noteCount = 0, isDeletable = false, isTrash = false) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const folderDiv = document.createElement('div');
   folderDiv.className = 'folder-item' + (isActive ? ' active' : '');
   folderDiv.dataset.folderId = id;
@@ -1399,6 +1599,7 @@ function createFolderItem(name, id, isActive = false, iconName = 'icon-folder', 
 
 // === Updated renderFiles() with Dynamic Categories and Filtering ===
 function renderFiles() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const list = document.getElementById('filesList');
   if (!list) return;
 
@@ -1655,7 +1856,9 @@ list.appendChild(notesHeader);
   });
 }
 
+
 function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (currentMenu) currentMenu.remove();
   
   const menu = document.createElement('div');
@@ -1719,57 +1922,51 @@ function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
     };
   } 
   
-// 2. Rename Category (For Work and Custom Categories)
-if (!isTrash) {
-  menu.querySelector('.ctx-rename').onclick = async () => {
-      menu.remove();
-      
-      const newName = prompt(`Rename category "${name}" to:`, name);
-      if (!newName?.trim() || newName.trim() === name) { return; }
+  // 2. Rename Category (For Work and Custom Categories)
+  if (!isTrash) {
+    menu.querySelector('.ctx-rename').onclick = async () => {
+        menu.remove();
+        
+        const newName = prompt(`Rename category "${name}" to:`, name);
+        if (!newName?.trim() || newName.trim() === name) { return; }
 
-      const trimmedName = newName.trim();
-      const category = state.categories.find(c => c.id === id || c.localId === id);
-      if (!category) { return; }
-      
-      const oldName = category.name;
-      category.name = trimmedName; // Optimistic update
-      
-      // Update the UI immediately
-      if (id === state.activeCategoryId) {
-         const activeCategoryTitle = document.querySelector('.categories-title');
-         if(activeCategoryTitle) activeCategoryTitle.textContent = `${trimmedName} Notes`;
-      }
-      finalizeUIUpdate();
+        const trimmedName = newName.trim();
+        const category = state.categories.find(c => c.id === id || c.localId === id);
+        if (!category) { return; }
+        
+        const oldName = category.name;
+        category.name = trimmedName; // Optimistic update
+        
+        if (id === state.activeCategoryId) {
+           const activeCategoryTitle = document.querySelector('.categories-title');
+           if(activeCategoryTitle) activeCategoryTitle.textContent = `${trimmedName} Notes`;
+        }
+        finalizeUIUpdate();
 
-      if (pb.authStore.isValid) {
-          // Ensure we have a valid PB ID
-          if (category.id && !category.id.startsWith('cat_temp_') && !category.id.startsWith('cat_guest_')) {
-              
-              // 1. ADD TO SUPPRESSION LIST
-              recentlySavedLocally.add(category.id);
+        if (pb.authStore.isValid) {
+            if (category.id && !category.id.startsWith('cat_temp_') && !category.id.startsWith('cat_guest_')) {
+                
+                // REGISTER PENDING: Expecting 'update' event for this category
+                expectLocalEvent(category.id);
 
-              try {
-                  await pb.collection('categories').update(category.id, { name: trimmedName }); 
-                  showToast(`Category renamed to: ${trimmedName}`, 2000); 
-              }
-              catch (e) { 
-                  console.error('Rename failed on server:', e); 
-                  category.name = oldName; // Revert
-                  showToast('Category rename failed', 3000); 
-                  finalizeUIUpdate(); 
-              }
-              finally {
-                  // 2. REMOVE FROM SUPPRESSION LIST AFTER SHORT DELAY
-                  setTimeout(() => recentlySavedLocally.delete(category.id), 500);
-              }
-          }
-      } else {
-           guestStorage.saveData({ categories: state.categories, files: state.files });
-           showToast(`Category renamed to: ${trimmedName}!`, 2000); 
-           finalizeUIUpdate();
-      }
-  };
-}
+                try {
+                    await pb.collection('categories').update(category.id, { name: trimmedName }); 
+                    showToast(`Category renamed to: ${trimmedName}`, 2000); 
+                }
+                catch (e) { 
+                    console.error('Rename failed on server:', e); 
+                    category.name = oldName; // Revert
+                    showToast('Category rename failed', 3000); 
+                    finalizeUIUpdate(); 
+                }
+            }
+        } else {
+             guestStorage.saveData({ categories: state.categories, files: state.files });
+             showToast(`Category renamed to: ${trimmedName}!`, 2000); 
+             finalizeUIUpdate();
+        }
+    };
+  }
 
   // 3. Delete Category
   if (isDeletable) {
@@ -1842,6 +2039,7 @@ if (!isTrash) {
 }
 
 function showFileMenu(btn, id, name) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (currentMenu) currentMenu.remove();
 
   const file = state.files.find(f => f.id === id);
@@ -1913,6 +2111,7 @@ function showFileMenu(btn, id, name) {
 
   currentMenu = menu;
 
+  // Rename handler
   menu.querySelector('.ctx-rename').onclick = async () => {
     const newName = prompt('New name:', name);
     if (!newName?.trim()) { menu.remove(); return; }
@@ -1922,28 +2121,27 @@ function showFileMenu(btn, id, name) {
     if (!file) { menu.remove(); return; }
 
     if (file.name !== trimmedName) {
-        
         const oldName = file.name;
         file.name = trimmedName;
 
-        recentlySavedLocally.add(file.id); 
-
         if (pb.authStore.isValid) {
+          
+          // REGISTER PENDING: Expecting 'update' event
+          expectLocalEvent(file.id);
+
           try { 
             await pb.collection('files').update(id, { name: trimmedName }); 
             showToast(`Note renamed to: ${trimmedName}`, 2000); 
           }
           catch (e) { 
             console.error(e); 
-            file.name = oldName; 
+            file.name = oldName; // Revert
             showToast('Rename failed', 3000); 
           }
         } else {
           guestStorage.saveData({ categories: state.categories, files: state.files });
           showToast(`Note renamed to: ${trimmedName}`, 2000); 
         }
-        
-        setTimeout(() => recentlySavedLocally.delete(file.id), 200);
         
         renderFiles();
         finalizeUIUpdate();
@@ -1981,6 +2179,7 @@ function showFileMenu(btn, id, name) {
 }
 
 function loadActiveToEditor() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const f = state.files.find(x => x.id === state.activeId);
   const newContent = f ? f.content : '';
 
@@ -2044,6 +2243,7 @@ function loadActiveToEditor() {
 }
 
 function openSidebarTab(tabName) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tabName);
   });
@@ -2063,6 +2263,7 @@ function openSidebarTab(tabName) {
 }
 
 function updateSidebarInfo(file = null) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const infoFileNameDisplay = document.getElementById('infoFileName');
   const infoFileId = document.getElementById('infoFileId');
   const infoCreated = document.getElementById('infoCreated');
@@ -2122,52 +2323,104 @@ function updateSidebarInfo(file = null) {
     infoShare.onclick = () => openShareModal(file.id);
   }
 }
-
 async function saveVersionIfChanged() {
-  console.error('function', (new Error()).stack.split('\n')[1].trim().split(' ')[1], 'runed:');
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === state.activeId);
-  
-  // 1. Determine Content and Mode
+  if (!file) return;
+
   let currentContent = '';
   let versionMode = 'plain'; 
+  let isEmpty = false;
 
   if (isRichMode && tiptapEditor) {
-      currentContent = JSON.stringify(tiptapEditor.getJSON());
-      versionMode = 'rich';
+    isEmpty = tiptapEditor.isEmpty;
+    currentContent = JSON.stringify(tiptapEditor.getJSON());
+    versionMode = 'rich';
   } else {
-      currentContent = document.getElementById('textEditor').value;
-      versionMode = 'plain';
+    const rawVal = document.getElementById('textEditor').value;
+    isEmpty = !rawVal || rawVal.trim().length === 0;
+    currentContent = rawVal;
+    versionMode = 'plain';
   }
 
-  if (!file || currentContent === originalContent) return;
+  if (currentContent === originalContent) return;
+  if (isEmpty) return; 
 
   if (isSavingVersion) return;
+  
   isSavingVersion = true;
 
   try {
+    // 1. Create optimistic version (Has ID: temp_version_...)
+    const tempVersion = optimisticallyAddToVersionCache(
+      file.id, 
+      originalContent, 
+      isRichMode ? 'rich' : 'plain'
+    );
+    
+    // Update UI (Shows "Saving..." initially)
+    const historyPanel = document.getElementById('version-history');
+    if (historyPanel && historyPanel.classList.contains('active')) {
+      renderVersionList(file, file.versionsCache || []);
+    }
+    
     if (pb.authStore.isValid && derivedKey) {
-      // Pass 'versionMode' 
-      await createVersionSnapshot(pb, derivedKey, file.id, currentContent, versionMode); 
-      file.versionsCache = null; 
+      // --- LOGGED IN LOGIC ---
+      createVersionSnapshot(pb, derivedKey, file.id, originalContent, versionMode)
+        .then(result => {
+          updateVersionCacheWithServer(file.id, {
+            id: result.id,
+            created: result.created,
+            content: originalContent,
+            editor: versionMode
+          }, tempVersion.id);
+        })
+        .catch(e => {
+          console.error('Version save failed:', e);
+          if (file && file.versionsCache) {
+            file.versionsCache = file.versionsCache.filter(v => v.id !== tempVersion.id);
+            saveToUserCache();
+            if (historyPanel && historyPanel.classList.contains('active')) {
+              renderVersionList(file, file.versionsCache);
+            }
+          }
+        });
     } else {
-      // Guest Mode
+      // --- GUEST LOGIC ---
+      
+      // 1. Generate a permanent ID immediately (No server roundtrip needed)
+      const finalGuestId = `ver_${Date.now()}`;
+      
+      // 2. Fix the ID in the ephemeral cache (so "Saving..." goes away)
+      if (file.versionsCache) {
+        const cachedItem = file.versionsCache.find(v => v.id === tempVersion.id);
+        if (cachedItem) {
+          cachedItem.id = finalGuestId;
+          // Sort to be safe, though unshift probably put it first
+          file.versionsCache.sort((a,b) => new Date(b.created) - new Date(a.created));
+        }
+      }
+      
+      // 3. Save to permanent local storage
       if (!file.versions) file.versions = [];
       file.versions.unshift({
-        id: `v_${Date.now()}_${Math.random().toString(36).substr(2,6)}`,
-        created: new Date().toISOString(),
-        content: originalContent, 
-        editor: isRichMode ? 'rich' : 'plain'
+        id: finalGuestId,
+        created: tempVersion.created,
+        content: originalContent,
+        editor: versionMode
       });
       if (file.versions.length > 50) file.versions.length = 50;
+      
       guestStorage.saveData({ categories: state.categories, files: state.files });
+      
+      // 4. Force Re-render to show the new ID (removes "Saving..." spinner)
+      if (historyPanel && historyPanel.classList.contains('active')) {
+          renderVersionList(file, file.versionsCache || file.versions);
+      }
     }
 
     originalContent = currentContent;
     
-    // --- FIX 1: Explicitly refresh the history list immediately ---
-    await updateVersionHistory(file); 
-    // --------------------------------------------------------------
-
   } catch (e) {
     console.error('Version save failed:', e);
   } finally {
@@ -2176,6 +2429,7 @@ async function saveVersionIfChanged() {
 }
 
 function updateOriginalContent() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (isRichMode && tiptapEditor) {
       originalContent = JSON.stringify(tiptapEditor.getJSON());
   } else {
@@ -2184,11 +2438,10 @@ function updateOriginalContent() {
 }
 
 async function updateVersionHistory(file = null) {
-  console.error('function', (new Error()).stack.split('\n')[1].trim().split(' ')[1], 'runed:');
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const versionList = document.getElementById('versionList');
   if (!versionList) return;
 
-  // CANCEL any previous background request
   if (versionHistoryController) {
     versionHistoryController.abort();
     versionHistoryController = null; 
@@ -2200,7 +2453,17 @@ async function updateVersionHistory(file = null) {
     return;
   }
 
-  // --- HEADER SETUP ---
+  const currentFileId = versionList.dataset.currentFileId;
+  if (currentFileId === file.id && versionList.children.length > 1) {
+    const currentVersionEl = versionList.querySelector('.version-current small');
+    if (currentVersionEl) {
+      currentVersionEl.textContent = formatDate(file.updated);
+    }
+    return;
+  }
+  
+  versionList.dataset.currentFileId = file.id;
+
   const titleElement = document.querySelector('#version-history h4');
   let titleHTML = 'History'; 
   let iconName = 'icon-history'; 
@@ -2231,47 +2494,47 @@ async function updateVersionHistory(file = null) {
     `;
   }
 
-  // --- CACHE LOGIC ---
   let versions = [];
-  let useCache = false;
 
-  // 1. Check if we already have versions in memory (Logged In)
-  if (isLoggedIn && file.versionsCache) {
-    versions = file.versionsCache;
-    useCache = true;
-  } 
+  // 1. Check Cache first
+  if (file.versionsCache && file.versionsCache.length > 0) {
+    versions = [...file.versionsCache];
+    renderVersionList(file, versions);
+    
+    if (isLoggedIn && derivedKey && !file.id.startsWith('temp_')) {
+      fetchFreshVersionsInBackground(file);
+    }
+    return; 
+  }
   // 2. Check Local Storage (Guest)
-  else if (!isLoggedIn && file.versions) {
-    versions = file.versions;
-    useCache = true;
+  // CRITICAL FIX: Removed "&& file.versions" check. 
+  // We want to render the empty list (Current Version only) even if no history exists.
+  else if (!isLoggedIn) {
+    versions = file.versions ? [...file.versions] : [];
+    renderVersionList(file, versions);
+    return;
   }
 
-  // Only show "Loading..." if we don't have a cache
-  if (!useCache) {
-    versionList.innerHTML = '<li class="muted" style="padding:12px;">Loading...</li>';
-    versionList.classList.add('loading');
-  } else {
-    versionList.classList.remove('loading');
-  }
+  versionList.innerHTML = '<li class="muted" style="padding:12px;">Loading...</li>';
+  versionList.classList.add('loading');
 
-  // --- FETCH LOGIC ---
-  if (!useCache && isLoggedIn && derivedKey) {
+  // 3. Fetch from Server (Logged In)
+  if (isLoggedIn && derivedKey) {
     if (file.id.startsWith('temp_')) {
       versions = [];
+      renderVersionList(file, versions);
     } else {
       versionHistoryController = new AbortController();
       try {
         versions = await getVersions(pb, derivedKey, file.id, versionHistoryController.signal);
         
-        // **CRITICAL: Sort versions by date (newest first)**
-        versions.sort((a, b) => {
-          const dateA = new Date(a.created).getTime();
-          const dateB = new Date(b.created).getTime();
-          return dateB - dateA; // Descending: newest first
-        });
+        versions.sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
         
-        // SAVE TO CACHE
         file.versionsCache = versions;
+        saveToUserCache(); 
+        
+        renderVersionList(file, versions);
+        
       } catch (e) {
         if (e.name === 'AbortError' || e.isAbort || (e.status === 0 && e.message.includes('autocancelled'))) return;
         
@@ -2286,20 +2549,27 @@ async function updateVersionHistory(file = null) {
           return;
         }
         versions = [];
+        renderVersionList(file, versions);
       }
     }
   }
 
-  // **ALSO SORT GUEST VERSIONS**
-  if (!isLoggedIn && versions.length > 0) {
-    versions.sort((a, b) => {
-      const dateA = new Date(a.created).getTime();
-      const dateB = new Date(b.created).getTime();
-      return dateB - dateA; // Descending: newest first
-    });
-  }
+  versionHistoryController = null; 
+}
 
-  // --- RENDER LOGIC ---
+/**
+ * Render versions list
+ */
+function renderVersionList(file, versions) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const versionList = document.getElementById('versionList');
+  if (!versionList) return;
+  
+  versionList.classList.remove('loading');
+  
+  // Set current file ID for safety checks
+  versionList.dataset.currentFileId = file.id;
+
   let html = `
     <li class="version-current">
       <strong>Current version</strong>
@@ -2307,7 +2577,23 @@ async function updateVersionHistory(file = null) {
     </li>
   `; 
 
-  const filteredVersions = versions.filter(v => v.content !== file.content);
+  // Filter out versions that match current content AND filter duplicates
+  const filteredVersions = [];
+  const seenContent = new Set();
+  
+  versions.forEach(v => {
+    // 1. Don't show if content matches current file content
+    if (v.content === file.content) return;
+    
+    // 2. Don't show empty versions (Cleaning up old bad data)
+    if (!v.content || v.content.trim() === '' || v.content === '{"type":"doc","content":[{"type":"paragraph"}]}') return;
+
+    // 3. Don't show duplicates
+    if (seenContent.has(v.content)) return;
+    
+    seenContent.add(v.content);
+    filteredVersions.push(v);
+  });
 
   if (filteredVersions.length === 0) {
     html += `<li class="muted">No previous versions saved yet.</li>`;
@@ -2316,9 +2602,12 @@ async function updateVersionHistory(file = null) {
       const rawText = getPreviewText(v.content);
       const preview = rawText.length > 50 ? rawText.substring(0, 50) + '...' : rawText || '[empty]';
       
+      const loadingClass = v.id.startsWith('temp_version_') ? ' version-loading' : '';
+      const loadingIndicator = v.id.startsWith('temp_version_') ? ' <span class="loading-dots">Saving...</span>' : '';
+      
       html += `
-        <li class="version-item" data-version-id="${v.id}">
-          <strong>${formatDate(v.created)}</strong>
+        <li class="version-item${loadingClass}" data-version-id="${v.id}">
+          <strong>${formatDate(v.created)}${loadingIndicator}</strong>
           <small>${preview}</small>
         </li>
       `;
@@ -2326,7 +2615,6 @@ async function updateVersionHistory(file = null) {
   }
 
   versionList.innerHTML = html;
-  versionList.classList.remove('loading');
 
   // Re-attach listeners
   versionList.querySelector('.version-current')?.addEventListener('click', () => {
@@ -2337,19 +2625,71 @@ async function updateVersionHistory(file = null) {
 
   versionList.querySelectorAll('.version-item').forEach(item => {
     item.addEventListener('click', () => {
+      // Don't allow clicking on temp versions
+      if (item.classList.contains('version-loading')) {
+        showToast('Please wait, version is still saving...', 1500);
+        return;
+      }
+      
       const versionId = item.dataset.versionId;
+      // CRITICAL: We find the version in the array passed to this function
       const version = versions.find(v => v.id === versionId); 
+      
       if (version) {
         enterPreviewMode(version);
         highlightSelectedVersion(versionId);
+      } else {
+         // Fallback: If not found (rare), try to find in file cache
+         const fallbackVersion = file.versionsCache?.find(v => v.id === versionId);
+         if(fallbackVersion) {
+            enterPreviewMode(fallbackVersion);
+            highlightSelectedVersion(versionId);
+         }
       }
     });
   });
 
   if (previewMode && previewVersion) highlightSelectedVersion(previewVersion.id);
   else highlightSelectedVersion(null);
-  
-  versionHistoryController = null; 
+}
+
+/**
+ * Fetch fresh versions in background (for cache updates)
+ */
+async function fetchFreshVersionsInBackground(file) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  try {
+    const freshVersions = await getVersions(pb, derivedKey, file.id);
+    
+    // Sort
+    freshVersions.sort((a, b) => {
+      const dateA = new Date(a.created).getTime();
+      const dateB = new Date(b.created).getTime();
+      return dateB - dateA;
+    });
+    
+    // Update cache if different
+    const currentCache = file.versionsCache || [];
+    const isDifferent = JSON.stringify(freshVersions) !== JSON.stringify(currentCache);
+    
+    if (isDifferent) {
+      file.versionsCache = freshVersions;
+      saveToUserCache();
+      
+      // Only update UI if we're still viewing the same file
+      const currentActiveId = state.activeId;
+      if (currentActiveId === file.id) {
+        // Check if history tab is active
+        const historyPanel = document.getElementById('version-history');
+        if (historyPanel && historyPanel.classList.contains('active')) {
+          renderVersionList(file, freshVersions);
+        }
+      }
+    }
+  } catch (e) {
+    // Silently fail - we have cache to fall back on
+    console.log("Background version refresh failed (non-critical):", e);
+  }
 }
 
 // Helper function to handle toolbar visibility
@@ -2360,6 +2700,7 @@ function setToolbarVisibility(visible) {
 }
 
 function enterPreviewMode(version) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // Capture original state
   if (originalBeforePreview === '') {
     originalBeforePreview = isRichMode && tiptapEditor 
@@ -2415,6 +2756,7 @@ function enterPreviewMode(version) {
 
 // And update exitPreviewMode to restore editability:
 function exitPreviewMode() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // Restore original mode
   isRichMode = originalEditorMode;
   applyEditorMode();
@@ -2460,6 +2802,7 @@ function exitPreviewMode() {
 
 // Simplified createPreviewBanner
 function createPreviewBanner(date) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // Remove existing banner
   document.getElementById('previewBanner')?.remove();
 
@@ -2491,6 +2834,7 @@ function createPreviewBanner(date) {
 }
 
 async function handleRestore() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === state.activeId);
   if (!file) return;
 
@@ -2599,6 +2943,10 @@ async function handleRestore() {
     
     // Invalidate cache so the new "Backup" (if created) appears
     file.versionsCache = null; 
+    
+    // NEW: Clear the version cache from localStorage too
+    clearVersionCache(file.id);
+    
     await updateVersionHistory(file);
     
     showToast(`Version from ${formatDate(restoredFromTimestamp)} restored!`, 2000);
@@ -2636,6 +2984,7 @@ function showToast(message, duration = 2500) {
 }
 
 function isUserPremium() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
     if (!pb.authStore.isValid) return false;
     
     const user = pb.authStore.model;
@@ -2649,6 +2998,7 @@ function isUserPremium() {
 
 
 function highlightSelectedVersion(versionId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const versionList = document.getElementById('versionList');
   if (!versionList) return;
 
@@ -2696,6 +3046,7 @@ document.getElementById('textEditor')?.addEventListener('blur', async () => {
 });
 
 function selectFile(id) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // 1. Exit Preview if active
   if (previewMode) {
     exitPreviewMode();
@@ -2725,23 +3076,58 @@ function selectFile(id) {
   loadActiveToEditor();
   updateSidebarInfo(file);
 
-  // 6. OPTIMIZED HISTORY FETCH
-  // Only fetch versions if the History tab is currently VISIBLE
+  // 6. SMART HISTORY FETCH
+  // Only fetch versions if the History tab is currently VISIBLE AND we don't have cache
   const historyPanel = document.getElementById('version-history');
   if (historyPanel && historyPanel.classList.contains('active')) {
-      if (file) {
-          // Fire-and-forget (background fetch) to prevent UI freeze
-          updateVersionHistory(file).catch(err => console.error(err));
+    if (file) {
+      // Check if we already have cached versions
+      if (file.versionsCache && file.versionsCache.length > 0) {
+        // Use cache immediately
+        renderVersionList(file, file.versionsCache);
+      } else {
+        // Fetch fresh data
+        updateVersionHistory(file).catch(err => console.error(err));
       }
+    }
   } else {
-      // If tab is hidden, clear the list to avoid showing old data later
-      const versionList = document.getElementById('versionList');
-      if (versionList) versionList.innerHTML = ''; 
+    // If tab is hidden, clear the list to avoid showing old data later
+    const versionList = document.getElementById('versionList');
+    if (versionList) {
+      versionList.innerHTML = ''; 
+      delete versionList.dataset.currentFileId;
+    }
+  }
+}
+/**
+ * Clear version cache for a specific file
+ */
+function clearVersionCache(fileId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === fileId);
+  if (file) {
+    file.versionsCache = null;
+  }
+  
+  // Also clear from localStorage cache
+  const cacheData = localStorage.getItem(USER_CACHE_KEY);
+  if (cacheData) {
+    try {
+      const parsed = JSON.parse(cacheData);
+      if (parsed.versions && parsed.versions[fileId]) {
+        delete parsed.versions[fileId];
+        localStorage.setItem(USER_CACHE_KEY, JSON.stringify(parsed));
+      }
+    } catch (e) {
+      console.error("Failed to clear version cache:", e);
+    }
   }
 }
 
 
+
 function finalizeUIUpdate() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // If we are currently rendering the DOM, queue the next update
   if (isFinalizingUI) {
       uiUpdateQueued = true; 
@@ -2776,10 +3162,18 @@ function finalizeUIUpdate() {
       loadActiveToEditor();
       updateSidebarInfo(file);
 
-      // 3. Trigger History Fetch in BACKGROUND (Non-blocking)
-      // We removed 'await' so the UI doesn't freeze while fetching
-      if (file) {
-        updateVersionHistory(file).catch(err => console.error("History bg fetch error", err)); 
+      // 3. INSTANT VERSION HISTORY FROM CACHE
+      if (file && file.versionsCache) {
+        // Render immediately from cache
+        renderVersionList(file, file.versionsCache);
+        
+        // Then refresh in background if needed
+        if (pb.authStore.isValid && derivedKey && !file.id.startsWith('temp_')) {
+          fetchFreshVersionsInBackground(file);
+        }
+      } else if (file) {
+        // No cache - fetch fresh (but show loading)
+        updateVersionHistory(file).catch(err => console.error("History bg fetch error", err));
       } else {
         // Clear history immediately if no file
         const versionList = document.getElementById('versionList');
@@ -2795,7 +3189,6 @@ function finalizeUIUpdate() {
       console.error("UI Update failed:", e);
     } finally {
       // Unlock immediately after DOM updates are done
-      // (We do NOT wait for the network request anymore)
       isFinalizingUI = false;
       
       // If user clicked another note while we were rendering, run again
@@ -2814,42 +3207,7 @@ window.addEventListener('beforeunload', async (event) => {
   }
 });
 // Toolbar Slider
-function setupToolbarSlider() {
-  const oldNavButtons = document.querySelectorAll('#nav_default, #nav_tools');
-  oldNavButtons.forEach(btn => {
-    if (btn.parentNode) {
-      btn.remove();
-    }
-  });
-  
-  const toolsBtn = document.getElementById('toolsMenuBtn');
-  const toolsDropdown = document.getElementById('toolsDropdown');
-  
-  if (toolsBtn && toolsDropdown) {
-    toolsBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      
-      const rect = toolsBtn.getBoundingClientRect();
-      toolsDropdown.style.top = (rect.bottom + 4) + 'px';
-      toolsDropdown.style.left = rect.left + 'px';
-      
-      toolsDropdown.classList.toggle('hidden');
-    });
-    
-    document.addEventListener('click', (e) => {
-      if (!toolsBtn.contains(e.target) && !toolsDropdown.contains(e.target)) {
-        toolsDropdown.classList.add('hidden');
-      }
-    });
-    
-    const toolButtons = toolsDropdown.querySelectorAll('button');
-    toolButtons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        toolsDropdown.classList.add('hidden');
-      });
-    });
-  }
-}
+
 
 // Toolbar Buttons
 ['undo','redo'].forEach(id => document.getElementById(id+'Btn')?.addEventListener('click', () => document.execCommand(id)));
@@ -2951,6 +3309,7 @@ function showLogin() { mDef.classList.add('hidden'); mLog.classList.add('hidden'
 function showSignup() { mDef.classList.add('hidden'); mLog.classList.add('hidden'); lForm.classList.add('hidden'); sForm.classList.remove('hidden'); document.getElementById('signupName').focus(); }
 
 function updateProfileState() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const user = pb.authStore.model;
   const isLoggedIn = pb.authStore.isValid;
   
@@ -3012,6 +3371,7 @@ function updateProfileState() {
 }
 
 function updateVersionFooter() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // 1. Check if user previously dismissed the footer
   if (localStorage.getItem('kryptNote_dismissFooter') === 'true') {
     return;
@@ -3198,6 +3558,7 @@ if (shareModal) {
 // ===================================================================
 
 function initTiptap() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   tiptapEditor = new Editor({
     element: document.getElementById('tiptapEditor'),
     extensions: [
@@ -3228,27 +3589,53 @@ function initTiptap() {
 }
 
 function setupEditorSwitching() {
-  // 1. Toggle the Dropdown Menus
-  const triggers = document.querySelectorAll('#editorModeTrigger');
-  const dropdowns = document.querySelectorAll('#editorModeDropdown');
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  // 1. GENERIC DROPDOWN LOGIC (Handles Editor Mode AND Tools Menu)
+  const dropdownGroups = [
+      { trigger: 'editorModeTrigger', menu: 'editorModeDropdown' },
+      { trigger: 'toolsMenuBtn', menu: 'toolsDropdown' }
+  ];
 
-  triggers.forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      // Toggle the specific dropdown next to the button clicked
-      const menu = btn.nextElementSibling;
-      // Hide others first
-      dropdowns.forEach(d => { if(d !== menu) d.classList.add('hidden'); });
-      menu.classList.toggle('hidden');
-    });
+  dropdownGroups.forEach(group => {
+      const btn = document.getElementById(group.trigger);
+      const menu = document.getElementById(group.menu);
+
+      if (btn && menu) {
+          btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              
+              // Close ALL other dropdowns first
+              dropdownGroups.forEach(g => {
+                  const otherMenu = document.getElementById(g.menu);
+                  if (otherMenu && otherMenu !== menu) {
+                      otherMenu.classList.add('hidden');
+                  }
+              });
+
+              // Toggle the specific menu
+              menu.classList.toggle('hidden');
+              
+              // If we just opened the Tools menu, we might want to attach listeners to its items
+              // (Optional: ensures clicking a tool closes the menu)
+              if (!menu.classList.contains('hidden') && group.trigger === 'toolsMenuBtn') {
+                  const toolBtns = menu.querySelectorAll('button');
+                  toolBtns.forEach(b => {
+                      b.onclick = () => menu.classList.add('hidden');
+                  });
+              }
+          });
+      }
   });
 
-  // Close menus on outside click
+  // 2. GLOBAL CLOSE (Clicking outside closes everything)
   window.addEventListener('click', () => {
-    dropdowns.forEach(d => d.classList.add('hidden'));
+      dropdownGroups.forEach(group => {
+          const menu = document.getElementById(group.menu);
+          if (menu) menu.classList.add('hidden');
+      });
   });
 
-  // 2. Handle Option Clicks
+  // 3. EDITOR MODE SPECIFIC LOGIC (Handling the Plain/Rich switch)
   const options = document.querySelectorAll('.mode-option');
   const textarea = document.getElementById('textEditor');
 
@@ -3257,7 +3644,7 @@ function setupEditorSwitching() {
       const targetMode = opt.getAttribute('data-mode');
 
       // --- CASE A: SWITCHING TO RICH ---
-  if (targetMode === 'rich') {
+      if (targetMode === 'rich') {
         if (!isUserPremium()) {
            showRichPreviewModal(); 
            return; 
@@ -3268,23 +3655,18 @@ function setupEditorSwitching() {
         const raw = textarea.value;
         
         try {
-           // 1. Try to parse as existing JSON (in case it was hidden code)
            const json = JSON.parse(raw);
-           // Safety check: ensure it's actually a TipTap doc
            if (json.type === 'doc') {
                tiptapEditor.commands.setContent(json);
            } else {
                throw new Error("Not a doc");
            }
         } catch(e) {
-           // 2. ROBUST FALLBACK: Convert Plain Text lines -> TipTap JSON Paragraphs
-           // This avoids HTML parsing issues entirely.
            const lines = raw.split('\n');
            const docStructure = {
                type: 'doc',
                content: lines.map(line => ({
                    type: 'paragraph',
-                   // If line has text, create a text node. If empty, empty array (creates blank line)
                    content: line ? [{ type: 'text', text: line }] : [] 
                }))
            };
@@ -3298,12 +3680,10 @@ function setupEditorSwitching() {
 
       // --- CASE B: SWITCHING TO PLAIN ---
       else if (targetMode === 'plain') {
-        if (!isRichMode) return; // Already active
+        if (!isRichMode) return; 
 
-        // Warning
         if(!confirm("Switching to Plain Text will remove all formatting (images, colors). Continue?")) return;
 
-        // Convert
         const cleanText = tiptapEditor.getText({ blockSeparator: "\n" });
         textarea.value = cleanText;
 
@@ -3314,11 +3694,11 @@ function setupEditorSwitching() {
     });
   });
   
-  // Initial UI Update
   updateEditorModeUI();
 }
 
 function updateEditorModeUI() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // 1. Switch the main editor wrappers
   applyEditorMode(); 
 
@@ -3356,6 +3736,7 @@ function updateEditorModeUI() {
 }
 
 function applyEditorMode() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const plainWrap = document.getElementById('plainWrapper');
   const richWrap = document.getElementById('richWrapper');
   
@@ -3544,6 +3925,7 @@ document.getElementById('textEditor')?.addEventListener('input', (e) => {
 });
 
 function handleAutoSave(newContent) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === state.activeId);
   if (!file) return;
 
