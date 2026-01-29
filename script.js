@@ -665,29 +665,36 @@ async function createDefaultCategories() {
 
 async function loadUserFiles() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  // 1. CAPTURE CACHE: Capture previews and version histories from the "Fast Render" state
+  const cachedFilesMap = new Map();
+  state.files.forEach(f => {
+    if (f.id) cachedFilesMap.set(f.id, f);
+  });
+
   state.files = [];
   state.categories = [];
   state.activeId = null;
-  state.activeCategoryId = DEFAULT_CATEGORY_IDS.WORK; 
+  state.activeCategoryId = DEFAULT_CATEGORY_IDS.WORK;
 
   if (pb.authStore.isValid && derivedKey) {
+    // ── LOGGED IN: Load from PocketBase ──
     try {
+      // 2. Load Categories
       state.categories = await pb.collection('categories').getFullList({ sort: 'sortOrder, created' });
       
       if (state.categories.length === 0) {
         state.categories = await createDefaultCategories();
       } else {
+          // Inject localId based on icon for system defaults
           state.categories = state.categories.map(c => {
-              if (c.iconName === 'icon-work') {
-                  c.localId = DEFAULT_CATEGORY_IDS.WORK;
-              }
-              else if (c.iconName === 'icon-delete') {
-                  c.localId = DEFAULT_CATEGORY_IDS.TRASH;
-              }
+              if (c.iconName === 'icon-work') c.localId = DEFAULT_CATEGORY_IDS.WORK;
+              else if (c.iconName === 'icon-delete') c.localId = DEFAULT_CATEGORY_IDS.TRASH;
               return c;
           });
       }
 
+      // 3. Load Encrypted Files from Server
       const records = await pb.collection('files').getFullList({
         filter: `user = "${pb.authStore.model.id}"`, 
         sort: '-updated',
@@ -703,24 +710,45 @@ async function loadUserFiles() {
               derivedKey
             );
           } catch (err) {
-            console.error(`Decryption failed for file ID ${r.id} (${r.name}):`, err);
-            plaintext = '[ERROR: Failed to decrypt note. Corrupted data, please delete this file.]';
+            console.error(`Decryption failed for file ID ${r.id}:`, err);
+            plaintext = '[ERROR: Decryption Failed]';
           }
         }
         
-        // PRE-CALCULATE AND CACHE PREVIEW
-        const trimmedContent = plaintext?.trim() || '';
-        return { 
+        // 4. SMART MIGRATION: Compare server data with our captured cache
+        const cachedNote = cachedFilesMap.get(r.id);
+        const cleanPlaintext = plaintext?.trim() || '';
+        let previewText = '';
+
+        // Only call the heavy getPreviewText if the content actually changed since the last session
+        if (!cleanPlaintext) {
+            previewText = '';
+        } else if (cachedNote && cachedNote._contentLastPreviewed?.trim() === cleanPlaintext && cachedNote._cachedPreview) {
+            previewText = cachedNote._cachedPreview; // Reuse cached preview string
+        } else {
+            previewText = getPreviewText(cleanPlaintext); // Fallback to heavy JSON parsing
+        }
+
+        const newFileObj = { 
           id: r.id, name: r.name, content: plaintext, created: r.created, updated: r.updated, 
           categoryId: r.category,
-          _cachedPreview: getPreviewText(trimmedContent),
+          _cachedPreview: previewText,
           _contentLastPreviewed: plaintext
         };
+
+        // 5. MIGRATE VERSION CACHE: Move previous version snapshots to the new file object
+        // This prevents the "Loading..." flicker and multi-parsing in the History sidebar
+        if (cachedNote && cachedNote.versionsCache) {
+            newFileObj.versionsCache = cachedNote.versionsCache;
+        }
+
+        return newFileObj;
       }));
     } catch (e) { 
         console.error("PocketBase Load Failed:", e); 
     }
   } else {
+    // ── GUEST MODE: Load from localStorage ──
     let localData = guestStorage.loadData();
     if (!localData || !localData.categories) {
       localData = guestStorage.initData();
@@ -731,30 +759,36 @@ async function loadUserFiles() {
     state.files.forEach(f => {
         if (!f.categoryId) f.categoryId = DEFAULT_CATEGORY_IDS.WORK;
         
-        // CACHE PREVIEW FOR GUEST FILES
-        if (f._cachedPreview === undefined) {
-          f._cachedPreview = getPreviewText(f.content?.trim() || '');
-          f._contentLastPreviewed = f.content;
+        // Ensure guest files have previews correctly attached
+        const cleanContent = f.content?.trim() || '';
+        if (!f._cachedPreview && cleanContent) {
+            f._cachedPreview = getPreviewText(cleanContent);
+            f._contentLastPreviewed = f.content;
         }
     });
   }
 
+  // 6. Handle selection and final state cleanup
   if (state.files.length === 0) {
     await createFile();
   }
   
+  // Select active category and the first note within it
   selectCategory(state.activeCategoryId, true); 
   
+  // Perform a final stable sort
   state.files.sort((a, b) => {
       const dateA = new Date(a.updated).getTime();
       const dateB = new Date(b.updated).getTime();
-      
       if (dateB !== dateA) return dateB - dateA;
       return b.id.localeCompare(a.id);
   });
   
+  // Save the synchronized state back to local cache
   saveToUserCache(); 
   updateOriginalContent();
+  
+  // Update UI (Single authoritative call)
   finalizeUIUpdate(); 
 }
 
@@ -1157,6 +1191,11 @@ async function createVersionSnapshot(pb, derivedKey, fileId, content, editorMode
  */
 async function getVersions(pb, derivedKey, fileId, signal) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  // Create a map of what we currently have in memory to avoid re-parsing
+  const currentFile = state.files.find(f => f.id === fileId);
+  const existingMap = new Map((currentFile?.versionsCache || []).map(v => [v.id, v]));
+
   try {
     const records = await pb.collection('versions').getFullList({
       filter: `file = "${fileId}"`,
@@ -1164,50 +1203,35 @@ async function getVersions(pb, derivedKey, fileId, signal) {
       signal: signal, 
     });
 
-    const versions = await Promise.all(
-      records.map(async (r) => {
-        let content = '[Decryption failed]';
-        try {
-          content = await decryptBlob(
-            {
-              iv: b64ToArray(r.iv),
-              authTag: b64ToArray(r.authTag),
-              ciphertext: b64ToArray(r.encryptedBlob),
-            },
-            derivedKey
-          );
-        } catch (decErr) {
-          console.error('Version decryption error:', decErr);
-        }
-        
-        // Determine editor mode if not specified
-        let editorMode = r.editor;
-        if (!editorMode) {
-          editorMode = content.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain';
-        }
-        
-        return {
-          id: r.id,
-          created: r.created,
-          content: content,
-          editor: editorMode // Ensure editor property is always present
-        };
-      })
-    );
+    return await Promise.all(records.map(async (r) => {
+      // 1. Check identity
+      const existing = existingMap.get(r.id);
+      
+      // If we have it in memory and it hasn't changed, return the existing object exactly
+      if (existing && existing._cachedPreview) {
+          return existing; 
+      }
 
-    versions.sort((a, b) => {
-      const dateA = new Date(a.created).getTime();
-      const dateB = new Date(b.created).getTime();
-      return dateB - dateA;
-    });
+      // 2. Only decrypt and parse if it's truly new
+      let content = '';
+      try {
+        content = await decryptBlob(
+          { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
+          derivedKey
+        );
+      } catch (e) { content = '[Decryption error]'; }
 
-    return versions;
+      return {
+        id: r.id,
+        created: r.created,
+        content: content,
+        editor: r.editor || (content.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain'),
+        _cachedPreview: getPreviewText(content), // This only runs for NEW versions from other devices
+        lastEditor: r.lastEditor
+      };
+    }));
   } catch (err) {
-    if (err.name === 'AbortError' || err.isAbort || err.status === 0) {
-      throw err;
-    }
-    
-    console.error('Failed to load versions:', err);
+    if (err.name === 'AbortError') throw err;
     return [];
   }
 }
@@ -2061,30 +2085,25 @@ async function updateVersionHistory(file = null) {
   
   if (!file || !file.id) {
     versionList.innerHTML = '<li class="muted">No note selected.</li>';
+    versionList.classList.remove('loading');
+    delete versionList.dataset.currentFileId;
     return;
   }
 
-  // OPTIMIZATION: If this is a new temporary file, it HAS no history. 
-  // Don't even try to fetch or render history.
+  // 1. New note handling
   if (file.id.startsWith('temp_')) {
     versionList.innerHTML = `
-      <li class="version-current">
+      <li class="version-current selected">
         <strong>Current version</strong>
         <small>${formatDate(file.updated)}</small>
       </li>
-      <li class="muted">History will be available after saving.</li>
+      <li class="muted" style="padding:12px;">History will be available after saving.</li>
     `;
+    versionList.dataset.currentFileId = file.id;
     return;
   }
 
-  const currentFileId = versionList.dataset.currentFileId;
-  if (currentFileId === file.id && versionList.children.length > 1) {
-    return; // Already showing this file
-  }
-  
-  versionList.dataset.currentFileId = file.id;
-
-  // UI Setup (Badge logic)
+  // 2. Badge UI
   const titleElement = document.querySelector('#version-history h4');
   const isPremium = isUserPremium(); 
   if (titleElement) {
@@ -2094,25 +2113,33 @@ async function updateVersionHistory(file = null) {
     titleElement.innerHTML = `<svg class="btn-icon"><use href="#${iconName}"/></svg><div class="version-title-group"><span>History</span><span class="version-badge ${badgeClass}">${badgeHTML}</span></div>`;
   }
 
-  // Check Cache
+  // 3. INSTANT RENDER: If we have a cache (migrated or restored), show it NOW.
+  // This prevents the 2s delay.
   if (file.versionsCache && file.versionsCache.length > 0) {
+    versionList.dataset.currentFileId = file.id;
     renderVersionList(file, file.versionsCache);
-    if (pb.authStore.isValid && derivedKey) fetchFreshVersionsInBackground(file);
+    
+    // Perform background sync silently only if logged in
+    if (pb.authStore.isValid && derivedKey) {
+        fetchFreshVersionsInBackground(file);
+    }
     return; 
   }
 
-  versionList.innerHTML = '<li class="muted" style="padding:12px;">Loading...</li>';
+  // 4. Loading State (Only shown if zero data exists)
+  versionList.innerHTML = '<li class="muted" style="padding:12px;">Loading history...</li>';
   versionList.classList.add('loading');
+  versionList.dataset.currentFileId = file.id;
 
   if (pb.authStore.isValid && derivedKey) {
     versionHistoryController = new AbortController();
     try {
       const versions = await getVersions(pb, derivedKey, file.id, versionHistoryController.signal);
       file.versionsCache = versions;
+      saveToUserCache(); 
       renderVersionList(file, versions);
     } catch (e) {
-      if (e.name === 'AbortError') return;
-      versionList.innerHTML = '<li class="muted">History temporarily unavailable</li>';
+      if (e.name !== 'AbortError') versionList.innerHTML = '<li class="muted">History unavailable</li>';
     } finally {
       versionList.classList.remove('loading');
     }
@@ -2158,7 +2185,13 @@ function renderVersionList(file, versions) {
     html += `<li class="muted">No previous versions saved yet.</li>`;
   } else {
     filteredVersions.forEach(v => {
-      const rawText = getPreviewText(v.content);
+      // --- OPTIMIZATION: Use the cached preview string ---
+      // This prevents the dozen/hundred calls to getPreviewText on every render
+      if (v._cachedPreview === undefined) {
+          v._cachedPreview = getPreviewText(v.content);
+      }
+      
+      const rawText = v._cachedPreview || '';
       const preview = rawText.length > 50 ? rawText.substring(0, 50) + '...' : rawText || '[empty]';
       
       const loadingClass = v.id.startsWith('temp_version_') ? ' version-loading' : '';
@@ -2191,7 +2224,7 @@ function renderVersionList(file, versions) {
       }
       
       const versionId = item.dataset.versionId;
-      // CRITICAL: We find the version in the array passed to this function
+      // Find the version in the array passed to this function
       const version = versions.find(v => v.id === versionId); 
       
       if (version) {
@@ -2395,126 +2428,79 @@ function createPreviewBanner(date) {
 async function handleRestore() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === state.activeId);
-  if (!file) return;
+  if (!file || isSavingVersion) return;
 
-  // 1. Lock to prevent interference from blur events
-  if (isSavingVersion) return;
+  const versionToRestore = previewVersion; 
+  if (!versionToRestore) return;
+
   isSavingVersion = true;
 
   try {
-    // 2. Exit preview mode FIRST and capture the version
-    const versionToRestore = previewVersion; 
-    exitPreviewMode();
-    
-    if (!versionToRestore) {
-      showToast('No version to restore', 2000);
-      return;
-    }
-
-    // 3. Save the content we want to restore
+    // 1. Capture content and mode before exiting preview
     const contentToRestore = versionToRestore.content;
-    const restoredFromTimestamp = versionToRestore.created;
+    const restorePreview = versionToRestore._cachedPreview;
+    const editorMode = versionToRestore.editor || (contentToRestore.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain');
     
-    // 4. Determine editor mode safely
-    const editorMode = versionToRestore.editor || 
-                      (contentToRestore.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain');
-    
-    // 5. SMART BACKUP: Save CURRENT content as a version only if it differs from the latest snapshot
-    // This prevents the "000" duplicate issue.
-    if (file.content !== '' && pb.authStore.isValid && derivedKey) {
-        let shouldBackup = true;
-        
-        // Check against the cache (which is populated if the history tab is open)
-        if (file.versionsCache && file.versionsCache.length > 0) {
-            // Compare current content with the most recent version in history
-            const latestVersion = file.versionsCache[0];
-            if (latestVersion.content === file.content) {
-                shouldBackup = false; // It's already saved, don't duplicate
-            }
-        }
+    exitPreviewMode();
 
-        if (shouldBackup) {
-            await createVersionSnapshot(pb, derivedKey, file.id, file.content, isRichMode ? 'rich' : 'plain');
-        }
+    // 2. Create local backup in the cache BEFORE saving to server
+    if (!file.versionsCache) file.versionsCache = [];
+    
+    // Check if the current note content is already the top version to prevent duplicates
+    if (file.content !== '' && (!file.versionsCache[0] || file.versionsCache[0].content !== file.content)) {
+        file.versionsCache.unshift({
+            id: `backup_${Date.now()}`,
+            created: new Date().toISOString(),
+            content: file.content,
+            editor: isRichMode ? 'rich' : 'plain',
+            _cachedPreview: file._cachedPreview // Reuse existing note preview
+        });
     }
-    
-    // 6. Update the file with NEW timestamp locally
-    const now = new Date().toISOString();
+
+    // 3. Update the Note Object locally
     file.content = contentToRestore;
-    file.updated = now;
-    
-    // 7. Load into editor based on content type
-    if (editorMode === 'rich' || contentToRestore.trim().startsWith('{"type":"doc"')) {
+    file.updated = new Date().toISOString(); // Fresh timestamp
+    file._cachedPreview = restorePreview;
+
+    // 4. SYNC UI IMMEDIATELY (Instantly switches to "Current Version" in sidebar)
+    renderFiles();
+    updateSidebarInfo(file);
+    renderVersionList(file, file.versionsCache); 
+    highlightSelectedVersion(null); // Select "Current Version" at the top
+
+    // 5. Update Editor Content
+    if (editorMode === 'rich') {
       isRichMode = true;
       updateEditorModeUI();
-      if (tiptapEditor) {
-        try {
-          const json = JSON.parse(contentToRestore);
-          tiptapEditor.commands.setContent(json);
-        } catch (e) {
-          // Fallback to plain text
-          const lines = contentToRestore.split('\n');
-          const docStructure = {
-            type: 'doc',
-            content: lines.map(line => ({
-              type: 'paragraph',
-              content: line ? [{ type: 'text', text: line }] : []
-            }))
-          };
-          tiptapEditor.commands.setContent(docStructure);
-        }
-      }
+      try { tiptapEditor.commands.setContent(JSON.parse(contentToRestore)); }
+      catch(e) { tiptapEditor.commands.setContent(contentToRestore); }
     } else {
       isRichMode = false;
       updateEditorModeUI();
-      const textarea = document.getElementById('textEditor');
-      if (textarea) {
-        textarea.value = contentToRestore;
-        textarea.dispatchEvent(new Event('input'));
-      }
+      document.getElementById('textEditor').value = contentToRestore;
     }
+    
+    originalContent = contentToRestore;
 
-    // 8. CRITICAL: Update baseline to prevent blur-save
-    if (isRichMode && tiptapEditor) {
-        originalContent = JSON.stringify(tiptapEditor.getJSON());
-    } else {
-        originalContent = contentToRestore;
-    }
-
-    // 9. Save the file (Update "Current Version" on server)
+    // 6. Final Background Save
     await saveFile(file);
     
-    // 10. Save for guest users (Simple Append)
-    if (!pb.authStore.isValid) {
-      if (!file.versions) file.versions = [];
-      file.versions.unshift({
-        id: `restored_${Date.now()}`,
-        created: now,
-        content: contentToRestore,
-        editor: editorMode
-      });
-      guestStorage.saveData({ categories: state.categories, files: state.files });
+    // Create the actual version snapshot on the server for the backup we just made
+    if (pb.authStore.isValid && derivedKey) {
+        const backupVersion = file.versionsCache[0];
+        if (backupVersion.id.startsWith('backup_')) {
+            const result = await createVersionSnapshot(pb, derivedKey, file.id, backupVersion.content, backupVersion.editor);
+            backupVersion.id = result.id; // Swap local temp ID for server ID
+            backupVersion.created = result.created;
+        }
     }
 
-    // 11. Force refresh UI
-    renderFiles();
-    updateSidebarInfo(file);
-    
-    // Invalidate cache so the new "Backup" (if created) appears
-    file.versionsCache = null; 
-    
-    // NEW: Clear the version cache from localStorage too
-    clearVersionCache(file.id);
-    
-    await updateVersionHistory(file);
-    
-    showToast(`Version from ${formatDate(restoredFromTimestamp)} restored!`, 2000);
+    showToast(`Restored version from ${formatDate(versionToRestore.created)}`);
 
   } catch (e) {
     console.error("Restore failed:", e);
-    showToast("Failed to restore version", 3000);
+    showToast("Restore failed");
   } finally {
-    // Unlock always
     isSavingVersion = false;
   }
 }
