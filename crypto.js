@@ -103,11 +103,26 @@ export function randomSalt() {
   return crypto.getRandomValues(new Uint8Array(16));
 }
 
-export const arrayToB64 = arr => btoa(String.fromCharCode(...arr))
-  .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-export const b64ToArray = str => {
+// Converts Uint8Array to URL-safe Base64 (Stack-Safe for large files)
+export const arrayToB64 = (arr) => {
+  const binary = Array.from(arr, (byte) => String.fromCharCode(byte)).join('');
+  return btoa(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+};
+
+// Converts URL-safe Base64 back to Uint8Array
+export const b64ToArray = (str) => {
   if (!str) return new Uint8Array(0);
-  return Uint8Array.from(atob(str.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+  const padding = '='.repeat((4 - (str.length % 4)) % 4);
+  const base64 = (str + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 };
 
 
