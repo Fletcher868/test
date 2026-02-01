@@ -37,7 +37,8 @@ let pb = null,
     currentMenu = null, derivedKey = null;
 let originalContent = '';
 let isSavingVersion = false;
-
+// ANTI-ABUSE LIMITS
+const MAX_FILENAME_LENGTH = 100;    
 let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') !== 'false';
 let finalizeUIUpdateTimeout = null;
 let isFinalizingUI = false;
@@ -356,19 +357,63 @@ async function initPocketBase() {
 async function restoreEncryptionKeyAndLoad() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   try {
+    // 1. Try to retrieve the key from the current session (fastest)
     derivedKey = await loadDataKeyFromSession();
     
     if (derivedKey) {
-      await loadUserFiles(); // This will now use our "No Blackout" logic
+      // INSTANT UI UPDATE: Show profile info before starting decryption
       updateProfileState();
+      
+      // Proceed to decrypt files (uses the "No Blackout" loadUserFiles logic)
+      await loadUserFiles();
+      
+      // Setup background sync and realtime
       setupRealtimeSubscription(); 
       setupExport(pb, derivedKey, showToast);
       return;
     }
-    // ... rest of function (password prompt logic) ...
-  } catch (e) {
-      console.error(e);
+
+    // 2. If no session key, check if we have user security data
+    const user = pb.authStore.model;
+    if (!user || !user.encryptionSalt || !user.wrappedKey) {
+      console.warn('Security data missing from user model.');
       logout();
+      return;
+    }
+
+    // 3. Prompt user to unlock (Standard flow)
+    const password = prompt('Session expired. Enter password to unlock notes:');
+    if (!password) { 
+      logout(); 
+      return; 
+    }
+
+    const salt = b64ToArray(user.encryptionSalt);
+    const masterKey = await deriveMasterKey(password, salt);
+    
+    const wrappedJson = JSON.parse(atob(user.wrappedKey)); 
+    
+    derivedKey = await unwrapDataKey({
+        iv: b64ToArray(wrappedJson.iv),
+        authTag: b64ToArray(wrappedJson.authTag),
+        ciphertext: b64ToArray(wrappedJson.ct)
+    }, masterKey);
+
+    // Save derived key to session so they don't have to enter password again this session
+    const dkStr = await exportKeyToString(derivedKey);
+    storeDataKeyInSession(dkStr);
+
+    // 4. Update Profile and Start Loading
+    updateProfileState(); // Fix "Guest User" immediately after password entry
+    
+    await loadUserFiles();
+    setupRealtimeSubscription(); 
+    setupExport(pb, derivedKey, showToast);
+
+  } catch (e) {
+    console.error("Unlock failed:", e);
+    alert('Failed to unlock: Wrong password or corrupted key.');
+    logout();
   }
 }
 
@@ -639,44 +684,59 @@ async function createDefaultCategories() {
 async function loadUserFiles() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
-  // 1. Capture cache for migration (but do NOT clear state.files yet!)
+  // 1. Capture the existing cache (Notes + History) from the "Fast Render"
   const cachedFilesMap = new Map(state.files.map(f => [f.id, f]));
 
   if (pb.authStore.isValid && derivedKey) {
+    // ── LOGGED IN LOGIC ──
     try {
-      state.categories = await pb.collection('categories').getFullList({ sort: 'sortOrder, created' });
+      // 2. Fetch Categories from Server
+      let serverCats = await pb.collection('categories').getFullList({ sort: 'sortOrder, created' });
       
-      // Map categories...
-      state.categories = state.categories.map(c => {
-          if (c.iconName === 'icon-work') c.localId = DEFAULT_CATEGORY_IDS.WORK;
-          else if (c.iconName === 'icon-delete') c.localId = DEFAULT_CATEGORY_IDS.TRASH;
-          return c;
-      }) || [];
+      // 3. Handle Default Categories if server is empty
+      if (serverCats.length === 0) {
+        serverCats = await createDefaultCategories();
+      } else {
+          // Map localId based on iconName so the app recognizes 'Work' and 'Trash'
+          serverCats = serverCats.map(c => {
+              if (c.iconName === 'icon-work') c.localId = DEFAULT_CATEGORY_IDS.WORK;
+              else if (c.iconName === 'icon-delete') c.localId = DEFAULT_CATEGORY_IDS.TRASH;
+              return c;
+          });
+      }
+      
+      // CRITICAL: Update the global categories state immediately
+      state.categories = serverCats;
 
+      // 4. Fetch Encrypted Files
       const records = await pb.collection('files').getFullList({
         filter: `user = "${pb.authStore.model.id}"`, 
         sort: '-updated'
       });
 
-      // 2. Build the NEW list in a temporary variable
+      // 5. Decrypt in a separate variable to prevent the "Blackout"
       const freshFiles = await Promise.all(records.map(async r => {
         let plaintext = '';
-        try {
-          plaintext = await decryptBlob(
-            { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
-            derivedKey
-          );
-        } catch (err) { plaintext = '[Decryption Error]'; }
+        if (r.iv && r.authTag && r.encryptedBlob) {
+          try {
+            plaintext = await decryptBlob(
+              { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
+              derivedKey
+            );
+          } catch (err) { plaintext = '[Decryption Error]'; }
+        }
         
         const cachedNote = cachedFilesMap.get(r.id);
         const cleanPlaintext = plaintext?.trim() || '';
         let previewText = '';
 
-        if (!cleanPlaintext) previewText = '';
-        else if (cachedNote && cachedNote._contentLastPreviewed?.trim() === cleanPlaintext) {
-          previewText = cachedNote._cachedPreview;
+        // 6. MIGRATE PREVIEWS: Reuse already-calculated preview strings
+        if (!cleanPlaintext) {
+            previewText = '';
+        } else if (cachedNote && cachedNote._contentLastPreviewed?.trim() === cleanPlaintext && cachedNote._cachedPreview) {
+            previewText = cachedNote._cachedPreview;
         } else {
-          previewText = getPreviewText(cleanPlaintext);
+            previewText = getPreviewText(cleanPlaintext);
         }
 
         const newFileObj = { 
@@ -686,26 +746,47 @@ async function loadUserFiles() {
           _contentLastPreviewed: plaintext
         };
 
+        // 7. MIGRATE VERSION HISTORY: Preserve the history list across the refresh
         if (cachedNote && cachedNote.versionsCache) {
             newFileObj.versionsCache = cachedNote.versionsCache;
         }
+
         return newFileObj;
       }));
 
-      // 3. ONLY SWAP THE STATE NOW (After 3 seconds of decryption is done)
+      // 8. SWAP STATE: Only replace the files list now that decryption is finished
       state.files = freshFiles;
 
-    } catch (e) { console.error("PB Load Failed:", e); }
+    } catch (e) { 
+        console.error("PocketBase Load Failed:", e); 
+    }
   } else {
-    // Guest Mode
-    let localData = guestStorage.loadData() || guestStorage.initData();
+    // ── GUEST MODE LOGIC ──
+    let localData = guestStorage.loadData();
+    if (!localData || !localData.categories) {
+      localData = guestStorage.initData();
+      guestStorage.saveData(localData);
+    }
     state.categories = localData.categories;
     state.files = localData.files;
+    
+    // Ensure previews are set for guest notes
+    state.files.forEach(f => {
+        if (!f.categoryId) f.categoryId = DEFAULT_CATEGORY_IDS.WORK;
+        const clean = f.content?.trim() || '';
+        if (!f._cachedPreview && clean) {
+            f._cachedPreview = getPreviewText(clean);
+            f._contentLastPreviewed = f.content;
+        }
+    });
   }
 
-  // 4. Finalizing
-  if (state.files.length === 0) await createFile();
+  // 9. Handle initial state if empty
+  if (state.files.length === 0) {
+    await createFile();
+  }
   
+  // 10. Select Category and Stable Sort
   selectCategory(state.activeCategoryId, true); 
   
   state.files.sort((a, b) => {
@@ -715,6 +796,7 @@ async function loadUserFiles() {
       return b.id.localeCompare(a.id);
   });
   
+  // 11. Final Persistence and UI Sync
   saveToUserCache(); 
   updateOriginalContent();
   finalizeUIUpdate(); 
@@ -873,9 +955,16 @@ async function createFileOnServer(tempId, name, targetCategoryId) {
 async function createCategory(name) {
     console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
     if (!name?.trim()) return;
+
     const trimmedName = name.trim();
+
+    // VALIDATION: Return early if name is too long
+    if (trimmedName.length > MAX_FILENAME_LENGTH) {
+        showToast(`Category name is too long (Max ${MAX_FILENAME_LENGTH} characters).`, 4000);
+        return;
+    }
+
     const now = new Date().toISOString();
-    
     const tempId = `cat_temp_${Date.now()}`; 
     
     const newCategory = {
@@ -889,7 +978,6 @@ async function createCategory(name) {
         lastEditor: SESSION_ID
     };
     
-    // 1. Optimistic UI
     state.categories.push(newCategory);
     state.categories.sort((a,b) => a.sortOrder - b.sortOrder);
     finalizeUIUpdate();
@@ -903,33 +991,28 @@ async function createCategory(name) {
                 user: pb.authStore.model.id,
                 sortOrder: newCategory.sortOrder,
                 iconName: newCategory.iconName,
-                lastEditor: SESSION_ID // <--- REALTIME SUPPRESSION
-            });
+                lastEditor: SESSION_ID
+            }, { requestKey: null });
             
-            // 2. Swap Temp for Permanent
             const index = state.categories.findIndex(c => c.id === tempId);
             if (index !== -1) {
-                state.categories[index] = { 
-                    ...record, 
-                    localId: record.id,
-                    _cachedPreview: record.name // Categories just use name as preview
-                };
+                state.categories[index] = { ...record, localId: record.id };
             }
 
             finalCategoryId = record.id;
             state.activeCategoryId = finalCategoryId;
-            
-            await createFile(); // Create first note in new category
+            await createFile(); 
             finalizeUIUpdate();
             
         } catch (e) {
-            console.error('Category creation failed:', e);
-            showToast('Failed to create category on server.', 3000);
-            state.categories = state.categories.filter(c => c.id !== tempId);
-            finalizeUIUpdate();
+            if (e.status !== 0) {
+                console.error('Category creation failed:', e);
+                showToast('Failed to create category on server.', 3000);
+                state.categories = state.categories.filter(c => c.id !== tempId);
+                finalizeUIUpdate();
+            }
         }
     } else {
-        // Guest mode
         newCategory.id = `cat_guest_${Date.now()}`;
         newCategory.localId = newCategory.id;
         guestStorage.saveData({ categories: state.categories, files: state.files });
@@ -938,6 +1021,7 @@ async function createCategory(name) {
         finalizeUIUpdate();
     }
 }
+
 async function saveFile(file) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   file.updated = new Date().toISOString();
@@ -1494,8 +1578,8 @@ function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
     };
   } 
   
-  // 2. Rename Category (For Work and Custom Categories)
-  if (!isTrash) {
+// 2. Rename Category (For Work and Custom Categories)
+if (!isTrash) {
     menu.querySelector('.ctx-rename').onclick = async () => {
         menu.remove();
         
@@ -1503,11 +1587,18 @@ function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
         if (!newName?.trim() || newName.trim() === name) { return; }
 
         const trimmedName = newName.trim();
+
+        // VALIDATION: Return early if name is too long
+        if (trimmedName.length > MAX_FILENAME_LENGTH) {
+            showToast(`Name is too long (Max ${MAX_FILENAME_LENGTH} characters).`, 4000);
+            return;
+        }
+
         const category = state.categories.find(c => c.id === id || c.localId === id);
         if (!category) { return; }
         
         const oldName = category.name;
-        category.name = trimmedName; // Optimistic update
+        category.name = trimmedName; 
         
         if (id === state.activeCategoryId) {
            const activeCategoryTitle = document.querySelector('.categories-title');
@@ -1517,25 +1608,23 @@ function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
 
         if (pb.authStore.isValid) {
             if (category.id && !category.id.startsWith('cat_temp_') && !category.id.startsWith('cat_guest_')) {
-              
-
                 try {
-                        await pb.collection('categories').update(category.id, { 
-        name: trimmedName,
-        lastEditor: SESSION_ID // <--- ADDED
-    }); 
-                    showToast(`Category renamed to: ${trimmedName}`, 2000); 
+                    await pb.collection('categories').update(category.id, { 
+                        name: trimmedName,
+                        lastEditor: SESSION_ID 
+                    }, { requestKey: null }); 
+                    showToast(`Category renamed`); 
                 }
                 catch (e) { 
-                    console.error('Rename failed on server:', e); 
-                    category.name = oldName; // Revert
-                    showToast('Category rename failed', 3000); 
-                    finalizeUIUpdate(); 
+                    if (e.status !== 0) {
+                        category.name = oldName; 
+                        showToast('Category rename failed'); 
+                        finalizeUIUpdate(); 
+                    }
                 }
             }
         } else {
              guestStorage.saveData({ categories: state.categories, files: state.files });
-             showToast(`Category renamed to: ${trimmedName}!`, 2000); 
              finalizeUIUpdate();
         }
     };
@@ -1684,12 +1773,20 @@ function showFileMenu(btn, id, name) {
 
   currentMenu = menu;
 
-  // Rename handler
-  menu.querySelector('.ctx-rename').onclick = async () => {
+// Rename handler
+menu.querySelector('.ctx-rename').onclick = async () => {
     const newName = prompt('New name:', name);
     if (!newName?.trim()) { menu.remove(); return; }
 
     const trimmedName = newName.trim();
+
+    // VALIDATION: Return early if name is too long
+    if (trimmedName.length > MAX_FILENAME_LENGTH) {
+        showToast(`Note name is too long (Max ${MAX_FILENAME_LENGTH} characters).`, 4000);
+        menu.remove();
+        return;
+    }
+
     const file = state.files.find(f => f.id === id);
     if (!file) { menu.remove(); return; }
 
@@ -1698,26 +1795,24 @@ function showFileMenu(btn, id, name) {
         file.name = trimmedName;
 
         if (pb.authStore.isValid) {
-          
-
           try { 
-            await pb.collection('files').update(id, { name: trimmedName }); 
-            showToast(`Note renamed to: ${trimmedName}`, 2000); 
+            await pb.collection('files').update(id, { 
+                name: trimmedName,
+                lastEditor: SESSION_ID 
+            }, { requestKey: null }); 
+            showToast(`Note renamed`); 
           }
           catch (e) { 
-            console.error(e); 
-            file.name = oldName; // Revert
-            showToast('Rename failed', 3000); 
+            if (e.status !== 0) {
+              file.name = oldName; 
+              showToast('Rename failed'); 
+            }
           }
         } else {
           guestStorage.saveData({ categories: state.categories, files: state.files });
-          showToast(`Note renamed to: ${trimmedName}`, 2000); 
         }
-        
-        renderFiles();
         finalizeUIUpdate();
     }
-    
     menu.remove();
   };
 
