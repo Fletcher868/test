@@ -30,7 +30,7 @@ let isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; // Loa
 let previewMode = false;        
 let previewVersion = null;      
 let originalBeforePreview = ''; 
-const PB_URL = 'https://nonpending-teisha-depletory.ngrok-free.dev/';
+const PB_URL = 'https://repeatedly-pleasant-elk.ngrok-free.app/';
 let pb = null, 
     // UPDATE: Added categories and set default active category
     state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK }, 
@@ -69,122 +69,7 @@ const guestStorage = {
 };
 
 
-// NEW: Key for logged-in user cache
-const USER_CACHE_KEY = 'kryptNote_userCache';
 
-// Helper: Save current state to local storage (for fast reload)
-function saveToUserCache() {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  // Only cache if logged in
-  if (!pb.authStore.isValid) return;
-  
-  try {
-    const cacheData = {
-      files: state.files,
-      categories: state.categories,
-      activeId: state.activeId,
-      activeCategoryId: state.activeCategoryId,
-      timestamp: Date.now()
-    };
-    localStorage.setItem(USER_CACHE_KEY, JSON.stringify(cacheData));
-  } catch (e) {
-    console.warn("Cache quota exceeded or disabled", e);
-  }
-}
-
-// Helper: Load from local storage immediately
-function loadFromUserCache() {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  const data = localStorage.getItem(USER_CACHE_KEY);
-  if (!data) return false;
-
-  try {
-    const parsed = JSON.parse(data);
-    state.files = parsed.files || [];
-    state.categories = parsed.categories || [];
-    // Restore selection
-    state.activeId = parsed.activeId;
-    state.activeCategoryId = parsed.activeCategoryId || DEFAULT_CATEGORY_IDS.WORK;
-    return true;
-  } catch (e) {
-    console.error("Cache parse error", e);
-    return false;
-  }
-}
-
-/**
- * Optimistically add version to cache for instant feedback
- */
-function optimisticallyAddToVersionCache(fileId, content, editorMode) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  const file = state.files.find(f => f.id === fileId);
-  if (!file) return;
-  
-  // Create optimistic version object
-  const optimisticVersion = {
-    id: `temp_version_${Date.now()}`,
-    created: new Date().toISOString(),
-    content: content,
-    editor: editorMode || 'plain'
-  };
-  
-  // Initialize cache if needed
-  if (!file.versionsCache) {
-    file.versionsCache = [];
-  }
-  
-  // Add to beginning of array (most recent first)
-  file.versionsCache.unshift(optimisticVersion);
-  
-  // Update cache immediately
-  saveToUserCache();
-  
-  return optimisticVersion;
-}
-
-/**
- * Update cache with server version (replace temp with real) and refresh UI
- */
-function updateVersionCacheWithServer(fileId, serverVersion, tempVersionId) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  const file = state.files.find(f => f.id === fileId);
-  if (!file || !file.versionsCache) return;
-  
-  // Find and replace temp version in the data cache
-  const index = file.versionsCache.findIndex(v => v.id === tempVersionId);
-  if (index !== -1) {
-    file.versionsCache[index] = {
-      id: serverVersion.id,
-      created: serverVersion.created,
-      content: serverVersion.content,
-      editor: serverVersion.editor || 'plain'
-    };
-  } else {
-    // Fallback: Add new if temp not found (rare race condition)
-    file.versionsCache.unshift({
-      id: serverVersion.id,
-      created: serverVersion.created,
-      content: serverVersion.content,
-      editor: serverVersion.editor || 'plain'
-    });
-  }
-  
-  // Keep cache reasonable size
-  if (file.versionsCache.length > 50) {
-    file.versionsCache = file.versionsCache.slice(0, 50);
-  }
-  
-  // Save updated cache
-  saveToUserCache();
-  
-  // FIXED: Fully re-render the list to attach correct event listeners with new IDs
-  const currentActiveId = state.activeId;
-  const historyPanel = document.getElementById('version-history');
-  
-  if (currentActiveId === fileId && historyPanel && historyPanel.classList.contains('active')) {
-     renderVersionList(file, file.versionsCache);
-  }
-}
 
 
 // ===================================================================
@@ -313,25 +198,7 @@ async function initPocketBase() {
   initTiptap();
   setupEditorSwitching();
 
-  // 1. Instant Render from Cache (Identify & Show History)
-  if (pb.authStore.isValid) {
-    updateProfileState(); // Fix "Guest User" instantly
-    
-    if (loadFromUserCache()) {
-      applyEditorMode();
-      updateEditorModeUI();
-      renderFiles();
-      loadActiveToEditor();
-      
-      // NEW: Trigger Sidebar History render instantly from cache
-      const activeFile = state.files.find(f => f.id === state.activeId);
-      if (activeFile) {
-          updateVersionHistory(activeFile);
-      }
-    }
-  }
-
-  // 2. Network Sync (Fresh Auth & Data)
+  // 1. Network Sync (Fresh Auth & Data)
   if (pb.authStore.isValid) {
     try {
       await pb.collection('users').authRefresh();
@@ -339,7 +206,7 @@ async function initPocketBase() {
       updateProfileState(); 
       updateEditorModeUI();
 
-      // Proceed to heavy decryption (History stays visible because we don't wipe state anymore)
+      // Proceed to heavy decryption
       await restoreEncryptionKeyAndLoad();
       
     } catch (err) {
@@ -505,26 +372,22 @@ function logout() {
     exitPreviewMode();
   }
   
-  // CRITICAL FIX: Unsubscribe from Realtime *before* clearing authStore.
   if (pb) {
     pb.realtime.unsubscribe('files');
     pb.realtime.unsubscribe('categories');
-    console.log('Realtime subscription for files and categories stopped.');
+    console.log('Realtime subscription stopped.');
   }
   
   pb.authStore.clear();
   sessionStorage.removeItem('dataKey');
   derivedKey = null;
-  localStorage.removeItem(USER_CACHE_KEY); // Clear cache on logout
   
-  // Fully reset state
   state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK };
   previewMode = false;
   previewVersion = null;
   originalBeforePreview = '';
   originalContent = '';
 
-  // Clear Editors
   const editor = document.getElementById('textEditor');
   if (editor) editor.value = '';
 
@@ -533,7 +396,6 @@ function logout() {
   }
   
   loadUserFiles();
-
   updateProfileState();
   updateVersionFooter();
   showMenu();
@@ -564,30 +426,21 @@ function setupRealtimeSubscription() {
       };
   };
 
-  // --- 1. FILES ---
   pb.realtime.subscribe('files', async function (e) {
     if (e.record.user !== pb.authStore.model.id) return;
-    
-    // Suppression for Create/Update
     if (e.record.lastEditor === SESSION_ID) return;
 
     if (e.action === 'delete') {
-      // SILENT DELETE: If the note is already gone from our state, it was our own action.
       const localFile = state.files.find(f => f.id === e.record.id);
       if (!localFile) return; 
-
       state.files = state.files.filter(f => f.id !== e.record.id);
       if (state.activeId === e.record.id) selectCategory(state.activeCategoryId, true);
       showToast(`Note deleted remotely: ${e.record.name}`);
     } 
     else {
-      // Remote Create or Update
       const newFile = await decryptRecord(e.record);
-      
-      // Update cached preview so renderFiles is fast
       newFile._cachedPreview = getPreviewText(newFile.content?.trim());
       newFile._contentLastPreviewed = newFile.content;
-
       const index = state.files.findIndex(f => f.id === newFile.id);
       if (index !== -1) {
           state.files[index] = { ...state.files[index], ...newFile };
@@ -600,15 +453,12 @@ function setupRealtimeSubscription() {
     finalizeUIUpdate();
   });
   
-  // --- 2. CATEGORIES ---
   pb.realtime.subscribe('categories', async function (e) {
       if (e.record.user !== pb.authStore.model.id) return;
       if (e.record.lastEditor === SESSION_ID) return;
-
       if (e.action === 'delete') {
           const localCat = state.categories.find(c => c.id === e.record.id);
-          if (!localCat) return; // Silent if we deleted it
-
+          if (!localCat) return; 
           state.categories = state.categories.filter(c => c.id !== e.record.id);
           showToast(`Category deleted remotely: ${e.record.name}`);
       } else {
@@ -620,22 +470,17 @@ function setupRealtimeSubscription() {
       finalizeUIUpdate();
   });
 
-  // --- 3. VERSIONS ---
   pb.realtime.subscribe('versions', async function (e) {
       if (e.record.user !== pb.authStore.model.id) return;
-      if (e.record.lastEditor === SESSION_ID) return; // Don't echo our own snapshots
+      if (e.record.lastEditor === SESSION_ID) return; 
       if (e.action !== 'create') return;
-
       const file = state.files.find(f => f.id === e.record.file);
       if (!file) return;
-
       const decrypted = await decryptRecord(e.record);
       if (!file.versionsCache) file.versionsCache = [];
-      
       file.versionsCache.unshift({
           id: decrypted.id, created: decrypted.created, content: decrypted.content, editor: decrypted.editor || 'plain'
       });
-      saveToUserCache();
       if (state.activeId === file.id) renderVersionList(file, file.versionsCache);
   });
 }
@@ -684,20 +529,13 @@ async function createDefaultCategories() {
 async function loadUserFiles() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
-  // 1. Capture the existing cache (Notes + History) from the "Fast Render"
-  const cachedFilesMap = new Map(state.files.map(f => [f.id, f]));
-
   if (pb.authStore.isValid && derivedKey) {
-    // ── LOGGED IN LOGIC ──
     try {
-      // 2. Fetch Categories from Server
       let serverCats = await pb.collection('categories').getFullList({ sort: 'sortOrder, created' });
       
-      // 3. Handle Default Categories if server is empty
       if (serverCats.length === 0) {
         serverCats = await createDefaultCategories();
       } else {
-          // Map localId based on iconName so the app recognizes 'Work' and 'Trash'
           serverCats = serverCats.map(c => {
               if (c.iconName === 'icon-work') c.localId = DEFAULT_CATEGORY_IDS.WORK;
               else if (c.iconName === 'icon-delete') c.localId = DEFAULT_CATEGORY_IDS.TRASH;
@@ -705,17 +543,14 @@ async function loadUserFiles() {
           });
       }
       
-      // CRITICAL: Update the global categories state immediately
       state.categories = serverCats;
 
-      // 4. Fetch Encrypted Files
       const records = await pb.collection('files').getFullList({
         filter: `user = "${pb.authStore.model.id}"`, 
         sort: '-updated'
       });
 
-      // 5. Decrypt in a separate variable to prevent the "Blackout"
-      const freshFiles = await Promise.all(records.map(async r => {
+      state.files = await Promise.all(records.map(async r => {
         let plaintext = '';
         if (r.iv && r.authTag && r.encryptedBlob) {
           try {
@@ -726,42 +561,22 @@ async function loadUserFiles() {
           } catch (err) { plaintext = '[Decryption Error]'; }
         }
         
-        const cachedNote = cachedFilesMap.get(r.id);
-        const cleanPlaintext = plaintext?.trim() || '';
-        let previewText = '';
-
-        // 6. MIGRATE PREVIEWS: Reuse already-calculated preview strings
-        if (!cleanPlaintext) {
-            previewText = '';
-        } else if (cachedNote && cachedNote._contentLastPreviewed?.trim() === cleanPlaintext && cachedNote._cachedPreview) {
-            previewText = cachedNote._cachedPreview;
-        } else {
-            previewText = getPreviewText(cleanPlaintext);
-        }
-
-        const newFileObj = { 
-          id: r.id, name: r.name, content: plaintext, created: r.created, updated: r.updated, 
+        return { 
+          id: r.id, 
+          name: r.name, 
+          content: plaintext, 
+          created: r.created, 
+          updated: r.updated, 
           categoryId: r.category,
-          _cachedPreview: previewText,
+          _cachedPreview: getPreviewText(plaintext?.trim() || ''),
           _contentLastPreviewed: plaintext
         };
-
-        // 7. MIGRATE VERSION HISTORY: Preserve the history list across the refresh
-        if (cachedNote && cachedNote.versionsCache) {
-            newFileObj.versionsCache = cachedNote.versionsCache;
-        }
-
-        return newFileObj;
       }));
-
-      // 8. SWAP STATE: Only replace the files list now that decryption is finished
-      state.files = freshFiles;
 
     } catch (e) { 
         console.error("PocketBase Load Failed:", e); 
     }
   } else {
-    // ── GUEST MODE LOGIC ──
     let localData = guestStorage.loadData();
     if (!localData || !localData.categories) {
       localData = guestStorage.initData();
@@ -770,23 +585,18 @@ async function loadUserFiles() {
     state.categories = localData.categories;
     state.files = localData.files;
     
-    // Ensure previews are set for guest notes
     state.files.forEach(f => {
         if (!f.categoryId) f.categoryId = DEFAULT_CATEGORY_IDS.WORK;
         const clean = f.content?.trim() || '';
-        if (!f._cachedPreview && clean) {
-            f._cachedPreview = getPreviewText(clean);
-            f._contentLastPreviewed = f.content;
-        }
+        f._cachedPreview = getPreviewText(clean);
+        f._contentLastPreviewed = f.content;
     });
   }
 
-  // 9. Handle initial state if empty
   if (state.files.length === 0) {
     await createFile();
   }
   
-  // 10. Select Category and Stable Sort
   selectCategory(state.activeCategoryId, true); 
   
   state.files.sort((a, b) => {
@@ -796,8 +606,6 @@ async function loadUserFiles() {
       return b.id.localeCompare(a.id);
   });
   
-  // 11. Final Persistence and UI Sync
-  saveToUserCache(); 
   updateOriginalContent();
   finalizeUIUpdate(); 
 }
@@ -1211,10 +1019,6 @@ async function createVersionSnapshot(pb, derivedKey, fileId, content, editorMode
 async function getVersions(pb, derivedKey, fileId, signal) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
-  // Create a map of what we currently have in memory to avoid re-parsing
-  const currentFile = state.files.find(f => f.id === fileId);
-  const existingMap = new Map((currentFile?.versionsCache || []).map(v => [v.id, v]));
-
   try {
     const records = await pb.collection('versions').getFullList({
       filter: `file = "${fileId}"`,
@@ -1223,15 +1027,6 @@ async function getVersions(pb, derivedKey, fileId, signal) {
     });
 
     return await Promise.all(records.map(async (r) => {
-      // 1. Check identity
-      const existing = existingMap.get(r.id);
-      
-      // If we have it in memory and it hasn't changed, return the existing object exactly
-      if (existing && existing._cachedPreview) {
-          return existing; 
-      }
-
-      // 2. Only decrypt and parse if it's truly new
       let content = '';
       try {
         content = await decryptBlob(
@@ -1245,7 +1040,7 @@ async function getVersions(pb, derivedKey, fileId, signal) {
         created: r.created,
         content: content,
         editor: r.editor || (content.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain'),
-        _cachedPreview: getPreviewText(content), // This only runs for NEW versions from other devices
+        _cachedPreview: getPreviewText(content),
         lastEditor: r.lastEditor
       };
     }));
@@ -2009,79 +1804,57 @@ async function saveVersionIfChanged() {
     versionMode = 'plain';
   }
 
-  if (currentContent === originalContent) return;
-  if (isEmpty) return; 
-
+  if (currentContent === originalContent || isEmpty) return;
   if (isSavingVersion) return;
   
   isSavingVersion = true;
 
   try {
-    // 1. Create optimistic version (Has ID: temp_version_...)
-    const tempVersion = optimisticallyAddToVersionCache(
-      file.id, 
-      originalContent, 
-      isRichMode ? 'rich' : 'plain'
-    );
+    // Manually push optimistic version to in-memory state
+    const tempId = `temp_version_${Date.now()}`;
+    const tempVersion = {
+        id: tempId,
+        created: new Date().toISOString(),
+        content: originalContent,
+        editor: versionMode
+    };
     
-    // Update UI (Shows "Saving..." initially)
+    if (!file.versionsCache) file.versionsCache = [];
+    file.versionsCache.unshift(tempVersion);
+    
     const historyPanel = document.getElementById('version-history');
     if (historyPanel && historyPanel.classList.contains('active')) {
-      renderVersionList(file, file.versionsCache || []);
+      renderVersionList(file, file.versionsCache);
     }
     
     if (pb.authStore.isValid && derivedKey) {
-      // --- LOGGED IN LOGIC ---
       createVersionSnapshot(pb, derivedKey, file.id, originalContent, versionMode)
         .then(result => {
-          updateVersionCacheWithServer(file.id, {
-            id: result.id,
-            created: result.created,
-            content: originalContent,
-            editor: versionMode
-          }, tempVersion.id);
+          // Update the temp item in memory with real server data
+          const idx = file.versionsCache.findIndex(v => v.id === tempId);
+          if (idx !== -1) {
+              file.versionsCache[idx] = {
+                  id: result.id, created: result.created, content: originalContent, editor: versionMode
+              };
+          }
+          if (historyPanel && historyPanel.classList.contains('active')) {
+              renderVersionList(file, file.versionsCache);
+          }
         })
         .catch(e => {
           console.error('Version save failed:', e);
-          if (file && file.versionsCache) {
-            file.versionsCache = file.versionsCache.filter(v => v.id !== tempVersion.id);
-            saveToUserCache();
-            if (historyPanel && historyPanel.classList.contains('active')) {
-              renderVersionList(file, file.versionsCache);
-            }
-          }
+          file.versionsCache = file.versionsCache.filter(v => v.id !== tempId);
         });
     } else {
-      // --- GUEST LOGIC ---
-      
-      // 1. Generate a permanent ID immediately (No server roundtrip needed)
       const finalGuestId = `ver_${Date.now()}`;
+      tempVersion.id = finalGuestId;
       
-      // 2. Fix the ID in the ephemeral cache (so "Saving..." goes away)
-      if (file.versionsCache) {
-        const cachedItem = file.versionsCache.find(v => v.id === tempVersion.id);
-        if (cachedItem) {
-          cachedItem.id = finalGuestId;
-          // Sort to be safe, though unshift probably put it first
-          file.versionsCache.sort((a,b) => new Date(b.created) - new Date(a.created));
-        }
-      }
-      
-      // 3. Save to permanent local storage
       if (!file.versions) file.versions = [];
-      file.versions.unshift({
-        id: finalGuestId,
-        created: tempVersion.created,
-        content: originalContent,
-        editor: versionMode
-      });
-      if (file.versions.length > 50) file.versions.length = 50;
-      
+      file.versions.unshift({...tempVersion});
       guestStorage.saveData({ categories: state.categories, files: state.files });
       
-      // 4. Force Re-render to show the new ID (removes "Saving..." spinner)
       if (historyPanel && historyPanel.classList.contains('active')) {
-          renderVersionList(file, file.versionsCache || file.versions);
+          renderVersionList(file, file.versionsCache);
       }
     }
 
@@ -2143,20 +1916,7 @@ async function updateVersionHistory(file = null) {
     titleElement.innerHTML = `<svg class="btn-icon"><use href="#${iconName}"/></svg><div class="version-title-group"><span>History</span><span class="version-badge ${badgeClass}">${badgeHTML}</span></div>`;
   }
 
-  // 3. INSTANT RENDER: If we have a cache (migrated or restored), show it NOW.
-  // This prevents the 2s delay.
-  if (file.versionsCache && file.versionsCache.length > 0) {
-    versionList.dataset.currentFileId = file.id;
-    renderVersionList(file, file.versionsCache);
-    
-    // Perform background sync silently only if logged in
-    if (pb.authStore.isValid && derivedKey) {
-        fetchFreshVersionsInBackground(file);
-    }
-    return; 
-  }
-
-  // 4. Loading State (Only shown if zero data exists)
+  // 3. Loading State
   versionList.innerHTML = '<li class="muted" style="padding:12px;">Loading history...</li>';
   versionList.classList.add('loading');
   versionList.dataset.currentFileId = file.id;
@@ -2165,8 +1925,8 @@ async function updateVersionHistory(file = null) {
     versionHistoryController = new AbortController();
     try {
       const versions = await getVersions(pb, derivedKey, file.id, versionHistoryController.signal);
-      file.versionsCache = versions;
-      saveToUserCache(); 
+      // Store in memory for the current session only
+      file.versionsCache = versions; 
       renderVersionList(file, versions);
     } catch (e) {
       if (e.name !== 'AbortError') versionList.innerHTML = '<li class="muted">History unavailable</li>';
@@ -2275,44 +2035,7 @@ function renderVersionList(file, versions) {
   else highlightSelectedVersion(null);
 }
 
-/**
- * Fetch fresh versions in background (for cache updates)
- */
-async function fetchFreshVersionsInBackground(file) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  try {
-    const freshVersions = await getVersions(pb, derivedKey, file.id);
-    
-    // Sort
-    freshVersions.sort((a, b) => {
-      const dateA = new Date(a.created).getTime();
-      const dateB = new Date(b.created).getTime();
-      return dateB - dateA;
-    });
-    
-    // Update cache if different
-    const currentCache = file.versionsCache || [];
-    const isDifferent = JSON.stringify(freshVersions) !== JSON.stringify(currentCache);
-    
-    if (isDifferent) {
-      file.versionsCache = freshVersions;
-      saveToUserCache();
-      
-      // Only update UI if we're still viewing the same file
-      const currentActiveId = state.activeId;
-      if (currentActiveId === file.id) {
-        // Check if history tab is active
-        const historyPanel = document.getElementById('version-history');
-        if (historyPanel && historyPanel.classList.contains('active')) {
-          renderVersionList(file, freshVersions);
-        }
-      }
-    }
-  } catch (e) {
-    // Silently fail - we have cache to fall back on
-    console.log("Background version refresh failed (non-critical):", e);
-  }
-}
+
 
 // Helper function to handle toolbar visibility
 function setToolbarVisibility(visible) {
@@ -2466,39 +2189,36 @@ async function handleRestore() {
   isSavingVersion = true;
 
   try {
-    // 1. Capture content and mode before exiting preview
     const contentToRestore = versionToRestore.content;
     const restorePreview = versionToRestore._cachedPreview;
     const editorMode = versionToRestore.editor || (contentToRestore.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain');
     
     exitPreviewMode();
 
-    // 2. Create local backup in the cache BEFORE saving to server
+    // 1. Create in-memory backup for instant feedback
     if (!file.versionsCache) file.versionsCache = [];
     
-    // Check if the current note content is already the top version to prevent duplicates
     if (file.content !== '' && (!file.versionsCache[0] || file.versionsCache[0].content !== file.content)) {
         file.versionsCache.unshift({
             id: `backup_${Date.now()}`,
             created: new Date().toISOString(),
             content: file.content,
             editor: isRichMode ? 'rich' : 'plain',
-            _cachedPreview: file._cachedPreview // Reuse existing note preview
+            _cachedPreview: file._cachedPreview
         });
     }
 
-    // 3. Update the Note Object locally
+    // 2. Update Note locally
     file.content = contentToRestore;
-    file.updated = new Date().toISOString(); // Fresh timestamp
+    file.updated = new Date().toISOString();
     file._cachedPreview = restorePreview;
 
-    // 4. SYNC UI IMMEDIATELY (Instantly switches to "Current Version" in sidebar)
+    // 3. Sync UI
     renderFiles();
     updateSidebarInfo(file);
     renderVersionList(file, file.versionsCache); 
-    highlightSelectedVersion(null); // Select "Current Version" at the top
+    highlightSelectedVersion(null); 
 
-    // 5. Update Editor Content
     if (editorMode === 'rich') {
       isRichMode = true;
       updateEditorModeUI();
@@ -2512,15 +2232,14 @@ async function handleRestore() {
     
     originalContent = contentToRestore;
 
-    // 6. Final Background Save
+    // 4. Background Sync
     await saveFile(file);
     
-    // Create the actual version snapshot on the server for the backup we just made
     if (pb.authStore.isValid && derivedKey) {
         const backupVersion = file.versionsCache[0];
         if (backupVersion.id.startsWith('backup_')) {
             const result = await createVersionSnapshot(pb, derivedKey, file.id, backupVersion.content, backupVersion.editor);
-            backupVersion.id = result.id; // Swap local temp ID for server ID
+            backupVersion.id = result.id;
             backupVersion.created = result.created;
         }
     }
@@ -2687,30 +2406,7 @@ function selectFile(id) {
     }
   }
 }
-/**
- * Clear version cache for a specific file
- */
-function clearVersionCache(fileId) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  const file = state.files.find(f => f.id === fileId);
-  if (file) {
-    file.versionsCache = null;
-  }
-  
-  // Also clear from localStorage cache
-  const cacheData = localStorage.getItem(USER_CACHE_KEY);
-  if (cacheData) {
-    try {
-      const parsed = JSON.parse(cacheData);
-      if (parsed.versions && parsed.versions[fileId]) {
-        delete parsed.versions[fileId];
-        localStorage.setItem(USER_CACHE_KEY, JSON.stringify(parsed));
-      }
-    } catch (e) {
-      console.error("Failed to clear version cache:", e);
-    }
-  }
-}
+
 
 
 function finalizeUIUpdate() {
