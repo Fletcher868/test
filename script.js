@@ -526,89 +526,7 @@ async function createDefaultCategories() {
     return createdCategories;
 }
 
-async function loadUserFiles() {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  
-  if (pb.authStore.isValid && derivedKey) {
-    try {
-      let serverCats = await pb.collection('categories').getFullList({ sort: 'sortOrder, created' });
-      
-      if (serverCats.length === 0) {
-        serverCats = await createDefaultCategories();
-      } else {
-          serverCats = serverCats.map(c => {
-              if (c.iconName === 'icon-work') c.localId = DEFAULT_CATEGORY_IDS.WORK;
-              else if (c.iconName === 'icon-delete') c.localId = DEFAULT_CATEGORY_IDS.TRASH;
-              return c;
-          });
-      }
-      
-      state.categories = serverCats;
 
-      const records = await pb.collection('files').getFullList({
-        filter: `user = "${pb.authStore.model.id}"`, 
-        sort: '-updated'
-      });
-
-      state.files = await Promise.all(records.map(async r => {
-        let plaintext = '';
-        if (r.iv && r.authTag && r.encryptedBlob) {
-          try {
-            plaintext = await decryptBlob(
-              { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
-              derivedKey
-            );
-          } catch (err) { plaintext = '[Decryption Error]'; }
-        }
-        
-        return { 
-          id: r.id, 
-          name: r.name, 
-          content: plaintext, 
-          created: r.created, 
-          updated: r.updated, 
-          categoryId: r.category,
-          _cachedPreview: getPreviewText(plaintext?.trim() || ''),
-          _contentLastPreviewed: plaintext
-        };
-      }));
-
-    } catch (e) { 
-        console.error("PocketBase Load Failed:", e); 
-    }
-  } else {
-    let localData = guestStorage.loadData();
-    if (!localData || !localData.categories) {
-      localData = guestStorage.initData();
-      guestStorage.saveData(localData);
-    }
-    state.categories = localData.categories;
-    state.files = localData.files;
-    
-    state.files.forEach(f => {
-        if (!f.categoryId) f.categoryId = DEFAULT_CATEGORY_IDS.WORK;
-        const clean = f.content?.trim() || '';
-        f._cachedPreview = getPreviewText(clean);
-        f._contentLastPreviewed = f.content;
-    });
-  }
-
-  if (state.files.length === 0) {
-    await createFile();
-  }
-  
-  selectCategory(state.activeCategoryId, true); 
-  
-  state.files.sort((a, b) => {
-      const dateA = new Date(a.updated).getTime();
-      const dateB = new Date(b.updated).getTime();
-      if (dateB !== dateA) return dateB - dateA;
-      return b.id.localeCompare(a.id);
-  });
-  
-  updateOriginalContent();
-  finalizeUIUpdate(); 
-}
 
 /**
  * Sets the active category, finds the first note in it, and selects it.
@@ -710,54 +628,7 @@ async function createFile() {
   }
 }
 
-async function createFileOnServer(tempId, name, targetCategoryId) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  try {
-    const activeCatObj = state.categories.find(c => c.id === targetCategoryId || c.localId === targetCategoryId);
-    const pbCategoryId = activeCatObj?.id;
 
-    const { ciphertext, iv, authTag } = await encryptBlob('', derivedKey);
-
-    // FIX: Pass { requestKey: null } to disable auto-cancellation
-    const result = await pb.collection('files').create({
-      name,
-      user: pb.authStore.model.id,
-      category: pbCategoryId,
-      iv: arrayToB64(iv),
-      authTag: arrayToB64(authTag),
-      encryptedBlob: arrayToB64(ciphertext),
-      lastEditor: SESSION_ID 
-    }, { requestKey: null }); 
-    
-    const tempFile = state.files.find(f => f.id === tempId);
-    if (tempFile) {
-      tempFile.id = result.id; 
-      // Synchronize with server creation time
-      tempFile.created = result.created;
-      
-      if (state.activeId === tempId) {
-          state.activeId = result.id;
-      }
-    }
-    
-    // Finalize UI once to lock in the real ID
-    finalizeUIUpdate();
-
-  } catch (e) {
-    // SILENTLY IGNORE auto-cancellations (status 0)
-    if (e.status === 0 || e.isAbort) {
-        console.warn('Request was suppressed by SDK/AbortController.');
-        return;
-    }
-
-    console.error('Server creation failed:', e);
-    // Remove the failed temp note from UI
-    state.files = state.files.filter(f => f.id !== tempId);
-    if (state.activeId === tempId) state.activeId = null;
-    finalizeUIUpdate();
-    showToast('Failed to sync new note to server.', 3000);
-  }
-}
 
 
 async function createCategory(name) {
@@ -969,32 +840,79 @@ async function clearTrash() {
 
 async function deleteFile(id) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
   const file = state.files.find(f => f.id === id);
   if (!file) return;
 
-  // ... (Keep your Trash ID logic) ...
-
-  if (!confirm(`Delete "${file.name}"?`)) return;
-
-  // 1. Update state FIRST (Makes the UI snappy and realtime event silent)
-  state.files = state.files.filter(f => f.id !== id);
-  if (state.activeId === id) {
-      state.activeId = null;
-      selectCategory(state.activeCategoryId, true);
-  }
+  // 1. Identify the Trash Category System ID
+  const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH; // "trash"
+  const trashCat = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
   
-  // 2. Refresh UI immediately
-  finalizeUIUpdate();
+  // On server, we need the UUID (cat.id). On guest, we use "trash".
+  const trashSystemId = pb.authStore.isValid ? trashCat?.id : trashIdentifier;
 
-  // 3. Talk to server in background
-  if (pb.authStore.isValid) {
-      pb.collection('files').delete(id).catch(err => {
-          console.error("Delete failed, reverting state", err);
-          // Optional: Re-insert file into state if delete failed
-      });
-  } else {
-      guestStorage.saveData({ categories: state.categories, files: state.files });
+  // 2. Check if the note is already in the trash
+  const isInTrash = file.categoryId === trashSystemId || file.categoryId === trashIdentifier;
+
+  if (isInTrash) {
+    // === HARD DELETE (Already in Trash) ===
+    if (!confirm(`Permanently delete "${file.name}"? This cannot be undone.`)) return;
+
+    // Optimistic UI update: Remove from local state immediately
+    state.files = state.files.filter(f => f.id !== id);
+    if (state.activeId === id) state.activeId = null;
+
+    if (pb.authStore.isValid && !id.startsWith('temp_')) {
+      try {
+        await pb.collection('files').delete(id);
+      } catch (e) {
+        console.error("Failed to delete from server:", e);
+        showToast("Server delete failed. Please refresh.");
+      }
+    }
+    showToast("Permanently deleted.");
+  } 
+  else {
+    // === SOFT DELETE (Move to Trash) ===
+    const oldCategoryId = file.categoryId;
+    file.categoryId = trashSystemId; // Move it
+    file.updated = new Date().toISOString();
+
+    // If the note was currently open, we might want to clear the editor
+    if (state.activeId === id) {
+       // Optional: keep it open, or clear it. Usually better to clear.
+       state.activeId = null;
+       document.getElementById('textEditor').value = '';
+       if (tiptapEditor) tiptapEditor.commands.setContent('');
+    }
+
+    if (pb.authStore.isValid && !id.startsWith('temp_')) {
+      try {
+        await pb.collection('files').update(id, { 
+          category: trashSystemId,
+          lastEditor: SESSION_ID 
+        });
+      } catch (e) {
+        console.error("Failed to move to trash:", e);
+        file.categoryId = oldCategoryId; // Revert on failure
+        showToast("Move to trash failed.");
+      }
+    }
+    showToast("Moved to Trash");
   }
+
+  // 3. Persist for Guest users
+  if (!pb.authStore.isValid) {
+    guestStorage.saveData({ categories: state.categories, files: state.files });
+  }
+
+  // 4. Update the sidebar list and counts
+  // If we moved the active file, we need to pick a new one in the current category
+  if (!state.activeId) {
+    selectCategory(state.activeCategoryId, true);
+  }
+
+  finalizeUIUpdate();
 }
 
 async function createVersionSnapshot(pb, derivedKey, fileId, content, editorMode) {
@@ -1013,42 +931,7 @@ async function createVersionSnapshot(pb, derivedKey, fileId, content, editorMode
   } catch (err) { console.error(err); throw err; }
 }
 
-/**
- * Load & decrypt all versions for a file
- */
-async function getVersions(pb, derivedKey, fileId, signal) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  
-  try {
-    const records = await pb.collection('versions').getFullList({
-      filter: `file = "${fileId}"`,
-      sort: '-created',
-      signal: signal, 
-    });
 
-    return await Promise.all(records.map(async (r) => {
-      let content = '';
-      try {
-        content = await decryptBlob(
-          { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
-          derivedKey
-        );
-      } catch (e) { content = '[Decryption error]'; }
-
-      return {
-        id: r.id,
-        created: r.created,
-        content: content,
-        editor: r.editor || (content.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain'),
-        _cachedPreview: getPreviewText(content),
-        lastEditor: r.lastEditor
-      };
-    }));
-  } catch (err) {
-    if (err.name === 'AbortError') throw err;
-    return [];
-  }
-}
 
 // === Helper function to create a folder item (with SVG icon) ===
 function createFolderItem(name, id, isActive = false, iconName = 'icon-folder', noteCount = 0, isDeletable = false, isTrash = false) {
@@ -1101,14 +984,47 @@ function createFolderItem(name, id, isActive = false, iconName = 'icon-folder', 
   return folderDiv;
 }
 
-function renderFiles() {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+// ===================================================================
+// NEW: MODULAR SIDEBAR RENDERING
+// ===================================================================
+
+/**
+ * Helper: Ensures the sidebar has two distinct containers.
+ * This prevents the list from being wiped completely on partial updates.
+ */
+function ensureSidebarStructure() {
   const list = document.getElementById('filesList');
-  if (!list) return;
+  if (!list) return { catContainer: null, noteContainer: null };
 
-  list.innerHTML = '';
+  let catContainer = document.getElementById('sb-categories-container');
+  let noteContainer = document.getElementById('sb-notes-container');
 
-  // 1. CATEGORIES HEADER
+  if (!catContainer || !noteContainer) {
+    list.innerHTML = ''; // Reset if structure is wrong or empty
+    
+    catContainer = document.createElement('div');
+    catContainer.id = 'sb-categories-container';
+    
+    noteContainer = document.createElement('div');
+    noteContainer.id = 'sb-notes-container';
+    
+    list.appendChild(catContainer);
+    list.appendChild(noteContainer);
+  }
+  return { catContainer, noteContainer };
+}
+
+/**
+ * PART 1: Render Categories Only (Heavy logic: sorting, counting, DOM creation)
+ */
+function renderSidebarCategories() {
+  // console.error('[EXECUTING] renderSidebarCategories'); // Uncomment for debugging
+  const { catContainer } = ensureSidebarStructure();
+  if (!catContainer) return;
+
+  catContainer.innerHTML = '';
+
+  // 1. HEADER
   const categoriesHeader = document.createElement('div');
   categoriesHeader.className = 'notes-header-row category-toggle-header';
 
@@ -1140,15 +1056,19 @@ function renderFiles() {
     if (!e.target.closest('.new-note-btn-small')) {
       isCategoriesExpanded = !isCategoriesExpanded;
       localStorage.setItem('kryptNote_categoriesExpanded', isCategoriesExpanded.toString());
-      renderFiles();
+      
+      // Update categories view
+      renderSidebarCategories();
+      // Update notes header (spacing/collapse state)
+      renderSidebarNotes(); 
     }
   });
 
   categoriesHeader.appendChild(title);
   categoriesHeader.appendChild(addFolderBtn);
-  list.appendChild(categoriesHeader);
+  catContainer.appendChild(categoriesHeader);
 
-  // 2. FOLDERS SECTION
+  // 2. FOLDERS LIST
   if (isCategoriesExpanded) {
     const foldersSection = document.createElement('div');
     foldersSection.className = 'folders-section';
@@ -1156,6 +1076,7 @@ function renderFiles() {
     const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH;
     const workIdentifier = DEFAULT_CATEGORY_IDS.WORK; 
 
+    // Calculate Counts
     const categoryMap = state.files.reduce((acc, file) => {
         const catId = file.categoryId;
         acc[catId] = (acc[catId] || 0) + 1;
@@ -1172,8 +1093,8 @@ function renderFiles() {
         return count;
     };
     
+    // Sort Categories
     const trashCategory = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
-    
     let sortedCategories = state.categories
         .filter(c => c.localId !== trashIdentifier && (pb.authStore.isValid ? c.id !== trashCategory?.id : c.id !== trashIdentifier))
         .filter((category, index, self) => index === self.findIndex((c) => c.id === category.id))
@@ -1192,119 +1113,30 @@ function renderFiles() {
         folderItem.addEventListener('click', e => {
             if (e.target.closest('.more-btn')) return; 
             selectCategory(identifier);
-            finalizeUIUpdate(); 
+            // Must update both: "Active" class changes in Categories, List changes in Notes
+            renderSidebarCategories();
+            renderSidebarNotes();
         });
         foldersSection.appendChild(folderItem);
     });
 
-    list.appendChild(foldersSection);
+    catContainer.appendChild(foldersSection);
+    
     const divider = document.createElement('div');
     divider.className = 'folders-divider'; 
-    list.appendChild(divider);
+    catContainer.appendChild(divider);
   }
+}
 
-  // 3. NOTES HEADER
-  const notesHeader = document.createElement('div');
-  notesHeader.className = 'notes-header-row' + (isCategoriesExpanded ? '' : ' notes-header-collapsed');
-  
-  const activeCategory = state.categories.find(c => c.localId === state.activeCategoryId || c.id === state.activeCategoryId);
 
-  const notesTitle = document.createElement('span');
-  notesTitle.className = 'categories-title';
-  notesTitle.textContent = activeCategory ? `${activeCategory.name} Notes` : 'Your Notes'; 
 
-  const newNoteBtnSmall = document.createElement('button');
-  newNoteBtnSmall.className = 'new-note-btn-small';
-  newNoteBtnSmall.textContent = '+';
-  newNoteBtnSmall.title = 'Create New Note';
-  newNoteBtnSmall.addEventListener('click', (e) => {
-      e.stopPropagation();
-      createFile();
-  });
-
-  notesHeader.appendChild(notesTitle);
-  notesHeader.appendChild(newNoteBtnSmall);
-  list.appendChild(notesHeader);
-  
-  // 4. FILTERED NOTES LIST
-  let pbCategoryId = state.activeCategoryId; 
-  let localCategoryIdentifier = state.activeCategoryId; 
-
-  if (pb.authStore.isValid && activeCategory) {
-      pbCategoryId = activeCategory.id;
-      localCategoryIdentifier = activeCategory.localId || activeCategory.id;
-  }
-  
-  const filteredFiles = state.files
-    .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier)
-    .sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime());
-
-  if (filteredFiles.length === 0) {
-      const emptyMsg = document.createElement('div');
-      emptyMsg.className = 'file-item muted';
-      emptyMsg.style.justifyContent = 'center';
-      emptyMsg.style.minHeight = '30px';
-      emptyMsg.innerHTML = '<span class="file-preview">[No notes in this category]</span>';
-      list.appendChild(emptyMsg);
-      return;
-  }
-  
-  filteredFiles.forEach(f => {
-    const d = document.createElement('div');
-    d.className = 'file-item' + (f.id === state.activeId ? ' active' : '');
-    d.dataset.id = f.id;
-
-    // OPTIMIZED PREVIEW CHECK
-    if (f._cachedPreview === undefined || f._contentLastPreviewed !== f.content) {
-        f._cachedPreview = getPreviewText(f.content?.trim() || '');
-        f._contentLastPreviewed = f.content;
-    }
-
-    const rawText = f._cachedPreview;
-    let previewText = '';
-
-    if (!rawText) {
-      previewText = '[Empty note]';
-    } else {
-      const firstLine = rawText.split('\n')[0];
-      previewText = firstLine.length > 35 
-        ? firstLine.substring(0, 35) + '...' 
-        : firstLine;
-    }
-
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'file-content';
-
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'file-name';
-    nameSpan.textContent = f.name || 'Untitled';
-    nameSpan.title = f.name || 'Untitled';
-
-    const previewSpan = document.createElement('span');
-    previewSpan.className = 'file-preview';
-    previewSpan.textContent = previewText;
-
-    const moreBtn = document.createElement('button');
-    moreBtn.className = 'more-btn';
-    moreBtn.textContent = '⋯';
-    moreBtn.type = 'button';
-
-    contentDiv.appendChild(nameSpan);
-    contentDiv.appendChild(previewSpan);
-    d.appendChild(contentDiv);
-    d.appendChild(moreBtn);
-
-    d.addEventListener('click', e => {
-      if (!e.target.closest('.more-btn')) selectFile(f.id);
-    });
-
-    moreBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      showFileMenu(moreBtn, f.id, f.name);
-    });
-
-    list.appendChild(d);
-  });
+/**
+ * MASTER WRAPPER: Renders everything.
+ * Kept for backward compatibility and full refreshes (init, import).
+ */
+function renderFiles() {
+  renderSidebarCategories();
+  renderSidebarNotes();
 }
 
 
@@ -1641,19 +1473,27 @@ menu.querySelector('.ctx-rename').onclick = async () => {
 
 function loadActiveToEditor() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
   const f = state.files.find(x => x.id === state.activeId);
-  const newContent = f ? f.content : '';
+  
+  // FIX: Ensure newContent is a string. If f.content is null (due to lazy loading), 
+  // we use an empty string so .trim() doesn't crash.
+  const newContent = (f && f.content !== null) ? f.content : '';
 
-  // --- STANDARD NOTES LOGIC ---
+  // --- EDITOR MODE LOGIC ---
   if (isUserPremium()) {
+    // Detect mode based on content structure
     if (newContent.trim().startsWith('{"type":"doc"')) {
       isRichMode = true;
     } else if (newContent.trim().length > 0) {
+      // If it has text but isn't JSON, it's Plain Text
       isRichMode = false;
     } else {
-      isRichMode = false; 
+      // For brand new/empty notes, use the user's preferred mode
+      isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; 
     }
   } else {
+    // Non-premium users are locked to Plain Text
     isRichMode = false;
   }
   
@@ -1662,13 +1502,14 @@ function loadActiveToEditor() {
 
   // 1. Load Plain Text Editor
   const textarea = document.getElementById('textEditor');
-  if (textarea.value !== newContent) {
+  if (textarea && textarea.value !== newContent) {
     textarea.value = newContent;
   }
 
-  // 2. Load Rich Text Editor WITH SAFE LOADING
+  // 2. Load Rich Text Editor (TipTap) WITH SAFE LOADING
   if (tiptapEditor) {
-    // Temporarily disable the onUpdate handler to prevent auto-save
+    // Temporarily disable the onUpdate handler to prevent auto-saving 
+    // the "loading" state over the actual data.
     const originalOnUpdate = tiptapEditor.options.onUpdate;
     tiptapEditor.options.onUpdate = undefined;
     
@@ -1677,10 +1518,11 @@ function loadActiveToEditor() {
         tiptapEditor.commands.setContent('');
       } else {
         try {
+          // Attempt to parse content as TipTap JSON
           const json = JSON.parse(newContent);
           tiptapEditor.commands.setContent(json);
         } catch (e) {
-          // Manual JSON construction
+          // If parsing fails (it's plain text), convert newlines to TipTap paragraphs
           const lines = newContent.split('\n');
           const docStructure = {
             type: 'doc',
@@ -1693,13 +1535,14 @@ function loadActiveToEditor() {
         }
       }
     } finally {
-      // Restore the onUpdate handler after a short delay
+      // Restore the onUpdate handler after content is set
       setTimeout(() => {
         tiptapEditor.options.onUpdate = originalOnUpdate;
       }, 100);
     }
   }
   
+  // Update originalContent for change-tracking (Version History)
   originalContent = newContent;
 }
 
@@ -1902,11 +1745,10 @@ async function updateVersionHistory(file = null) {
       </li>
       <li class="muted" style="padding:12px;">History will be available after saving.</li>
     `;
-    versionList.dataset.currentFileId = file.id;
     return;
   }
 
-  // 2. Badge UI
+  // 2. Badge UI (Keep existing logic)
   const titleElement = document.querySelector('#version-history h4');
   const isPremium = isUserPremium(); 
   if (titleElement) {
@@ -1924,28 +1766,35 @@ async function updateVersionHistory(file = null) {
   if (pb.authStore.isValid && derivedKey) {
     versionHistoryController = new AbortController();
     try {
-      const versions = await getVersions(pb, derivedKey, file.id, versionHistoryController.signal);
-      // Store in memory for the current session only
-      file.versionsCache = versions; 
-      renderVersionList(file, versions);
+      // --- CHANGED: Fetch Metadata Only ---
+      const metadataList = await getVersionMetadata(pb, file.id, versionHistoryController.signal);
+      
+      // We no longer cache full content in file.versionsCache to save RAM
+      // We only cache the metadata list
+      file.versionsMetadataCache = metadataList; 
+      
+      renderVersionList(file, metadataList);
     } catch (e) {
       if (e.name !== 'AbortError') versionList.innerHTML = '<li class="muted">History unavailable</li>';
     } finally {
       versionList.classList.remove('loading');
     }
+  } else {
+    // Guest Mode: Load from local memory (already loaded)
+    const guestVersions = file.versions || [];
+    renderVersionList(file, guestVersions);
   }
 }
 
-function renderVersionList(file, versions) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+function renderVersionList(file, versionsMetadata) {
+  console.error('[EXECUTING] renderVersionList (Lazy)');
   const versionList = document.getElementById('versionList');
   if (!versionList) return;
   
   versionList.classList.remove('loading');
-  
-  // Set current file ID for safety checks
   versionList.dataset.currentFileId = file.id;
 
+  // 1. Header: Current Version
   let html = `
     <li class="version-current">
       <strong>Current version</strong>
@@ -1953,44 +1802,27 @@ function renderVersionList(file, versions) {
     </li>
   `; 
 
-  // Filter out versions that match current content AND filter duplicates
-  const filteredVersions = [];
-  const seenContent = new Set();
+  // 2. List Items (Metadata only)
+  // Note: We removed the "duplicate content filter" because we don't know the content yet.
+  // This is a necessary trade-off for performance.
   
-  versions.forEach(v => {
-    // 1. Don't show if content matches current file content
-    if (v.content === file.content) return;
-    
-    // 2. Don't show empty versions (Cleaning up old bad data)
-    if (!v.content || v.content.trim() === '' || v.content === '{"type":"doc","content":[{"type":"paragraph"}]}') return;
-
-    // 3. Don't show duplicates
-    if (seenContent.has(v.content)) return;
-    
-    seenContent.add(v.content);
-    filteredVersions.push(v);
-  });
-
-  if (filteredVersions.length === 0) {
+  if (!versionsMetadata || versionsMetadata.length === 0) {
     html += `<li class="muted">No previous versions saved yet.</li>`;
   } else {
-    filteredVersions.forEach(v => {
-      // --- OPTIMIZATION: Use the cached preview string ---
-      // This prevents the dozen/hundred calls to getPreviewText on every render
-      if (v._cachedPreview === undefined) {
-          v._cachedPreview = getPreviewText(v.content);
-      }
-      
-      const rawText = v._cachedPreview || '';
-      const preview = rawText.length > 50 ? rawText.substring(0, 50) + '...' : rawText || '[empty]';
-      
+    versionsMetadata.forEach(v => {
       const loadingClass = v.id.startsWith('temp_version_') ? ' version-loading' : '';
       const loadingIndicator = v.id.startsWith('temp_version_') ? ' <span class="loading-dots">Saving...</span>' : '';
       
+      // Since we don't have content, we show a generic label or the editor type
+      const metaInfo = v.editor === 'rich' ? 'Rich Text' : 'Plain Text';
+      
       html += `
         <li class="version-item${loadingClass}" data-version-id="${v.id}">
-          <strong>${formatDate(v.created)}${loadingIndicator}</strong>
-          <small>${preview}</small>
+          <div class="v-row">
+            <strong>${formatDate(v.created)}${loadingIndicator}</strong>
+            <span class="v-meta">${metaInfo}</span>
+          </div>
+          <small class="v-preview">Click to load preview...</small>
         </li>
       `;
     });
@@ -1998,35 +1830,51 @@ function renderVersionList(file, versions) {
 
   versionList.innerHTML = html;
 
-  // Re-attach listeners
+  // 3. Attach Listeners
+
+  // A. Current Version Click
   versionList.querySelector('.version-current')?.addEventListener('click', () => {
     exitPreviewMode();
     loadActiveToEditor();
     highlightSelectedVersion(null);
   });
 
+  // B. History Item Click (Async Load)
   versionList.querySelectorAll('.version-item').forEach(item => {
-    item.addEventListener('click', () => {
-      // Don't allow clicking on temp versions
-      if (item.classList.contains('version-loading')) {
-        showToast('Please wait, version is still saving...', 1500);
-        return;
-      }
-      
+    item.addEventListener('click', async () => {
       const versionId = item.dataset.versionId;
-      // Find the version in the array passed to this function
-      const version = versions.find(v => v.id === versionId); 
       
-      if (version) {
-        enterPreviewMode(version);
-        highlightSelectedVersion(versionId);
-      } else {
-         // Fallback: If not found (rare), try to find in file cache
-         const fallbackVersion = file.versionsCache?.find(v => v.id === versionId);
-         if(fallbackVersion) {
-            enterPreviewMode(fallbackVersion);
+      // Prevent double clicks or clicking temp items
+      if (item.classList.contains('version-loading') || item.classList.contains('is-fetching')) return;
+
+      // Visual Feedback: Loading
+      const originalText = item.querySelector('.v-preview').textContent;
+      item.querySelector('.v-preview').textContent = "Downloading & Decrypting...";
+      item.classList.add('is-fetching');
+      
+      try {
+        let fullVersion = null;
+
+        if (pb.authStore.isValid) {
+            // --- SERVER FETCH ---
+            fullVersion = await loadVersionDetails(pb, derivedKey, versionId);
+        } else {
+            // --- GUEST FETCH (Local) ---
+            fullVersion = file.versions.find(v => v.id === versionId);
+        }
+
+        if (fullVersion) {
+            enterPreviewMode(fullVersion);
             highlightSelectedVersion(versionId);
-         }
+            // Update the preview text in the list now that we have it
+            item.querySelector('.v-preview').textContent = fullVersion._cachedPreview || 'Loaded';
+        }
+
+      } catch (err) {
+        showToast("Failed to load version");
+        item.querySelector('.v-preview').textContent = "Error loading content";
+      } finally {
+        item.classList.remove('is-fetching');
       }
     });
   });
@@ -2214,7 +2062,7 @@ async function handleRestore() {
     file._cachedPreview = restorePreview;
 
     // 3. Sync UI
-    renderFiles();
+    renderSidebarNotes();
     updateSidebarInfo(file);
     renderVersionList(file, file.versionsCache); 
     highlightSelectedVersion(null); 
@@ -2344,7 +2192,7 @@ document.getElementById('textEditor')?.addEventListener('input', () => {
   file.updated = now;
   clearTimeout(saveTimeout);
   saveTimeout = setTimeout(() => saveFile(file), 800);
-  renderFiles();
+  renderSidebarNotes();
   updateSidebarInfo(file);
 });
 
@@ -2352,60 +2200,6 @@ document.getElementById('textEditor')?.addEventListener('blur', async () => {
   await saveVersionIfChanged();
 });
 
-function selectFile(id) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  // 1. Exit Preview if active
-  if (previewMode) {
-    exitPreviewMode();
-    highlightSelectedVersion(null);
-  }
-
-  // 2. Update State
-  state.activeId = id;
-  const file = state.files.find(f => f.id === id);
-
-  // 3. Update Category State (Keep consistency)
-  if (file) {
-      const targetCategory = state.categories.find(c => c.id === file.categoryId || c.localId === file.categoryId);
-      if (targetCategory) {
-          state.activeCategoryId = targetCategory.localId || targetCategory.id;
-      }
-  }
-
-  // 4. FAST UI UPDATE (Toggle CSS instead of re-rendering list)
-  const prevActive = document.querySelector('.file-item.active');
-  if (prevActive) prevActive.classList.remove('active');
-
-  const nextActive = document.querySelector(`.file-item[data-id="${id}"]`);
-  if (nextActive) nextActive.classList.add('active');
-
-  // 5. Load Content
-  loadActiveToEditor();
-  updateSidebarInfo(file);
-
-  // 6. SMART HISTORY FETCH
-  // Only fetch versions if the History tab is currently VISIBLE AND we don't have cache
-  const historyPanel = document.getElementById('version-history');
-  if (historyPanel && historyPanel.classList.contains('active')) {
-    if (file) {
-      // Check if we already have cached versions
-      if (file.versionsCache && file.versionsCache.length > 0) {
-        // Use cache immediately
-        renderVersionList(file, file.versionsCache);
-      } else {
-        // Fetch fresh data
-        updateVersionHistory(file).catch(err => console.error(err));
-      }
-    }
-  } else {
-    // If tab is hidden, clear the list to avoid showing old data later
-    const versionList = document.getElementById('versionList');
-    if (versionList) {
-      versionList.innerHTML = ''; 
-      delete versionList.dataset.currentFileId;
-    }
-  }
-}
 
 
 
@@ -3180,14 +2974,23 @@ function handleAutoSave(newContent) {
 
   if (file.content !== newContent) {
       file.content = newContent;
+      
+      // 1. Update timestamp so sorting moves it to the top
       file.updated = new Date().toISOString();
       
-      // NEW: Update cache immediately as user types
+      // 2. Update preview cache for the sidebar
       file._cachedPreview = getPreviewText(newContent?.trim());
       file._contentLastPreviewed = newContent;
 
+      // 3. Trigger Server Save (Debounced 800ms)
       clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => saveFile(file), 800);
+
+      // 4. Trigger UI Update (Debounced 16ms for performance)
+      // This handles the sorting and the preview text change in the sidebar
+      finalizeUIUpdate();
+      
+      // 5. Update the "Info" tab if it's open
       updateSidebarInfo(file);
   }
 }
@@ -3291,6 +3094,315 @@ document.getElementById('copyShareLinkBtn')?.addEventListener('click', () => {
         document.execCommand('copy');
     });
 });
+/**
+ * OPTIMIZED: Fetch only metadata (ID, Created, Editor) to populate the list.
+ * Does NOT fetch the encrypted blob or decrypt content.
+ */
+async function getVersionMetadata(pb, fileId, signal) {
+  console.error('[EXECUTING] getVersionMetadata (Lazy Load)');
+  
+  try {
+    // 1. Server Fetch: Select specific fields to reduce payload size
+    return await pb.collection('versions').getFullList({
+      filter: `file = "${fileId}"`,
+      sort: '-created',
+      fields: 'id,created,editor,updated', // <--- CRITICAL: Exclude encryptedBlob, iv, authTag
+      signal: signal, 
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    console.error("Failed to load version list", err);
+    return [];
+  }
+}
+
+/**
+ * NEW: Fetch a SINGLE version's full data and decrypt it.
+ * Called only when user clicks a version item.
+ */
+async function loadVersionDetails(pb, derivedKey, versionId) {
+  console.error('[EXECUTING] loadVersionDetails (On-Demand)');
+  try {
+    const r = await pb.collection('versions').getOne(versionId);
+    
+    let content = '';
+    try {
+      content = await decryptBlob(
+        { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
+        derivedKey
+      );
+    } catch (e) { content = '[Decryption error]'; }
+
+    return {
+      id: r.id,
+      created: r.created,
+      content: content,
+      editor: r.editor || (content.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain'),
+      _cachedPreview: getPreviewText(content), // Generate preview only now
+      lastEditor: r.lastEditor
+    };
+  } catch (err) {
+    console.error("Failed to load specific version", err);
+    throw err;
+  }
+}
+/**
+ * NEW: Fetches only metadata for notes.
+ * Instant startup, no encrypted blobs downloaded yet.
+ */
+async function getNoteMetadata() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (!pb.authStore.isValid) return [];
+  
+  try {
+    return await pb.collection('files').getFullList({
+      filter: `user = "${pb.authStore.model.id}"`,
+      sort: '-updated',
+      fields: 'id,name,updated,created,category' // EXCLUDE: iv, authTag, encryptedBlob
+    });
+  } catch (e) {
+    console.error("Failed to load note metadata", e);
+    return [];
+  }
+}
+
+/**
+ * NEW: Fetches and decrypts a specific note's content.
+ * Called only when a note is selected.
+ */
+async function loadNoteDetails(noteId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === noteId);
+  
+  // If already loaded or is a local temp note, return
+  if (!file || file._isLoaded || file.id.startsWith('temp_')) return file;
+  if (!pb.authStore.isValid || !derivedKey) return file;
+
+  try {
+    const r = await pb.collection('files').getOne(noteId);
+    
+    let plaintext = '';
+    if (r.iv && r.authTag && r.encryptedBlob) {
+      plaintext = await decryptBlob(
+        { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
+        derivedKey
+      );
+    }
+
+    file.content = plaintext;
+    file._isLoaded = true; // Mark as fully fetched
+    file._cachedPreview = getPreviewText(plaintext?.trim() || '');
+    file._contentLastPreviewed = plaintext;
+
+    return file;
+  } catch (e) {
+    console.error("Failed to load note content", e);
+    file.content = "[Error: Could not load content]";
+    return file;
+  }
+}
+
+async function loadUserFiles() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  if (pb.authStore.isValid && derivedKey) {
+    try {
+      let serverCats = await pb.collection('categories').getFullList({ sort: 'sortOrder, created' });
+      
+      if (serverCats.length === 0) {
+        serverCats = await createDefaultCategories();
+      } else {
+          serverCats = serverCats.map(c => {
+              if (c.iconName === 'icon-work') c.localId = DEFAULT_CATEGORY_IDS.WORK;
+              else if (c.iconName === 'icon-delete') c.localId = DEFAULT_CATEGORY_IDS.TRASH;
+              return c;
+          });
+      }
+      state.categories = serverCats;
+
+      // --- LAZY LOAD START ---
+      const records = await getNoteMetadata();
+
+      state.files = records.map(r => ({
+        id: r.id, 
+        name: r.name, 
+        content: null, // CONTENT IS NULL INITIALLY
+        created: r.created, 
+        updated: r.updated, 
+        categoryId: r.category,
+        _isLoaded: false, // NEW FLAG
+        _cachedPreview: null 
+      }));
+      // --- LAZY LOAD END ---
+
+    } catch (e) { 
+        console.error("PocketBase Load Failed:", e); 
+    }
+  } else {
+    // Guest mode remains immediate as data is local
+    let localData = guestStorage.loadData();
+    if (!localData || !localData.categories) {
+      localData = guestStorage.initData();
+      guestStorage.saveData(localData);
+    }
+    state.categories = localData.categories;
+    state.files = localData.files.map(f => ({...f, _isLoaded: true})); 
+  }
+
+  if (state.files.length === 0) {
+    await createFile();
+  }
+  
+  // This will trigger the selection of the first note
+  selectCategory(state.activeCategoryId, true); 
+  
+  // Force load of the very first note content immediately since it's selected
+  if (state.activeId && !state.activeId.startsWith('temp_')) {
+     await loadNoteDetails(state.activeId);
+     loadActiveToEditor();
+  }
+
+  finalizeUIUpdate(); 
+}
+
+function renderSidebarNotes() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const { noteContainer } = ensureSidebarStructure();
+  if (!noteContainer) return;
+
+  noteContainer.innerHTML = '';
+
+  const activeCategory = state.categories.find(c => c.localId === state.activeCategoryId || c.id === state.activeCategoryId);
+  const notesHeader = document.createElement('div');
+  notesHeader.className = 'notes-header-row' + (isCategoriesExpanded ? '' : ' notes-header-collapsed');
+  
+  const notesTitle = document.createElement('span');
+  notesTitle.className = 'categories-title';
+  notesTitle.textContent = activeCategory ? `${activeCategory.name} Notes` : 'Your Notes'; 
+
+  const newNoteBtnSmall = document.createElement('button');
+  newNoteBtnSmall.className = 'new-note-btn-small';
+  newNoteBtnSmall.textContent = '+';
+  newNoteBtnSmall.addEventListener('click', (e) => { e.stopPropagation(); createFile(); });
+
+  notesHeader.appendChild(notesTitle);
+  notesHeader.appendChild(newNoteBtnSmall);
+  noteContainer.appendChild(notesHeader);
+  
+  const filteredFiles = state.files
+    .filter(f => f.categoryId === (activeCategory?.id || state.activeCategoryId) || f.categoryId === activeCategory?.localId)
+    .sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime());
+
+  filteredFiles.forEach(f => {
+    const d = document.createElement('div');
+    d.className = 'file-item' + (f.id === state.activeId ? ' active' : '');
+    d.dataset.id = f.id;
+
+    // PREVIEW LOGIC
+    let previewText = '';
+    if (!f._isLoaded) {
+        previewText = 'Click to load preview...';
+    } else {
+        const rawText = f._cachedPreview || getPreviewText(f.content?.trim() || '');
+        if (!rawText) previewText = '[Empty note]';
+        else {
+            const firstLine = rawText.split('\n')[0];
+            previewText = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
+        }
+    }
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'file-content';
+    contentDiv.innerHTML = `<span class="file-name">${f.name || 'Untitled'}</span><span class="file-preview">${previewText}</span>`;
+
+    const moreBtn = document.createElement('button');
+    moreBtn.className = 'more-btn';
+    moreBtn.textContent = '⋯';
+
+    d.appendChild(contentDiv);
+    d.appendChild(moreBtn);
+
+    d.addEventListener('click', e => {
+      if (!e.target.closest('.more-btn')) selectFile(f.id);
+    });
+
+    moreBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      showFileMenu(moreBtn, f.id, f.name);
+    });
+
+    noteContainer.appendChild(d);
+  });
+}
+
+async function selectFile(id) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (previewMode) exitPreviewMode();
+
+  state.activeId = id;
+  const file = state.files.find(f => f.id === id);
+
+  // Visual highlight
+  document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
+  document.querySelector(`.file-item[data-id="${id}"]`)?.classList.add('active');
+
+  // --- LAZY CONTENT LOAD ---
+  if (file && !file._isLoaded && !file.id.startsWith('temp_')) {
+      const itemEl = document.querySelector(`.file-item[data-id="${id}"] .file-preview`);
+      if (itemEl) itemEl.textContent = "Decrypting...";
+      
+      await loadNoteDetails(id);
+      renderSidebarNotes(); // Re-render to show actual preview
+  }
+
+  loadActiveToEditor();
+  updateSidebarInfo(file);
+
+  const historyPanel = document.getElementById('version-history');
+  if (historyPanel && historyPanel.classList.contains('active')) {
+      if (file && !file.id.startsWith('temp_')) {
+          if (file.versionsMetadataCache) renderVersionList(file, file.versionsMetadataCache);
+          else updateVersionHistory(file);
+      }
+  }
+}
+
+async function createFileOnServer(tempId, name, targetCategoryId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  try {
+    const activeCatObj = state.categories.find(c => c.id === targetCategoryId || c.localId === targetCategoryId);
+    const pbCategoryId = activeCatObj?.id;
+
+    const { ciphertext, iv, authTag } = await encryptBlob('', derivedKey);
+
+    const result = await pb.collection('files').create({
+      name,
+      user: pb.authStore.model.id,
+      category: pbCategoryId,
+      iv: arrayToB64(iv),
+      authTag: arrayToB64(authTag),
+      encryptedBlob: arrayToB64(ciphertext),
+      lastEditor: SESSION_ID 
+    }, { requestKey: null }); 
+    
+    const tempFile = state.files.find(f => f.id === tempId);
+    if (tempFile) {
+      tempFile.id = result.id; 
+      tempFile.created = result.created;
+      tempFile._isLoaded = true; // Newly created notes are "loaded" by definition
+      if (state.activeId === tempId) state.activeId = result.id;
+    }
+    finalizeUIUpdate();
+  } catch (e) {
+    if (e.status === 0 || e.isAbort) return;
+    state.files = state.files.filter(f => f.id !== tempId);
+    if (state.activeId === tempId) state.activeId = null;
+    finalizeUIUpdate();
+  }
+}
+
+
+
 
 // Init
 initPocketBase();
