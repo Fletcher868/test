@@ -2968,29 +2968,35 @@ document.getElementById('textEditor')?.addEventListener('input', (e) => {
 });
 
 function handleAutoSave(newContent) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === state.activeId);
   if (!file) return;
 
   if (file.content !== newContent) {
       file.content = newContent;
       
-      // 1. Update timestamp so sorting moves it to the top
+      // 1. Update timestamp
       file.updated = new Date().toISOString();
       
-      // 2. Update preview cache for the sidebar
-      file._cachedPreview = getPreviewText(newContent?.trim());
+      // 2. Update preview cache
+      const plainText = getPreviewText(newContent?.trim() || '');
+      file._cachedPreview = plainText;
       file._contentLastPreviewed = newContent;
 
-      // 3. Trigger Server Save (Debounced 800ms)
+      // 3. INSTANT UI UPDATE: Update the sidebar snippet immediately
+      const previewEl = document.querySelector(`.file-item[data-id="${file.id}"] .file-preview`);
+      if (previewEl) {
+          const firstLine = plainText.split('\n')[0] || '[Empty note]';
+          previewEl.textContent = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
+      }
+
+      // 4. Trigger Server Save (Debounced)
       clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => saveFile(file), 800);
 
-      // 4. Trigger UI Update (Debounced 16ms for performance)
-      // This handles the sorting and the preview text change in the sidebar
+      // 5. Trigger Sort Update (Moves note to top of list after a short delay)
       finalizeUIUpdate();
       
-      // 5. Update the "Info" tab if it's open
+      // 6. Update the "Info" tab if it's open
       updateSidebarInfo(file);
   }
 }
@@ -3298,14 +3304,16 @@ function renderSidebarNotes() {
     d.className = 'file-item' + (f.id === state.activeId ? ' active' : '');
     d.dataset.id = f.id;
 
-    // PREVIEW LOGIC
+// PREVIEW LOGIC
     let previewText = '';
     if (!f._isLoaded) {
         previewText = 'Click to load preview...';
     } else {
+        // Fix: Always prioritize the cached preview we generated during typing
         const rawText = f._cachedPreview || getPreviewText(f.content?.trim() || '');
-        if (!rawText) previewText = '[Empty note]';
-        else {
+        if (!rawText || rawText.length === 0) {
+            previewText = '[Empty note]';
+        } else {
             const firstLine = rawText.split('\n')[0];
             previewText = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
         }
