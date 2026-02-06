@@ -574,7 +574,6 @@ function selectCategory(categoryIdentifier, shouldSelectFile = true) {
 
 
 async function createFile() {
-  console.log('creating new note')
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (previewMode) {
     exitPreviewMode();
@@ -587,10 +586,8 @@ async function createFile() {
       return; 
   }
 
-  // 1. Generate name
-  const currentCategory = state.categories.find(c => c.id === targetCategoryId || c.localId === targetCategoryId);
   const today = new Date().toISOString().slice(0, 10);
-  const baseName = `${currentCategory?.name || 'Note'} ${today}`;
+  const baseName = `Note ${today}`;
   const sameDay = state.files.filter(f => f.name?.startsWith(baseName));
   const nextNum = sameDay.length ? Math.max(...sameDay.map(f => {
     const m = f.name.match(/_(\d+)$/);
@@ -598,12 +595,9 @@ async function createFile() {
   })) + 1 : 0;
   const name = nextNum === 0 ? baseName : `${baseName}_${nextNum}`;
 
-  // 2. Create the optimistic file
-  // Force this timestamp to be slightly in the "future" compared to existing notes 
-  // to ensure it stays at the very top during the creation process.
-  const newestTimestamp = new Date(Date.now() + 1000).toISOString();
-
+  const newestTimestamp = new Date().toISOString();
   const tempId = `temp_${Date.now()}`; 
+  
   const newFile = {
     id: tempId,
     name,
@@ -611,18 +605,18 @@ async function createFile() {
     created: newestTimestamp,
     updated: newestTimestamp,
     categoryId: targetCategoryId,
+    _isLoaded: true,
     _cachedPreview: '[Empty note]',
     _contentLastPreviewed: ''
   };
 
-  // 3. Immediate state update
   state.files.unshift(newFile); 
   state.activeId = tempId;
   
-  // 4. Update UI NOW (Smoothness like guest mode)
+  loadActiveToEditor();
+  originalContent = ''; 
   finalizeUIUpdate();
 
-  // 5. Server call in background
   if (pb.authStore.isValid && derivedKey) {
     createFileOnServer(tempId, name, targetCategoryId);
   } else {
@@ -1477,54 +1471,40 @@ function loadActiveToEditor() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
   const f = state.files.find(x => x.id === state.activeId);
-  
-  // FIX: Ensure newContent is a string. If f.content is null (due to lazy loading), 
-  // we use an empty string so .trim() doesn't crash.
   const newContent = (f && f.content !== null) ? f.content : '';
 
-  // --- EDITOR MODE LOGIC ---
   if (isUserPremium()) {
-    // Detect mode based on content structure
     if (newContent.trim().startsWith('{"type":"doc"')) {
       isRichMode = true;
     } else if (newContent.trim().length > 0) {
-      // If it has text but isn't JSON, it's Plain Text
       isRichMode = false;
     } else {
-      // For brand new/empty notes, use the user's preferred mode
       isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; 
     }
   } else {
-    // Non-premium users are locked to Plain Text
     isRichMode = false;
   }
   
   applyEditorMode(); 
   updateEditorModeUI();
 
-  // 1. Load Plain Text Editor
   const textarea = document.getElementById('textEditor');
-  if (textarea && textarea.value !== newContent) {
+  if (textarea) {
     textarea.value = newContent;
   }
 
-  // 2. Load Rich Text Editor (TipTap) WITH SAFE LOADING
   if (tiptapEditor) {
-    // Temporarily disable the onUpdate handler to prevent auto-saving 
-    // the "loading" state over the actual data.
     const originalOnUpdate = tiptapEditor.options.onUpdate;
     tiptapEditor.options.onUpdate = undefined;
     
     try {
-      if (!newContent) {
-        tiptapEditor.commands.setContent('');
+      if (!newContent || newContent === '') {
+        tiptapEditor.commands.setContent('<p></p>');
       } else {
         try {
-          // Attempt to parse content as TipTap JSON
           const json = JSON.parse(newContent);
           tiptapEditor.commands.setContent(json);
         } catch (e) {
-          // If parsing fails (it's plain text), convert newlines to TipTap paragraphs
           const lines = newContent.split('\n');
           const docStructure = {
             type: 'doc',
@@ -1537,14 +1517,12 @@ function loadActiveToEditor() {
         }
       }
     } finally {
-      // Restore the onUpdate handler after content is set
       setTimeout(() => {
         tiptapEditor.options.onUpdate = originalOnUpdate;
       }, 100);
     }
   }
   
-  // Update originalContent for change-tracking (Version History)
   originalContent = newContent;
 }
 
@@ -1630,9 +1608,8 @@ function updateSidebarInfo(file = null) {
   }
 }
 async function saveVersionIfChanged() {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === state.activeId);
-  if (!file) return;
+  if (!file || !file._isLoaded) return; // Don't save if not fully loaded
 
   let currentContent = '';
   let versionMode = 'plain'; 
@@ -1646,61 +1623,55 @@ async function saveVersionIfChanged() {
     const rawVal = document.getElementById('textEditor').value;
     isEmpty = !rawVal || rawVal.trim().length === 0;
     currentContent = rawVal;
-    versionMode = 'plain';
   }
 
+  // If no changes or empty, stop
   if (currentContent === originalContent || isEmpty) return;
   if (isSavingVersion) return;
   
   isSavingVersion = true;
 
   try {
-    // Manually push optimistic version to in-memory state
     const tempId = `temp_version_${Date.now()}`;
     const tempVersion = {
         id: tempId,
         created: new Date().toISOString(),
-        content: originalContent,
-        editor: versionMode
+        content: originalContent, // Snapshot of what the note WAS before these changes
+        editor: versionMode,
+        _cachedPreview: getPreviewText(originalContent)
     };
     
-    if (!file.versionsCache) file.versionsCache = [];
-    file.versionsCache.unshift(tempVersion);
+    // UNIFY: Ensure the metadata cache exists and add the new version to the TOP
+    if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
+    file.versionsMetadataCache.unshift(tempVersion);
     
+    // Render the combined list immediately
     const historyPanel = document.getElementById('version-history');
     if (historyPanel && historyPanel.classList.contains('active')) {
-      renderVersionList(file, file.versionsCache);
+      renderVersionList(file, file.versionsMetadataCache);
     }
     
-    if (pb.authStore.isValid && derivedKey) {
+if (pb.authStore.isValid && derivedKey) {
       createVersionSnapshot(pb, derivedKey, file.id, originalContent, versionMode)
         .then(result => {
-          // Update the temp item in memory with real server data
-          const idx = file.versionsCache.findIndex(v => v.id === tempId);
+          // Replace temp item with real server data
+          const idx = file.versionsMetadataCache.findIndex(v => v.id === tempId);
           if (idx !== -1) {
-              file.versionsCache[idx] = {
-                  id: result.id, created: result.created, content: originalContent, editor: versionMode
+              file.versionsMetadataCache[idx] = {
+                  id: result.id, 
+                  created: result.created, 
+                  content: originalContent, 
+                  editor: versionMode
               };
           }
-          if (historyPanel && historyPanel.classList.contains('active')) {
-              renderVersionList(file, file.versionsCache);
-          }
+          // FIX: Trigger UI update now that "Saving..." indicator can be removed
+          finalizeUIUpdate(); 
         })
-        .catch(e => {
-          console.error('Version save failed:', e);
-          file.versionsCache = file.versionsCache.filter(v => v.id !== tempId);
+        .catch(err => {
+          console.error('Server version save failed:', err);
+          file.versionsMetadataCache = file.versionsMetadataCache.filter(v => v.id !== tempId);
+          finalizeUIUpdate();
         });
-    } else {
-      const finalGuestId = `ver_${Date.now()}`;
-      tempVersion.id = finalGuestId;
-      
-      if (!file.versions) file.versions = [];
-      file.versions.unshift({...tempVersion});
-      guestStorage.saveData({ categories: state.categories, files: state.files });
-      
-      if (historyPanel && historyPanel.classList.contains('active')) {
-          renderVersionList(file, file.versionsCache);
-      }
     }
 
     originalContent = currentContent;
@@ -2043,32 +2014,28 @@ async function handleRestore() {
     const restorePreview = versionToRestore._cachedPreview;
     const editorMode = versionToRestore.editor || (contentToRestore.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain');
     
-    exitPreviewMode();
+    // 1. Create a backup of the current content before we overwrite it
+    const tempBackupId = `temp_version_${Date.now()}`;
+    const backupVersion = {
+        id: tempBackupId,
+        created: new Date().toISOString(),
+        content: file.content,
+        editor: isRichMode ? 'rich' : 'plain',
+        _cachedPreview: file._cachedPreview || getPreviewText(file.content)
+    };
 
-    // 1. Create in-memory backup for instant feedback
-    if (!file.versionsCache) file.versionsCache = [];
-    
-    if (file.content !== '' && (!file.versionsCache[0] || file.versionsCache[0].content !== file.content)) {
-        file.versionsCache.unshift({
-            id: `backup_${Date.now()}`,
-            created: new Date().toISOString(),
-            content: file.content,
-            editor: isRichMode ? 'rich' : 'plain',
-            _cachedPreview: file._cachedPreview
-        });
-    }
+    // 2. UNIFY: Add the backup to the top of the history list
+    if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
+    file.versionsMetadataCache.unshift(backupVersion);
 
-    // 2. Update Note locally
+    // 3. Update the active file locally
     file.content = contentToRestore;
     file.updated = new Date().toISOString();
     file._cachedPreview = restorePreview;
 
-    // 3. Sync UI
-    renderSidebarNotes();
-    updateSidebarInfo(file);
-    renderVersionList(file, file.versionsCache); 
-    highlightSelectedVersion(null); 
-
+    // 4. Exit preview and sync UI
+    exitPreviewMode();
+    
     if (editorMode === 'rich') {
       isRichMode = true;
       updateEditorModeUI();
@@ -2082,19 +2049,26 @@ async function handleRestore() {
     
     originalContent = contentToRestore;
 
-    // 4. Background Sync
+    // 5. Background Sync
     await saveFile(file);
     
     if (pb.authStore.isValid && derivedKey) {
-        const backupVersion = file.versionsCache[0];
-        if (backupVersion.id.startsWith('backup_')) {
-            const result = await createVersionSnapshot(pb, derivedKey, file.id, backupVersion.content, backupVersion.editor);
-            backupVersion.id = result.id;
-            backupVersion.created = result.created;
-        }
+        // Create the backup version on server
+        createVersionSnapshot(pb, derivedKey, file.id, backupVersion.content, backupVersion.editor)
+            .then(result => {
+                const idx = file.versionsMetadataCache.findIndex(v => v.id === tempBackupId);
+                if (idx !== -1) {
+                    file.versionsMetadataCache[idx] = {
+                        id: result.id, created: result.created, content: backupVersion.content, editor: backupVersion.editor
+                    };
+                }
+                finalizeUIUpdate();
+            })
+            .catch(e => console.error("Backup snapshot failed:", e));
     }
 
     showToast(`Restored version from ${formatDate(versionToRestore.created)}`);
+    finalizeUIUpdate();
 
   } catch (e) {
     console.error("Restore failed:", e);
@@ -2103,7 +2077,6 @@ async function handleRestore() {
     isSavingVersion = false;
   }
 }
-
 
 
 function showToast(message, duration = 2500) {
@@ -2195,7 +2168,6 @@ document.getElementById('textEditor')?.addEventListener('blur', async () => {
 
 
 function finalizeUIUpdate() {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (isFinalizingUI) {
       uiUpdateQueued = true; 
       return;
@@ -2212,30 +2184,29 @@ function finalizeUIUpdate() {
     try {
       const file = state.files.find(f => f.id === state.activeId);
       
-      // STABLE SORT: Primary by updated date, Secondary by ID string
-      state.files.sort((a, b) => {
-        const timeA = new Date(a.updated).getTime();
-        const timeB = new Date(b.updated).getTime();
-        
-        if (timeB !== timeA) return timeB - timeA;
-        // Tie-breaker: Newer IDs (higher strings) first
-        return b.id.localeCompare(a.id); 
-      });
+      // 1. Sort the files
+      state.files.sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime());
       
-      renderFiles();
-      loadActiveToEditor();
+      // 2. Render sidebar ONLY
+      renderSidebarCategories();
+      renderSidebarNotes();
+      
+      // 3. Update info tab
       updateSidebarInfo(file);
 
-      const historyPanel = document.getElementById('version-history');
-      if (historyPanel && historyPanel.classList.contains('active')) {
-          if (file && !file.id.startsWith('temp_')) {
-              if (file.versionsCache) renderVersionList(file, file.versionsCache);
-              else updateVersionHistory(file);
-          } else {
-              const vList = document.getElementById('versionList');
-              if (vList) vList.innerHTML = file ? '<li class="version-current"><strong>Current version</strong></li><li class="muted">No history yet.</li>' : '';
-          }
-      }
+      // 4. Refresh Version List UI (without fetching content)
+// Inside finalizeUIUpdate...
+const historyPanel = document.getElementById('version-history');
+if (historyPanel && historyPanel.classList.contains('active')) {
+    if (file && !file.id.startsWith('temp_')) {
+        // Use the unified metadata cache
+        const metadata = file.versionsMetadataCache || [];
+        renderVersionList(file, metadata);
+    } else {
+        const vList = document.getElementById('versionList');
+        if (vList) vList.innerHTML = file ? '<li class="version-current"><strong>Current version</strong></li><li class="muted">No history yet.</li>' : '';
+    }
+}
       
       updateVersionFooter();
 
@@ -2245,7 +2216,7 @@ function finalizeUIUpdate() {
       isFinalizingUI = false;
       if (uiUpdateQueued) finalizeUIUpdate();
     }
-  }, 16); 
+  }, 100); // Increased delay slightly for better performance
 }
 
 
@@ -2964,6 +2935,7 @@ function handleAutoSave(newContent) {
 
   // Comparison will now work because file.content hasn't been updated yet
   if (file.content !== newContent) {
+      console.log('Content changed! Updating UI...');
       
       file.content = newContent;
       file.updated = new Date().toISOString();
@@ -3218,26 +3190,22 @@ async function loadUserFiles() {
       }
       state.categories = serverCats;
 
-      // --- LAZY LOAD START ---
       const records = await getNoteMetadata();
-
       state.files = records.map(r => ({
         id: r.id, 
         name: r.name, 
-        content: null, // CONTENT IS NULL INITIALLY
+        content: null, 
         created: r.created, 
         updated: r.updated, 
         categoryId: r.category,
-        _isLoaded: false, // NEW FLAG
+        _isLoaded: false, 
         _cachedPreview: null 
       }));
-      // --- LAZY LOAD END ---
 
     } catch (e) { 
         console.error("PocketBase Load Failed:", e); 
     }
   } else {
-    // Guest mode remains immediate as data is local
     let localData = guestStorage.loadData();
     if (!localData || !localData.categories) {
       localData = guestStorage.initData();
@@ -3251,13 +3219,20 @@ async function loadUserFiles() {
     await createFile();
   }
   
-  // This will trigger the selection of the first note
   selectCategory(state.activeCategoryId, true); 
   
-  // Force load of the very first note content immediately since it's selected
-  if (state.activeId && !state.activeId.startsWith('temp_')) {
-     await loadNoteDetails(state.activeId);
-     loadActiveToEditor();
+  if (state.activeId) {
+     const file = state.files.find(f => f.id === state.activeId);
+     if (file && !file.id.startsWith('temp_')) {
+        await loadNoteDetails(state.activeId);
+        loadActiveToEditor();
+        
+        // Fix: Explicitly trigger version history for the first note if tab is active
+        const historyPanel = document.getElementById('version-history');
+        if (historyPanel && historyPanel.classList.contains('active')) {
+            updateVersionHistory(file);
+        }
+     }
   }
 
   finalizeUIUpdate(); 
@@ -3339,28 +3314,42 @@ async function selectFile(id) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (previewMode) exitPreviewMode();
 
+  // 1. INSTANT VISUAL SELECTION (No delay)
   state.activeId = id;
+  document.querySelectorAll('.file-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.id === id);
+  });
+
   const file = state.files.find(f => f.id === id);
+  if (!file) return;
 
-  // Visual highlight
-  document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
-  document.querySelector(`.file-item[data-id="${id}"]`)?.classList.add('active');
+  // 2. LOAD EXISTING CONTENT IMMEDIATELY
+  // If it's already loaded or a temp note, this shows content instantly
+  loadActiveToEditor();
+  updateSidebarInfo(file);
 
-  // --- LAZY CONTENT LOAD ---
-  if (file && !file._isLoaded && !file.id.startsWith('temp_')) {
+  // 3. ASYNC DECRYPTION (Only if needed)
+  if (!file._isLoaded && !file.id.startsWith('temp_')) {
       const itemEl = document.querySelector(`.file-item[data-id="${id}"] .file-preview`);
       if (itemEl) itemEl.textContent = "Decrypting...";
       
       await loadNoteDetails(id);
-      renderSidebarNotes(); // Re-render to show actual preview
+      
+      // Update editor again once full content is decrypted
+      loadActiveToEditor();
+
+      // Update the specific sidebar preview text without full re-render
+      if (itemEl) {
+          const rawText = file._cachedPreview || getPreviewText(file.content?.trim() || '');
+          const firstLine = rawText.split('\n')[0] || '[Empty note]';
+          itemEl.textContent = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
+      }
   }
 
-  loadActiveToEditor();
-  updateSidebarInfo(file);
-
+  // 4. UPDATE TABS
   const historyPanel = document.getElementById('version-history');
   if (historyPanel && historyPanel.classList.contains('active')) {
-      if (file && !file.id.startsWith('temp_')) {
+      if (!file.id.startsWith('temp_')) {
           if (file.versionsMetadataCache) renderVersionList(file, file.versionsMetadataCache);
           else updateVersionHistory(file);
       }
