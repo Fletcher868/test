@@ -175,6 +175,8 @@ function initPreviewEditor() {
 }
 
 function showRichPreviewModal() {
+    console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+
   const modal = document.getElementById('richPreviewModal');
   modal.classList.remove('hidden');
   
@@ -205,8 +207,6 @@ async function initPocketBase() {
     try {
       await pb.collection('users').authRefresh();
       memoizedIsPremium = null; 
-      updateProfileState(); 
-      updateEditorModeUI();
 
       // Proceed to heavy decryption
       await restoreEncryptionKeyAndLoad();
@@ -424,7 +424,7 @@ function setupRealtimeSubscription() {
       }
       return { 
           id: r.id, name: r.name, content: plaintext, created: r.created, updated: r.updated, 
-          categoryId: r.category, editor: r.editor, lastEditor: r.lastEditor 
+          categoryId: r.category, editor: r.editor, lastEditor: r.lastEditor, _isLoaded: true
       };
   };
 
@@ -433,23 +433,31 @@ function setupRealtimeSubscription() {
     if (e.record.lastEditor === SESSION_ID) return;
 
     if (e.action === 'delete') {
-      const localFile = state.files.find(f => f.id === e.record.id);
-      if (!localFile) return; 
       state.files = state.files.filter(f => f.id !== e.record.id);
-      if (state.activeId === e.record.id) selectCategory(state.activeCategoryId, true);
-      showToast(`Note deleted remotely: ${e.record.name}`);
+      if (state.activeId === e.record.id) {
+          state.activeId = null;
+          loadActiveToEditor();
+      }
+      showToast(`Note deleted remotely`);
     } 
     else {
       const newFile = await decryptRecord(e.record);
       newFile._cachedPreview = getPreviewText(newFile.content?.trim());
-      newFile._contentLastPreviewed = newFile.content;
+      
       const index = state.files.findIndex(f => f.id === newFile.id);
       if (index !== -1) {
           state.files[index] = { ...state.files[index], ...newFile };
-          showToast(`Note updated: ${newFile.name}`, 1500);
+          // If editing this note, update editor immediately
+          if (state.activeId === newFile.id) {
+              loadActiveToEditor();
+              // Invalidate version cache to force fresh fetch on remote change
+              state.files[index].versionsMetadataCache = null;
+              updateVersionHistory(state.files[index]);
+          }
+          showToast(`Note updated remotely`);
       } else {
           state.files.unshift(newFile);
-          showToast(`New note synced: ${newFile.name}`, 1500);
+          showToast(`New note synced`);
       }
     }
     finalizeUIUpdate();
@@ -459,10 +467,7 @@ function setupRealtimeSubscription() {
       if (e.record.user !== pb.authStore.model.id) return;
       if (e.record.lastEditor === SESSION_ID) return;
       if (e.action === 'delete') {
-          const localCat = state.categories.find(c => c.id === e.record.id);
-          if (!localCat) return; 
           state.categories = state.categories.filter(c => c.id !== e.record.id);
-          showToast(`Category deleted remotely: ${e.record.name}`);
       } else {
           const index = state.categories.findIndex(c => c.id === e.record.id);
           if (index !== -1) state.categories[index] = e.record;
@@ -476,14 +481,27 @@ function setupRealtimeSubscription() {
       if (e.record.user !== pb.authStore.model.id) return;
       if (e.record.lastEditor === SESSION_ID) return; 
       if (e.action !== 'create') return;
+
       const file = state.files.find(f => f.id === e.record.file);
       if (!file) return;
-      const decrypted = await decryptRecord(e.record);
-      if (!file.versionsCache) file.versionsCache = [];
-      file.versionsCache.unshift({
-          id: decrypted.id, created: decrypted.created, content: decrypted.content, editor: decrypted.editor || 'plain'
-      });
-      if (state.activeId === file.id) renderVersionList(file, file.versionsCache);
+
+      // Update the unified metadata cache
+      if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
+      
+      const newVersionMeta = {
+          id: e.record.id,
+          created: e.record.created,
+          editor: e.record.editor || 'plain'
+      };
+
+      file.versionsMetadataCache.unshift(newVersionMeta);
+
+      if (state.activeId === file.id) {
+          const historyPanel = document.getElementById('version-history');
+          if (historyPanel && historyPanel.classList.contains('active')) {
+              renderVersionList(file, file.versionsMetadataCache);
+          }
+      }
   });
 }
 // ===================================================================
@@ -493,6 +511,7 @@ function setupRealtimeSubscription() {
  * Creates the default categories in PocketBase for a new user.
  */
 async function createDefaultCategories() {
+    console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
     if (!pb.authStore.isValid) return [];
     
     const defaultCategories = [
@@ -575,6 +594,7 @@ function selectCategory(categoryIdentifier, shouldSelectFile = true) {
 
 async function createFile() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
   if (previewMode) {
     exitPreviewMode();
     highlightSelectedVersion(null);
@@ -582,10 +602,11 @@ async function createFile() {
 
   const targetCategoryId = state.activeCategoryId;
   if (targetCategoryId === DEFAULT_CATEGORY_IDS.TRASH) {
-      showToast('Cannot create a note in Trash.', 3000);
-      return; 
+    showToast('Cannot create a note in Trash.', 3000);
+    return;
   }
 
+  // 1. Generate unique name
   const today = new Date().toISOString().slice(0, 10);
   const baseName = `Note ${today}`;
   const sameDay = state.files.filter(f => f.name?.startsWith(baseName));
@@ -595,28 +616,43 @@ async function createFile() {
   })) + 1 : 0;
   const name = nextNum === 0 ? baseName : `${baseName}_${nextNum}`;
 
-  const newestTimestamp = new Date().toISOString();
-  const tempId = `temp_${Date.now()}`; 
+  // 2. STRICT TIMESTAMP LOGIC:
+  // Find the timestamp of the newest note currently in the list
+  let newestExistingTime = 0;
+  if (state.files.length > 0) {
+      newestExistingTime = Math.max(...state.files.map(f => new Date(f.updated).getTime()));
+  }
   
+  // Ensure the new note is at least 1ms newer than the newest existing note
+  const now = Date.now();
+  const safeNewTime = new Date(Math.max(now, newestExistingTime + 1)).toISOString();
+
+  const tempId = `temp_${Date.now()}`;
+
+  // 3. Optimistic local file object
   const newFile = {
     id: tempId,
     name,
     content: '',
-    created: newestTimestamp,
-    updated: newestTimestamp,
+    created: safeNewTime,
+    updated: safeNewTime, // This ensures it stays at the top
     categoryId: targetCategoryId,
     _isLoaded: true,
     _cachedPreview: '[Empty note]',
     _contentLastPreviewed: ''
   };
 
-  state.files.unshift(newFile); 
+  // 4. Immediate state and UI update
+  state.files.unshift(newFile);
   state.activeId = tempId;
-  
+
   loadActiveToEditor();
-  originalContent = ''; 
+  originalContent = '';
+  
+  // Trigger immediate sort and render
   finalizeUIUpdate();
 
+  // 5. Background Persistence
   if (pb.authStore.isValid && derivedKey) {
     createFileOnServer(tempId, name, targetCategoryId);
   } else {
@@ -624,6 +660,53 @@ async function createFile() {
   }
 }
 
+async function createFileOnServer(tempId, name, targetCategoryId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  try {
+    const activeCatObj = state.categories.find(c => c.id === targetCategoryId || c.localId === targetCategoryId);
+    const pbCategoryId = activeCatObj?.id;
+
+    const { ciphertext, iv, authTag } = await encryptBlob('', derivedKey);
+
+    const result = await pb.collection('files').create({
+      name,
+      user: pb.authStore.model.id,
+      category: pbCategoryId,
+      iv: arrayToB64(iv),
+      authTag: arrayToB64(authTag),
+      encryptedBlob: arrayToB64(ciphertext),
+      lastEditor: SESSION_ID
+    }, { requestKey: null });
+
+    const tempFile = state.files.find(f => f.id === tempId);
+    if (tempFile) {
+      tempFile.id = result.id;
+      // We keep the optimistic "updated" time if the server time is somehow older
+      // to prevent the note from jumping down after the server response.
+      const serverTime = new Date(result.updated).getTime();
+      const localTime = new Date(tempFile.updated).getTime();
+      
+      if (serverTime > localTime) {
+          tempFile.updated = result.updated;
+      }
+      
+      tempFile.created = result.created;
+      
+      if (state.activeId === tempId) {
+        state.activeId = result.id;
+      }
+    }
+    
+    finalizeUIUpdate();
+    
+  } catch (e) {
+    if (e.status === 0 || e.isAbort) return;
+    state.files = state.files.filter(f => f.id !== tempId);
+    if (state.activeId === tempId) state.activeId = null;
+    finalizeUIUpdate();
+  }
+}
 
 
 
@@ -989,6 +1072,7 @@ function createFolderItem(name, id, isActive = false, iconName = 'icon-folder', 
  * This prevents the list from being wiped completely on partial updates.
  */
 function ensureSidebarStructure() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const list = document.getElementById('filesList');
   if (!list) return { catContainer: null, noteContainer: null };
 
@@ -1014,7 +1098,7 @@ function ensureSidebarStructure() {
  * PART 1: Render Categories Only (Heavy logic: sorting, counting, DOM creation)
  */
 function renderSidebarCategories() {
-  // console.error('[EXECUTING] renderSidebarCategories'); // Uncomment for debugging
+  console.error('[EXECUTING] renderSidebarCategories'); // Uncomment for debugging
   const { catContainer } = ensureSidebarStructure();
   if (!catContainer) return;
 
@@ -1131,6 +1215,7 @@ function renderSidebarCategories() {
  * Kept for backward compatibility and full refreshes (init, import).
  */
 function renderFiles() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   renderSidebarCategories();
   renderSidebarNotes();
 }
@@ -1488,12 +1573,18 @@ function loadActiveToEditor() {
   applyEditorMode(); 
   updateEditorModeUI();
 
+  // UNLOCK PLAIN TEXT EDITOR
   const textarea = document.getElementById('textEditor');
   if (textarea) {
     textarea.value = newContent;
+    textarea.disabled = false;
+    textarea.placeholder = "Write or edit your text here...";
   }
 
+  // UNLOCK & LOAD RICH TEXT EDITOR
   if (tiptapEditor) {
+    tiptapEditor.setOptions({ editable: true });
+    
     const originalOnUpdate = tiptapEditor.options.onUpdate;
     tiptapEditor.options.onUpdate = undefined;
     
@@ -1608,6 +1699,7 @@ function updateSidebarInfo(file = null) {
   }
 }
 async function saveVersionIfChanged() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === state.activeId);
   if (!file || !file._isLoaded) return; // Don't save if not fully loaded
 
@@ -1760,7 +1852,7 @@ async function updateVersionHistory(file = null) {
 }
 
 function renderVersionList(file, versionsMetadata) {
-  console.error('[EXECUTING] renderVersionList (Lazy)');
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const versionList = document.getElementById('versionList');
   if (!versionList) return;
   
@@ -1860,6 +1952,7 @@ function renderVersionList(file, versionsMetadata) {
 
 // Helper function to handle toolbar visibility
 function setToolbarVisibility(visible) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   document.querySelectorAll('.toolbar-container').forEach(el => {
     el.style.display = visible ? '' : 'none';
   });
@@ -2080,6 +2173,7 @@ async function handleRestore() {
 
 
 function showToast(message, duration = 2500) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const oldToast = document.getElementById('appToast');
   if (oldToast) oldToast.remove();
 
@@ -2144,6 +2238,7 @@ function highlightSelectedVersion(versionId) {
 }
 
 function formatDate(dateString) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (!dateString) return '—';
   const date = new Date(dateString);
   return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -2168,6 +2263,7 @@ document.getElementById('textEditor')?.addEventListener('blur', async () => {
 
 
 function finalizeUIUpdate() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (isFinalizingUI) {
       uiUpdateQueued = true; 
       return;
@@ -2216,7 +2312,7 @@ if (historyPanel && historyPanel.classList.contains('active')) {
       isFinalizingUI = false;
       if (uiUpdateQueued) finalizeUIUpdate();
     }
-  }, 100); // Increased delay slightly for better performance
+  }, 16); // Increased delay slightly for better performance
 }
 
 
@@ -2757,6 +2853,7 @@ function applyEditorMode() {
 }
 
 function updateTiptapToolbar(editor) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const set = (id, active) => {
     const btn = document.getElementById(id);
     if(btn) btn.classList.toggle('is-active', active);
@@ -2794,7 +2891,7 @@ function updateTiptapToolbar(editor) {
 }
 
 function setupTiptapButtons() {
-  
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // 1. Specialized Handler for History (Undo/Redo)
   const setupHistoryBtn = (id, action) => {
     const btn = document.getElementById(id);
@@ -2930,6 +3027,7 @@ document.getElementById('textEditor')?.addEventListener('input', (e) => {
 });
 
 function handleAutoSave(newContent) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === state.activeId);
   if (!file) return;
 
@@ -2966,6 +3064,7 @@ function handleAutoSave(newContent) {
 }
 
 function openShareModal(fileId) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
     if (!pb.authStore.isValid) {
         showToast("You must be logged in to share notes.");
         return;
@@ -3069,7 +3168,7 @@ document.getElementById('copyShareLinkBtn')?.addEventListener('click', () => {
  * Does NOT fetch the encrypted blob or decrypt content.
  */
 async function getVersionMetadata(pb, fileId, signal) {
-  console.error('[EXECUTING] getVersionMetadata (Lazy Load)');
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
   try {
     // 1. Server Fetch: Select specific fields to reduce payload size
@@ -3091,7 +3190,7 @@ async function getVersionMetadata(pb, fileId, signal) {
  * Called only when user clicks a version item.
  */
 async function loadVersionDetails(pb, derivedKey, versionId) {
-  console.error('[EXECUTING] loadVersionDetails (On-Demand)');
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   try {
     const r = await pb.collection('versions').getOne(versionId);
     
@@ -3314,7 +3413,7 @@ async function selectFile(id) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (previewMode) exitPreviewMode();
 
-  // 1. INSTANT VISUAL SELECTION (No delay)
+  // 1. INSTANT VISUAL SELECTION
   state.activeId = id;
   document.querySelectorAll('.file-item').forEach(el => {
       el.classList.toggle('active', el.dataset.id === id);
@@ -3323,22 +3422,20 @@ async function selectFile(id) {
   const file = state.files.find(f => f.id === id);
   if (!file) return;
 
-  // 2. LOAD EXISTING CONTENT IMMEDIATELY
-  // If it's already loaded or a temp note, this shows content instantly
-  loadActiveToEditor();
-  updateSidebarInfo(file);
+  // 2. LOCK EDITOR DURING DECRYPTION
+  if (tiptapEditor) tiptapEditor.setOptions({ editable: false });
+  const textarea = document.getElementById('textEditor');
+  if (textarea) {
+    textarea.disabled = true;
+  }
 
-  // 3. ASYNC DECRYPTION (Only if needed)
+  // 3. ASYNC DECRYPTION
   if (!file._isLoaded && !file.id.startsWith('temp_')) {
       const itemEl = document.querySelector(`.file-item[data-id="${id}"] .file-preview`);
       if (itemEl) itemEl.textContent = "Decrypting...";
       
       await loadNoteDetails(id);
       
-      // Update editor again once full content is decrypted
-      loadActiveToEditor();
-
-      // Update the specific sidebar preview text without full re-render
       if (itemEl) {
           const rawText = file._cachedPreview || getPreviewText(file.content?.trim() || '');
           const firstLine = rawText.split('\n')[0] || '[Empty note]';
@@ -3346,47 +3443,17 @@ async function selectFile(id) {
       }
   }
 
-  // 4. UPDATE TABS
+  // 4. UNLOCK & LOAD EDITOR
+  loadActiveToEditor();
+  updateSidebarInfo(file);
+
+  // 5. UPDATE TABS
   const historyPanel = document.getElementById('version-history');
   if (historyPanel && historyPanel.classList.contains('active')) {
       if (!file.id.startsWith('temp_')) {
           if (file.versionsMetadataCache) renderVersionList(file, file.versionsMetadataCache);
           else updateVersionHistory(file);
       }
-  }
-}
-
-async function createFileOnServer(tempId, name, targetCategoryId) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  try {
-    const activeCatObj = state.categories.find(c => c.id === targetCategoryId || c.localId === targetCategoryId);
-    const pbCategoryId = activeCatObj?.id;
-
-    const { ciphertext, iv, authTag } = await encryptBlob('', derivedKey);
-
-    const result = await pb.collection('files').create({
-      name,
-      user: pb.authStore.model.id,
-      category: pbCategoryId,
-      iv: arrayToB64(iv),
-      authTag: arrayToB64(authTag),
-      encryptedBlob: arrayToB64(ciphertext),
-      lastEditor: SESSION_ID 
-    }, { requestKey: null }); 
-    
-    const tempFile = state.files.find(f => f.id === tempId);
-    if (tempFile) {
-      tempFile.id = result.id; 
-      tempFile.created = result.created;
-      tempFile._isLoaded = true; // Newly created notes are "loaded" by definition
-      if (state.activeId === tempId) state.activeId = result.id;
-    }
-    finalizeUIUpdate();
-  } catch (e) {
-    if (e.status === 0 || e.isAbort) return;
-    state.files = state.files.filter(f => f.id !== tempId);
-    if (state.activeId === tempId) state.activeId = null;
-    finalizeUIUpdate();
   }
 }
 
