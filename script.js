@@ -29,6 +29,8 @@ const SESSION_ID = crypto.randomUUID();
 let isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; // Load preference
 let previewMode = false;        
 let previewVersion = null;      
+// Auto-save
+let saveTimeout = null;
 let originalBeforePreview = ''; 
 const PB_URL = 'https://repeatedly-pleasant-elk.ngrok-free.app/';
 let pb = null, 
@@ -2182,19 +2184,8 @@ function downloadNote(file) {
   a.click();
 }
 
-// Auto-save
-let saveTimeout = null;
-document.getElementById('textEditor')?.addEventListener('input', () => {
-  const file = state.files.find(f => f.id === state.activeId);
-  if (!file) return;
-  file.content = document.getElementById('textEditor').value;
-  const now = new Date().toISOString();
-  file.updated = now;
-  clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => saveFile(file), 800);
-  renderSidebarNotes();
-  updateSidebarInfo(file);
-});
+
+
 
 document.getElementById('textEditor')?.addEventListener('blur', async () => {
   await saveVersionIfChanged();
@@ -2971,32 +2962,33 @@ function handleAutoSave(newContent) {
   const file = state.files.find(f => f.id === state.activeId);
   if (!file) return;
 
+  // Comparison will now work because file.content hasn't been updated yet
   if (file.content !== newContent) {
-      file.content = newContent;
       
-      // 1. Update timestamp
+      file.content = newContent;
       file.updated = new Date().toISOString();
       
-      // 2. Update preview cache
+      // Update preview cache
       const plainText = getPreviewText(newContent?.trim() || '');
       file._cachedPreview = plainText;
       file._contentLastPreviewed = newContent;
 
-      // 3. INSTANT UI UPDATE: Update the sidebar snippet immediately
+      // 1. INSTANT SIDEBAR UPDATE
       const previewEl = document.querySelector(`.file-item[data-id="${file.id}"] .file-preview`);
       if (previewEl) {
           const firstLine = plainText.split('\n')[0] || '[Empty note]';
           previewEl.textContent = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
       }
 
-      // 4. Trigger Server Save (Debounced)
+      // 2. DEBOUNCED SERVER SAVE
       clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => saveFile(file), 800);
 
-      // 5. Trigger Sort Update (Moves note to top of list after a short delay)
+      // 3. RE-SORT LIST
+      // We pass a flag or use a timeout to move the item to the top 
+      // without re-loading the whole editor (which causes the lag/glitch)
       finalizeUIUpdate();
       
-      // 6. Update the "Info" tab if it's open
       updateSidebarInfo(file);
   }
 }
