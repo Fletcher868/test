@@ -556,7 +556,7 @@ function selectCategory(categoryIdentifier, shouldSelectFile = true) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
     state.activeCategoryId = categoryIdentifier;
     
-    // Resolve IDs
+    // 1. Resolve IDs (PocketBase UUID vs Local String ID)
     let pbCategoryId = categoryIdentifier; 
     let localCategoryIdentifier = categoryIdentifier; 
 
@@ -568,27 +568,32 @@ function selectCategory(categoryIdentifier, shouldSelectFile = true) {
         }
     }
     
-    // Filter notes
+    // 2. Filter notes belonging to this category
     const notesInCategory = state.files
         .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier) 
         .sort((a, b) => new Date(b.updated) - new Date(a.updated));
 
+    // 3. Handle selection of the first note in the category
     if (shouldSelectFile) {
         if (notesInCategory.length > 0) {
-            // CRITICAL: Always select the first file in the filtered list
-            state.activeId = notesInCategory[0].id;
-            
-            // Only update editor if content is different (prevents cursor jumping)
-            const currentEditorVal = document.getElementById('textEditor').value;
-            if (notesInCategory[0].content !== currentEditorVal) {
-                loadActiveToEditor();
-            }
+            // Re-use selectFile to handle: visual selection, decryption, 
+            // editor loading, Note Info tab, and Version History tab.
+            selectFile(notesInCategory[0].id);
         } else {
-            // No notes left? Clear everything
+            // No notes in category: Clear everything
             state.activeId = null;
             document.getElementById('textEditor').value = '';
+            if (tiptapEditor) tiptapEditor.commands.setContent('<p></p>');
+            
+            // Explicitly clear sidebar tabs
+            updateSidebarInfo(null);
+            const vList = document.getElementById('versionList');
+            if (vList) vList.innerHTML = '<li class="muted">No note selected.</li>';
         }
     }
+
+    // 4. Update the sidebar list UI
+    finalizeUIUpdate();
 }
 
 
