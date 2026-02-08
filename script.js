@@ -788,9 +788,9 @@ async function createCategory(name) {
 async function saveFile(file) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   file.updated = new Date().toISOString();
-  if (file.id.startsWith('temp_')) return;
   
   if (pb.authStore.isValid && derivedKey) {
+    if (file.id.startsWith('temp_')) return;
     try {
         const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
         const categoryRecord = state.categories.find(c => c.localId === file.categoryId || c.id === file.categoryId);
@@ -802,7 +802,7 @@ async function saveFile(file) {
           iv: arrayToB64(iv),
           authTag: arrayToB64(authTag),
           encryptedBlob: arrayToB64(ciphertext),
-          lastEditor: SESSION_ID // <--- ADDED
+          lastEditor: SESSION_ID
         });
     } catch (e) { console.error(e); }
   } else {
@@ -1624,6 +1624,7 @@ function loadActiveToEditor() {
 
 function openSidebarTab(tabName) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tabName);
   });
@@ -1636,8 +1637,23 @@ function openSidebarTab(tabName) {
   
   if (tabName === 'note-info') {
     updateSidebarInfo(file);
-  } else if (tabName === 'version-history') {
-    updateVersionHistory(file); 
+  } 
+  else if (tabName === 'version-history') {
+    if (!file) {
+      const vList = document.getElementById('versionList');
+      if (vList) vList.innerHTML = '<li class="muted">No note selected.</li>';
+      return;
+    }
+
+    // UNIFIED TAB SWITCH LOGIC (Same as selectFile)
+    if (file.versionsMetadataCache) {
+        renderVersionList(file, file.versionsMetadataCache);
+    } else if (pb.authStore.isValid && !file.id.startsWith('temp_')) {
+        updateVersionHistory(file);
+    } else {
+        renderVersionList(file, []);
+    }
+    
     updateVersionFooter(); 
   }
 }
@@ -1706,7 +1722,7 @@ function updateSidebarInfo(file = null) {
 async function saveVersionIfChanged() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === state.activeId);
-  if (!file || !file._isLoaded) return; // Don't save if not fully loaded
+  if (!file || !file._isLoaded) return;
 
   let currentContent = '';
   let versionMode = 'plain'; 
@@ -1720,9 +1736,9 @@ async function saveVersionIfChanged() {
     const rawVal = document.getElementById('textEditor').value;
     isEmpty = !rawVal || rawVal.trim().length === 0;
     currentContent = rawVal;
+    versionMode = 'plain';
   }
 
-  // If no changes or empty, stop
   if (currentContent === originalContent || isEmpty) return;
   if (isSavingVersion) return;
   
@@ -1733,42 +1749,47 @@ async function saveVersionIfChanged() {
     const tempVersion = {
         id: tempId,
         created: new Date().toISOString(),
-        content: originalContent, // Snapshot of what the note WAS before these changes
+        content: originalContent,
         editor: versionMode,
         _cachedPreview: getPreviewText(originalContent)
     };
     
-    // UNIFY: Ensure the metadata cache exists and add the new version to the TOP
     if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
     file.versionsMetadataCache.unshift(tempVersion);
     
-    // Render the combined list immediately
     const historyPanel = document.getElementById('version-history');
     if (historyPanel && historyPanel.classList.contains('active')) {
       renderVersionList(file, file.versionsMetadataCache);
     }
     
-if (pb.authStore.isValid && derivedKey) {
+    if (pb.authStore.isValid && derivedKey) {
       createVersionSnapshot(pb, derivedKey, file.id, originalContent, versionMode)
         .then(result => {
-          // Replace temp item with real server data
           const idx = file.versionsMetadataCache.findIndex(v => v.id === tempId);
           if (idx !== -1) {
               file.versionsMetadataCache[idx] = {
-                  id: result.id, 
-                  created: result.created, 
-                  content: originalContent, 
-                  editor: versionMode
+                  id: result.id, created: result.created, content: originalContent, editor: versionMode
               };
           }
-          // FIX: Trigger UI update now that "Saving..." indicator can be removed
-          finalizeUIUpdate(); 
+          finalizeUIUpdate();
         })
-        .catch(err => {
-          console.error('Server version save failed:', err);
+        .catch(e => {
+          console.error('Version save failed:', e);
           file.versionsMetadataCache = file.versionsMetadataCache.filter(v => v.id !== tempId);
           finalizeUIUpdate();
         });
+    } else {
+      // GUEST MODE FIX: Immediately replace the 'temp' ID with a 'final' ID so it stops showing "Saving..."
+      const finalGuestId = `ver_${Date.now()}`;
+      tempVersion.id = finalGuestId;
+      
+      if (!file.versions) file.versions = [];
+      file.versions.unshift({...tempVersion});
+      guestStorage.saveData({ categories: state.categories, files: state.files });
+      
+      if (historyPanel && historyPanel.classList.contains('active')) {
+          renderVersionList(file, file.versionsMetadataCache);
+      }
     }
 
     originalContent = currentContent;
@@ -2266,7 +2287,6 @@ document.getElementById('textEditor')?.addEventListener('blur', async () => {
 
 
 
-
 function finalizeUIUpdate() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (isFinalizingUI) {
@@ -2285,29 +2305,25 @@ function finalizeUIUpdate() {
     try {
       const file = state.files.find(f => f.id === state.activeId);
       
-      // 1. Sort the files
+      // STABLE SORT: Newest first
       state.files.sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime());
       
-      // 2. Render sidebar ONLY
       renderSidebarCategories();
       renderSidebarNotes();
-      
-      // 3. Update info tab
       updateSidebarInfo(file);
 
-      // 4. Refresh Version List UI (without fetching content)
-// Inside finalizeUIUpdate...
-const historyPanel = document.getElementById('version-history');
-if (historyPanel && historyPanel.classList.contains('active')) {
-    if (file && !file.id.startsWith('temp_')) {
-        // Use the unified metadata cache
-        const metadata = file.versionsMetadataCache || [];
-        renderVersionList(file, metadata);
-    } else {
-        const vList = document.getElementById('versionList');
-        if (vList) vList.innerHTML = file ? '<li class="version-current"><strong>Current version</strong></li><li class="muted">No history yet.</li>' : '';
-    }
-}
+      // HISTORY RENDERING (Works for both PB and Guest)
+      const historyPanel = document.getElementById('version-history');
+      if (historyPanel && historyPanel.classList.contains('active')) {
+          if (file) {
+              // Priority: Metadata cache (unified list) -> PB remote cache -> Guest versions array
+              const historyData = file.versionsMetadataCache || file.versions || [];
+              renderVersionList(file, historyData);
+          } else {
+              const vList = document.getElementById('versionList');
+              if (vList) vList.innerHTML = '<li class="muted">No note selected.</li>';
+          }
+      }
       
       updateVersionFooter();
 
@@ -2317,7 +2333,7 @@ if (historyPanel && historyPanel.classList.contains('active')) {
       isFinalizingUI = false;
       if (uiUpdateQueued) finalizeUIUpdate();
     }
-  }, 16); // Increased delay slightly for better performance
+  }, 16); 
 }
 
 
@@ -3036,10 +3052,7 @@ function handleAutoSave(newContent) {
   const file = state.files.find(f => f.id === state.activeId);
   if (!file) return;
 
-  // Comparison will now work because file.content hasn't been updated yet
   if (file.content !== newContent) {
-      console.log('Content changed! Updating UI...');
-      
       file.content = newContent;
       file.updated = new Date().toISOString();
       
@@ -3048,20 +3061,18 @@ function handleAutoSave(newContent) {
       file._cachedPreview = plainText;
       file._contentLastPreviewed = newContent;
 
-      // 1. INSTANT SIDEBAR UPDATE
+      // 1. INSTANT SIDEBAR TEXT UPDATE
       const previewEl = document.querySelector(`.file-item[data-id="${file.id}"] .file-preview`);
       if (previewEl) {
           const firstLine = plainText.split('\n')[0] || '[Empty note]';
           previewEl.textContent = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
       }
 
-      // 2. DEBOUNCED SERVER SAVE
+      // 2. SERVER/LOCAL SAVE DEBOUNCE
       clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => saveFile(file), 800);
 
-      // 3. RE-SORT LIST
-      // We pass a flag or use a timeout to move the item to the top 
-      // without re-loading the whole editor (which causes the lag/glitch)
+      // 3. UI SYNC (Ensures history stays visible for Guest)
       finalizeUIUpdate();
       
       updateSidebarInfo(file);
@@ -3432,9 +3443,10 @@ async function selectFile(id) {
   const textarea = document.getElementById('textEditor');
   if (textarea) {
     textarea.disabled = true;
+    textarea.placeholder = "Decrypting note...";
   }
 
-  // 3. ASYNC DECRYPTION
+  // 3. ASYNC DECRYPTION (Only if needed for server notes)
   if (!file._isLoaded && !file.id.startsWith('temp_')) {
       const itemEl = document.querySelector(`.file-item[data-id="${id}"] .file-preview`);
       if (itemEl) itemEl.textContent = "Decrypting...";
@@ -3452,17 +3464,20 @@ async function selectFile(id) {
   loadActiveToEditor();
   updateSidebarInfo(file);
 
-  // 5. UPDATE TABS
+  // 5. UPDATE TABS (Simplified Unified Fix for Guest and Logged In)
   const historyPanel = document.getElementById('version-history');
   if (historyPanel && historyPanel.classList.contains('active')) {
-      if (!file.id.startsWith('temp_')) {
-          if (file.versionsMetadataCache) renderVersionList(file, file.versionsMetadataCache);
-          else updateVersionHistory(file);
+      // Logic: Use unified cache if available, otherwise fetch from server for PB notes
+      if (file.versionsMetadataCache) {
+          renderVersionList(file, file.versionsMetadataCache);
+      } else if (pb.authStore.isValid && !file.id.startsWith('temp_')) {
+          updateVersionHistory(file);
+      } else {
+          // Fallback for brand new notes or guest notes with no history yet
+          renderVersionList(file, []);
       }
   }
 }
-
-
 
 
 // Init
