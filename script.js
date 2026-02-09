@@ -552,42 +552,38 @@ async function createDefaultCategories() {
 /**
  * Sets the active category, finds the first note in it, and selects it.
  */
-function selectCategory(categoryIdentifier, shouldSelectFile = true) {
+async function selectCategory(categoryIdentifier, shouldSelectFile = true) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-    if (previewMode) exitPreviewMode();
-    state.activeCategoryId = categoryIdentifier;
+  state.activeCategoryId = categoryIdentifier;
     
-    let pbCategoryId = categoryIdentifier; 
-    let localCategoryIdentifier = categoryIdentifier; 
+  let pbCategoryId = categoryIdentifier; 
+  let localCategoryIdentifier = categoryIdentifier; 
 
-    if (pb.authStore.isValid) {
-        const activeCategoryObject = state.categories.find(c => c.localId === categoryIdentifier || c.id === categoryIdentifier);
-        if (activeCategoryObject) {
-            pbCategoryId = activeCategoryObject.id;
-            localCategoryIdentifier = activeCategoryObject.localId || activeCategoryObject.id;
-        }
-    }
+  if (pb.authStore.isValid) {
+      const activeCategoryObject = state.categories.find(c => c.localId === categoryIdentifier || c.id === categoryIdentifier);
+      if (activeCategoryObject) {
+          pbCategoryId = activeCategoryObject.id;
+          localCategoryIdentifier = activeCategoryObject.localId || activeCategoryObject.id;
+      }
+  }
     
-    const notesInCategory = state.files
-        .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier) 
-        .sort((a, b) => new Date(b.updated) - new Date(a.updated));
+  const notesInCategory = state.files
+      .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier) 
+      .sort((a, b) => new Date(b.updated) - new Date(a.updated));
 
-    if (shouldSelectFile) {
-        if (notesInCategory.length > 0) {
-            selectFile(notesInCategory[0].id);
-        } else {
-            // No notes left: Clear IDs and call loadActiveToEditor to lock the UI
-            state.activeId = null;
-            loadActiveToEditor();
-            
-            // Clear sidebar tabs
-            updateSidebarInfo(null);
-            const vList = document.getElementById('versionList');
-            if (vList) vList.innerHTML = '<li class="muted">No note selected.</li>';
-        }
-    }
-
-    finalizeUIUpdate();
+  if (shouldSelectFile && notesInCategory.length > 0) {
+      // Logic flows into selectFile, which will trigger finalizeUIUpdate() once decryption is done
+      await selectFile(notesInCategory[0].id);
+  } else {
+      // No notes in category: Clear state and trigger UI update manually here
+      state.activeId = null;
+      loadActiveToEditor();
+      updateSidebarInfo(null);
+      const vList = document.getElementById('versionList');
+      if (vList) vList.innerHTML = '<li class="muted">No note selected.</li>';
+      
+      finalizeUIUpdate();
+  }
 }
 
 
@@ -803,38 +799,7 @@ async function saveFile(file) {
   }
 }
 
-// Helper: Extract plain text from TipTap JSON or return string as-is
-function getPreviewText(content) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  if (!content) return '';
 
-  // 1. Try to parse as JSON
-  try {
-    const json = JSON.parse(content);
-    
-    // 2. Check if it is a valid TipTap document structure
-    if (json.type === 'doc' && Array.isArray(json.content)) {
-      
-      // 3. Recursive function to find all "text" nodes
-      const extractText = (node) => {
-        if (node.type === 'text' && node.text) {
-          return node.text;
-        }
-        if (node.content && Array.isArray(node.content)) {
-          return node.content.map(child => extractText(child)).join(' ');
-        }
-        return '';
-      };
-
-      return extractText(json);
-    }
-  } catch (e) {
-    // Not JSON, so it's already plain text
-  }
-
-  // Fallback: Return original string (Plain text)
-  return content;
-}
 
 async function clearTrash() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
@@ -2179,15 +2144,9 @@ function exitPreviewMode() {
 
 async function selectFile(id) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  
-  // 1. EXIT PREVIEW FIRST
-  if (previewMode) {
-    exitPreviewMode();
-    // Force a visual reset of any remaining preview artifacts
-    document.getElementById('previewBanner')?.remove();
-  }
+  if (previewMode) exitPreviewMode();
 
-  // 2. INSTANT VISUAL SELECTION
+  // 1. INSTANT VISUAL SELECTION
   state.activeId = id;
   document.querySelectorAll('.file-item').forEach(el => {
       el.classList.toggle('active', el.dataset.id === id);
@@ -2196,8 +2155,7 @@ async function selectFile(id) {
   const file = state.files.find(f => f.id === id);
   if (!file) return;
 
-  // 3. LOCK EDITOR DURING POTENTIAL DECRYPTION
-  // We do this to prevent editing while lazy-loading
+  // 2. LOCK EDITOR DURING DECRYPTION
   if (tiptapEditor) tiptapEditor.setOptions({ editable: false });
   const textarea = document.getElementById('textEditor');
   if (textarea) {
@@ -2205,25 +2163,27 @@ async function selectFile(id) {
     textarea.placeholder = "Decrypting note...";
   }
 
-  // 4. ASYNC DECRYPTION
+  // 3. ASYNC DECRYPTION
   if (!file._isLoaded && !file.id.startsWith('temp_')) {
       const itemEl = document.querySelector(`.file-item[data-id="${id}"] .file-preview`);
       if (itemEl) itemEl.textContent = "Decrypting...";
       
       await loadNoteDetails(id);
       
-      if (itemEl) {
+      // Update sidebar element if it exists
+      const refreshedItemEl = document.querySelector(`.file-item[data-id="${id}"] .file-preview`);
+      if (refreshedItemEl) {
           const rawText = file._cachedPreview || getPreviewText(file.content?.trim() || '');
           const firstLine = rawText.split('\n')[0] || '[Empty note]';
-          itemEl.textContent = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
+          refreshedItemEl.textContent = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
       }
   }
 
-  // 5. UNLOCK & LOAD EDITOR (This sets editable to true)
+  // 4. UNLOCK & LOAD EDITOR
   loadActiveToEditor();
   updateSidebarInfo(file);
 
-  // 6. UPDATE TABS
+  // 5. UPDATE TABS
   const historyPanel = document.getElementById('version-history');
   if (historyPanel && historyPanel.classList.contains('active')) {
       if (file.versionsMetadataCache) {
@@ -2234,6 +2194,9 @@ async function selectFile(id) {
           renderVersionList(file, []);
       }
   }
+  
+  // TRIGGER UI: This updates the "Active" note visually and ensures the sidebar is in sync
+  finalizeUIUpdate();
 }
 
 // Simplified createPreviewBanner
@@ -3371,18 +3334,17 @@ async function loadUserFiles() {
       state.categories = serverCats;
 
       const records = await getNoteMetadata();
-      // Inside loadUserFiles, update the mapping:
-state.files = records.map(r => ({
-    id: r.id, 
-    name: r.name, 
-    content: null, 
-    created: r.created, 
-    updated: r.updated, 
-    categoryId: r.category,
-    editor: r.editor || 'plain', // Store the editor mode
-    _isLoaded: false, 
-    _cachedPreview: null 
-}));
+      state.files = records.map(r => ({
+        id: r.id, 
+        name: r.name, 
+        content: null, 
+        created: r.created, 
+        updated: r.updated, 
+        categoryId: r.category,
+        editor: r.editor || 'plain',
+        _isLoaded: false, 
+        _cachedPreview: null 
+      }));
 
     } catch (e) { 
         console.error("PocketBase Load Failed:", e); 
@@ -3394,32 +3356,42 @@ state.files = records.map(r => ({
       guestStorage.saveData(localData);
     }
     state.categories = localData.categories;
-    state.files = localData.files.map(f => ({...f, _isLoaded: true})); 
+    state.files = localData.files.map(f => ({
+      ...f, 
+      _isLoaded: true,
+      versionsMetadataCache: f.versions || []
+    })); 
   }
 
   if (state.files.length === 0) {
     await createFile();
   }
   
-  selectCategory(state.activeCategoryId, true); 
-  
-  if (state.activeId) {
-     const file = state.files.find(f => f.id === state.activeId);
-     if (file && !file.id.startsWith('temp_')) {
-        await loadNoteDetails(state.activeId);
-        loadActiveToEditor();
-        
-        // Fix: Explicitly trigger version history for the first note if tab is active
-        const historyPanel = document.getElementById('version-history');
-        if (historyPanel && historyPanel.classList.contains('active')) {
-            updateVersionHistory(file);
-        }
-     }
-  }
-
-  finalizeUIUpdate(); 
+  // Triggers selectCategory -> selectFile -> finalizeUIUpdate
+  await selectCategory(state.activeCategoryId, true); 
 }
 
+function getPreviewText(content) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (!content) return '';
+
+  try {
+    const json = JSON.parse(content);
+    if (json.type === 'doc' && Array.isArray(json.content)) {
+      const extractText = (node) => {
+        if (node.type === 'text' && node.text) return node.text;
+        if (node.content && Array.isArray(node.content)) {
+          return node.content.map(child => extractText(child)).join(' ');
+        }
+        return '';
+      };
+      return extractText(json);
+    }
+  } catch (e) {
+    // Not JSON, return as is
+  }
+  return content;
+}
 function renderSidebarNotes() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const { noteContainer } = ensureSidebarStructure();
@@ -3453,16 +3425,13 @@ function renderSidebarNotes() {
     d.className = 'file-item' + (f.id === state.activeId ? ' active' : '');
     d.dataset.id = f.id;
 
-// PREVIEW LOGIC
     let previewText = '';
     if (!f._isLoaded) {
         previewText = 'Click to load preview...';
     } else {
-        // Fix: Always prioritize the cached preview we generated during typing
         const rawText = f._cachedPreview || getPreviewText(f.content?.trim() || '');
-        if (!rawText || rawText.length === 0) {
-            previewText = '[Empty note]';
-        } else {
+        if (!rawText) previewText = '[Empty note]';
+        else {
             const firstLine = rawText.split('\n')[0];
             previewText = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
         }
@@ -3470,7 +3439,18 @@ function renderSidebarNotes() {
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'file-content';
-    contentDiv.innerHTML = `<span class="file-name">${f.name || 'Untitled'}</span><span class="file-preview">${previewText}</span>`;
+    
+    // FIX: Use textContent for name and preview to safely show HTML tags
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'file-name';
+    nameSpan.textContent = f.name || 'Untitled';
+
+    const previewSpan = document.createElement('span');
+    previewSpan.className = 'file-preview';
+    previewSpan.textContent = previewText;
+
+    contentDiv.appendChild(nameSpan);
+    contentDiv.appendChild(previewSpan);
 
     const moreBtn = document.createElement('button');
     moreBtn.className = 'more-btn';
@@ -3491,7 +3471,6 @@ function renderSidebarNotes() {
     noteContainer.appendChild(d);
   });
 }
-
 
 
 
