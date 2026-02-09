@@ -554,9 +554,9 @@ async function createDefaultCategories() {
  */
 function selectCategory(categoryIdentifier, shouldSelectFile = true) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+    if (previewMode) exitPreviewMode();
     state.activeCategoryId = categoryIdentifier;
     
-    // 1. Resolve IDs (PocketBase UUID vs Local String ID)
     let pbCategoryId = categoryIdentifier; 
     let localCategoryIdentifier = categoryIdentifier; 
 
@@ -568,31 +568,25 @@ function selectCategory(categoryIdentifier, shouldSelectFile = true) {
         }
     }
     
-    // 2. Filter notes belonging to this category
     const notesInCategory = state.files
         .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier) 
         .sort((a, b) => new Date(b.updated) - new Date(a.updated));
 
-    // 3. Handle selection of the first note in the category
     if (shouldSelectFile) {
         if (notesInCategory.length > 0) {
-            // Re-use selectFile to handle: visual selection, decryption, 
-            // editor loading, Note Info tab, and Version History tab.
             selectFile(notesInCategory[0].id);
         } else {
-            // No notes in category: Clear everything
+            // No notes left: Clear IDs and call loadActiveToEditor to lock the UI
             state.activeId = null;
-            document.getElementById('textEditor').value = '';
-            if (tiptapEditor) tiptapEditor.commands.setContent('<p></p>');
+            loadActiveToEditor();
             
-            // Explicitly clear sidebar tabs
+            // Clear sidebar tabs
             updateSidebarInfo(null);
             const vList = document.getElementById('versionList');
             if (vList) vList.innerHTML = '<li class="muted">No note selected.</li>';
         }
     }
 
-    // 4. Update the sidebar list UI
     finalizeUIUpdate();
 }
 
@@ -681,30 +675,20 @@ async function createFileOnServer(tempId, name, targetCategoryId) {
       iv: arrayToB64(iv),
       authTag: arrayToB64(authTag),
       encryptedBlob: arrayToB64(ciphertext),
+      editor: 'plain', // Default to plain for new notes
       lastEditor: SESSION_ID
     }, { requestKey: null });
 
     const tempFile = state.files.find(f => f.id === tempId);
     if (tempFile) {
       tempFile.id = result.id;
-      // We keep the optimistic "updated" time if the server time is somehow older
-      // to prevent the note from jumping down after the server response.
       const serverTime = new Date(result.updated).getTime();
       const localTime = new Date(tempFile.updated).getTime();
-      
-      if (serverTime > localTime) {
-          tempFile.updated = result.updated;
-      }
-      
+      if (serverTime > localTime) tempFile.updated = result.updated;
       tempFile.created = result.created;
-      
-      if (state.activeId === tempId) {
-        state.activeId = result.id;
-      }
+      if (state.activeId === tempId) state.activeId = result.id;
     }
-    
     finalizeUIUpdate();
-    
   } catch (e) {
     if (e.status === 0 || e.isAbort) return;
     state.files = state.files.filter(f => f.id !== tempId);
@@ -788,13 +772,16 @@ async function createCategory(name) {
 async function saveFile(file) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   file.updated = new Date().toISOString();
+  if (file.id.startsWith('temp_')) return;
   
   if (pb.authStore.isValid && derivedKey) {
-    if (file.id.startsWith('temp_')) return;
     try {
         const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
         const categoryRecord = state.categories.find(c => c.localId === file.categoryId || c.id === file.categoryId);
         const pbCategoryId = categoryRecord?.id || file.categoryId;
+
+        // Determine mode to send to server for validation
+        const editorMode = isRichMode ? 'rich' : 'plain';
 
         await pb.collection('files').update(file.id, {
           name: file.name,
@@ -802,9 +789,15 @@ async function saveFile(file) {
           iv: arrayToB64(iv),
           authTag: arrayToB64(authTag),
           encryptedBlob: arrayToB64(ciphertext),
-          lastEditor: SESSION_ID
+          editor: editorMode, // Sent for backend plan validation
+          lastEditor: SESSION_ID 
         });
-    } catch (e) { console.error(e); }
+    } catch (e) { 
+        if (e.status === 400 || e.status === 403) {
+            showToast("Premium feature: Rich text requires a Pro plan.");
+        }
+        console.error(e); 
+    }
   } else {
     guestStorage.saveData({ categories: state.categories, files: state.files });
   }
@@ -1009,10 +1002,13 @@ async function createVersionSnapshot(pb, derivedKey, fileId, content, editorMode
       encryptedBlob: arrayToB64(ciphertext),
       iv: arrayToB64(iv),
       authTag: arrayToB64(authTag),
-      editor: editorMode || 'plain',
-      lastEditor: SESSION_ID // <--- ADDED
+      editor: editorMode || 'plain', // Enforced by versions collection rule
+      lastEditor: SESSION_ID
     });
-  } catch (err) { console.error(err); throw err; }
+  } catch (err) { 
+    console.error("Version snapshot failed:", err); 
+    throw err; 
+  }
 }
 
 
@@ -1561,13 +1557,31 @@ function loadActiveToEditor() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
   const f = state.files.find(x => x.id === state.activeId);
-  const newContent = (f && f.content !== null) ? f.content : '';
+  
+  // CASE: No Note Selected (Empty State)
+  if (!f) {
+    const textarea = document.getElementById('textEditor');
+    if (textarea) {
+      textarea.value = '';
+      textarea.disabled = true;
+      textarea.placeholder = "Select or create a note to start writing...";
+    }
+
+    if (tiptapEditor) {
+      tiptapEditor.setOptions({ editable: false });
+      tiptapEditor.commands.setContent('');
+    }
+
+    originalContent = '';
+    return; // Exit early
+  }
+
+  // CASE: Note Selected (Normal Loading)
+  const newContent = f.content !== null ? f.content : '';
 
   if (isUserPremium()) {
-    if (newContent.trim().startsWith('{"type":"doc"')) {
-      isRichMode = true;
-    } else if (newContent.trim().length > 0) {
-      isRichMode = false;
+    if (f.editor) {
+      isRichMode = (f.editor === 'rich');
     } else {
       isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; 
     }
@@ -1578,7 +1592,6 @@ function loadActiveToEditor() {
   applyEditorMode(); 
   updateEditorModeUI();
 
-  // UNLOCK PLAIN TEXT EDITOR
   const textarea = document.getElementById('textEditor');
   if (textarea) {
     textarea.value = newContent;
@@ -1586,7 +1599,6 @@ function loadActiveToEditor() {
     textarea.placeholder = "Write or edit your text here...";
   }
 
-  // UNLOCK & LOAD RICH TEXT EDITOR
   if (tiptapEditor) {
     tiptapEditor.setOptions({ editable: true });
     
@@ -1719,87 +1731,7 @@ function updateSidebarInfo(file = null) {
     infoShare.onclick = () => openShareModal(file.id);
   }
 }
-async function saveVersionIfChanged() {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  const file = state.files.find(f => f.id === state.activeId);
-  if (!file || !file._isLoaded) return;
 
-  let currentContent = '';
-  let versionMode = 'plain'; 
-  let isEmpty = false;
-
-  if (isRichMode && tiptapEditor) {
-    isEmpty = tiptapEditor.isEmpty;
-    currentContent = JSON.stringify(tiptapEditor.getJSON());
-    versionMode = 'rich';
-  } else {
-    const rawVal = document.getElementById('textEditor').value;
-    isEmpty = !rawVal || rawVal.trim().length === 0;
-    currentContent = rawVal;
-    versionMode = 'plain';
-  }
-
-  if (currentContent === originalContent || isEmpty) return;
-  if (isSavingVersion) return;
-  
-  isSavingVersion = true;
-
-  try {
-    const tempId = `temp_version_${Date.now()}`;
-    const tempVersion = {
-        id: tempId,
-        created: new Date().toISOString(),
-        content: originalContent,
-        editor: versionMode,
-        _cachedPreview: getPreviewText(originalContent)
-    };
-    
-    if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
-    file.versionsMetadataCache.unshift(tempVersion);
-    
-    const historyPanel = document.getElementById('version-history');
-    if (historyPanel && historyPanel.classList.contains('active')) {
-      renderVersionList(file, file.versionsMetadataCache);
-    }
-    
-    if (pb.authStore.isValid && derivedKey) {
-      createVersionSnapshot(pb, derivedKey, file.id, originalContent, versionMode)
-        .then(result => {
-          const idx = file.versionsMetadataCache.findIndex(v => v.id === tempId);
-          if (idx !== -1) {
-              file.versionsMetadataCache[idx] = {
-                  id: result.id, created: result.created, content: originalContent, editor: versionMode
-              };
-          }
-          finalizeUIUpdate();
-        })
-        .catch(e => {
-          console.error('Version save failed:', e);
-          file.versionsMetadataCache = file.versionsMetadataCache.filter(v => v.id !== tempId);
-          finalizeUIUpdate();
-        });
-    } else {
-      // GUEST MODE FIX: Immediately replace the 'temp' ID with a 'final' ID so it stops showing "Saving..."
-      const finalGuestId = `ver_${Date.now()}`;
-      tempVersion.id = finalGuestId;
-      
-      if (!file.versions) file.versions = [];
-      file.versions.unshift({...tempVersion});
-      guestStorage.saveData({ categories: state.categories, files: state.files });
-      
-      if (historyPanel && historyPanel.classList.contains('active')) {
-          renderVersionList(file, file.versionsMetadataCache);
-      }
-    }
-
-    originalContent = currentContent;
-    
-  } catch (e) {
-    console.error('Version save failed:', e);
-  } finally {
-    isSavingVersion = false;
-  }
-}
 
 function updateOriginalContent() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
@@ -1984,9 +1916,175 @@ function setToolbarVisibility(visible) {
   });
 }
 
+function setupEditorSwitching() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  const dropdownGroups = [
+      { trigger: 'editorModeTriggerPlain', menu: 'editorModeDropdownPlain' },
+      { trigger: 'editorModeTriggerRich', menu: 'editorModeDropdownRich' },
+      { trigger: 'toolsMenuBtn', menu: 'toolsDropdown' }
+  ];
+
+  dropdownGroups.forEach(group => {
+      const btn = document.getElementById(group.trigger);
+      const menu = document.getElementById(group.menu);
+      if (btn && menu) {
+          btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              dropdownGroups.forEach(g => {
+                  const otherMenu = document.getElementById(g.menu);
+                  if (otherMenu && otherMenu !== menu) otherMenu.classList.add('hidden');
+              });
+              menu.classList.toggle('hidden');
+          });
+      }
+  });
+
+  window.addEventListener('click', () => {
+      dropdownGroups.forEach(group => {
+          const menu = document.getElementById(group.menu);
+          if (menu) menu.classList.add('hidden');
+      });
+  });
+
+  const options = document.querySelectorAll('.mode-option');
+  const textarea = document.getElementById('textEditor');
+
+  options.forEach(opt => {
+    opt.addEventListener('click', async () => {
+      const targetMode = opt.getAttribute('data-mode');
+
+      if (targetMode === 'rich') {
+        if (!isUserPremium()) {
+           showRichPreviewModal(); 
+           return; 
+        }
+        if (isRichMode) return; 
+
+        // Save current plain state as a version before converting
+        await saveVersionIfChanged();
+
+        const raw = textarea.value;
+        try {
+           const json = JSON.parse(raw);
+           if (json.type === 'doc') tiptapEditor.commands.setContent(json);
+           else throw new Error();
+        } catch(e) {
+           const lines = raw.split('\n');
+           tiptapEditor.commands.setContent({
+               type: 'doc',
+               content: lines.map(line => ({
+                   type: 'paragraph',
+                   content: line ? [{ type: 'text', text: line }] : [] 
+               }))
+           });
+        }
+
+        isRichMode = true;
+        updateEditorModeUI();
+        const newJson = JSON.stringify(tiptapEditor.getJSON());
+        handleAutoSave(newJson);
+        originalContent = newJson; // Sync tracking base
+      }
+      else if (targetMode === 'plain') {
+        if (!isRichMode) return; 
+        if(!confirm("Switching to Plain Text will remove all formatting. Continue?")) return;
+
+        // Save current rich state as a version before converting
+        await saveVersionIfChanged();
+
+        const cleanText = tiptapEditor.getText({ blockSeparator: "\n" });
+        textarea.value = cleanText;
+
+        isRichMode = false;
+        updateEditorModeUI();
+        handleAutoSave(cleanText);
+        originalContent = cleanText; // Sync tracking base
+      }
+    });
+  });
+}
+
+async function saveVersionIfChanged() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const file = state.files.find(f => f.id === state.activeId);
+  if (!file || !file._isLoaded) return;
+
+  let currentContent = '';
+  let versionMode = isRichMode ? 'rich' : 'plain'; 
+  let isEmpty = false;
+
+  if (isRichMode && tiptapEditor) {
+    isEmpty = tiptapEditor.isEmpty;
+    currentContent = JSON.stringify(tiptapEditor.getJSON());
+  } else {
+    const rawVal = document.getElementById('textEditor').value;
+    isEmpty = !rawVal || rawVal.trim().length === 0;
+    currentContent = rawVal;
+  }
+
+  if (currentContent === originalContent || isEmpty) return;
+  if (isSavingVersion) return;
+  
+  isSavingVersion = true;
+
+  try {
+    const tempId = `temp_version_${Date.now()}`;
+    const backupContent = originalContent; // The version is a snapshot of the OLD state
+    
+    // Detection logic to ensure metadata matches content exactly
+    const actualEditorMode = backupContent.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain';
+
+    const tempVersion = {
+        id: tempId,
+        created: new Date().toISOString(),
+        content: backupContent,
+        editor: actualEditorMode,
+        _cachedPreview: getPreviewText(backupContent)
+    };
+    
+    if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
+    file.versionsMetadataCache.unshift(tempVersion);
+    
+    if (document.getElementById('version-history')?.classList.contains('active')) {
+      renderVersionList(file, file.versionsMetadataCache);
+    }
+    
+    if (pb.authStore.isValid && derivedKey) {
+      createVersionSnapshot(pb, derivedKey, file.id, backupContent, actualEditorMode)
+        .then(result => {
+          const idx = file.versionsMetadataCache.findIndex(v => v.id === tempId);
+          if (idx !== -1) {
+              file.versionsMetadataCache[idx] = {
+                  id: result.id, created: result.created, content: backupContent, editor: actualEditorMode
+              };
+          }
+          finalizeUIUpdate();
+        })
+        .catch(e => {
+          file.versionsMetadataCache = file.versionsMetadataCache.filter(v => v.id !== tempId);
+          finalizeUIUpdate();
+        });
+    } else {
+      const finalGuestId = `ver_${Date.now()}`;
+      tempVersion.id = finalGuestId;
+      if (!file.versions) file.versions = [];
+      file.versions.unshift({...tempVersion});
+      guestStorage.saveData({ categories: state.categories, files: state.files });
+      finalizeUIUpdate();
+    }
+
+    originalContent = currentContent;
+    
+  } catch (e) {
+    console.error('Version save failed:', e);
+  } finally {
+    isSavingVersion = false;
+  }
+}
+
 function enterPreviewMode(version) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  // Capture original state
   if (originalBeforePreview === '') {
     originalBeforePreview = isRichMode && tiptapEditor 
       ? JSON.stringify(tiptapEditor.getJSON())
@@ -1994,19 +2092,11 @@ function enterPreviewMode(version) {
     originalEditorMode = isRichMode;
   }
 
-  // Determine version mode and ensure it has editor property
-  const versionIsRich = version.editor === 'rich' || 
-    (!version.editor && version.content.trim().startsWith('{"type":"doc"'));
+  // Robust Detection: Prioritize content structure over metadata label to avoid JSON-in-Plain bug
+  const versionIsRich = version.content.trim().startsWith('{"type":"doc"') || version.editor === 'rich';
 
-  // Set editor property if missing
-  if (!version.editor) {
-    version.editor = versionIsRich ? 'rich' : 'plain';
-  }
-
-  // Hide toolbars
   setToolbarVisibility(false);
 
-  // Show the correct wrapper and load content
   const plainWrap = document.getElementById('plainWrapper');
   const richWrap = document.getElementById('richWrapper');
 
@@ -2017,7 +2107,7 @@ function enterPreviewMode(version) {
     try {
       tiptapEditor.commands.setContent(JSON.parse(version.content));
     } catch(e) {
-      tiptapEditor.commands.setContent(`<p>${version.content}</p>`);
+      tiptapEditor.commands.setContent(version.content);
     }
     
     tiptapEditor.setOptions({ editable: false });
@@ -2032,57 +2122,118 @@ function enterPreviewMode(version) {
     textarea.classList.add('preview-mode');
   }
 
-  // Create banner
   createPreviewBanner(version.created);
-
   previewMode = true;
   previewVersion = version;
 }
 
-// And update exitPreviewMode to restore editability:
 function exitPreviewMode() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  // Restore original mode
+  
+  // 1. Restore original mode state
   isRichMode = originalEditorMode;
-  applyEditorMode();
 
-  // Restore content
-  if (isRichMode) {
-    try {
-      const json = JSON.parse(originalBeforePreview);
-      tiptapEditor.commands.setContent(json);
-    } catch(e) {
-      const lines = originalBeforePreview.split('\n');
-      const docStructure = {
-        type: 'doc',
-        content: lines.map(line => ({
-          type: 'paragraph',
-          content: line ? [{ type: 'text', text: line }] : []
-        }))
-      };
-      tiptapEditor.commands.setContent(docStructure);
-    }
-    
-    // CRITICAL: Restore editability
-    tiptapEditor.setOptions({ editable: true });
-    document.querySelector('.ProseMirror')?.classList.remove('preview-mode');
-    document.querySelector('.ProseMirror')?.setAttribute('contenteditable', 'true');
-  } else {
-    document.getElementById('textEditor').value = originalBeforePreview;
-  }
-
-  // Clean up preview state
-  document.getElementById('textEditor').disabled = false;
-  document.getElementById('textEditor').classList.remove('preview-mode');
-
-  // Remove banner and show toolbars
+  // 2. Global UI Cleanup (Do this regardless of mode)
   document.getElementById('previewBanner')?.remove();
   setToolbarVisibility(true);
+  
+  // 3. Clean up Plain Editor
+  const textarea = document.getElementById('textEditor');
+  if (textarea) {
+    textarea.disabled = false;
+    textarea.classList.remove('preview-mode');
+  }
 
-  // Reset state
+  // 4. Clean up Rich Editor (Crucial: do this even if switching to plain)
+  if (tiptapEditor) {
+    tiptapEditor.setOptions({ editable: true });
+    // Remove the class from the DOM element directly
+    const proseMirrorEl = document.querySelector('.ProseMirror');
+    if (proseMirrorEl) {
+      proseMirrorEl.classList.remove('preview-mode');
+      proseMirrorEl.setAttribute('contenteditable', 'true');
+    }
+  }
+
+  // 5. Restore Content
+  if (isRichMode) {
+    try {
+      tiptapEditor.commands.setContent(JSON.parse(originalBeforePreview));
+    } catch(e) {
+      tiptapEditor.commands.setContent(originalBeforePreview);
+    }
+  } else if (textarea) {
+    textarea.value = originalBeforePreview;
+  }
+
+  // 6. Final UI Sync
+  applyEditorMode();
+  updateEditorModeUI();
+
+  // 7. Reset State
   previewMode = false;
   previewVersion = null;
   originalBeforePreview = '';
+  originalEditorMode = null;
+}
+
+async function selectFile(id) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  // 1. EXIT PREVIEW FIRST
+  if (previewMode) {
+    exitPreviewMode();
+    // Force a visual reset of any remaining preview artifacts
+    document.getElementById('previewBanner')?.remove();
+  }
+
+  // 2. INSTANT VISUAL SELECTION
+  state.activeId = id;
+  document.querySelectorAll('.file-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.id === id);
+  });
+
+  const file = state.files.find(f => f.id === id);
+  if (!file) return;
+
+  // 3. LOCK EDITOR DURING POTENTIAL DECRYPTION
+  // We do this to prevent editing while lazy-loading
+  if (tiptapEditor) tiptapEditor.setOptions({ editable: false });
+  const textarea = document.getElementById('textEditor');
+  if (textarea) {
+    textarea.disabled = true;
+    textarea.placeholder = "Decrypting note...";
+  }
+
+  // 4. ASYNC DECRYPTION
+  if (!file._isLoaded && !file.id.startsWith('temp_')) {
+      const itemEl = document.querySelector(`.file-item[data-id="${id}"] .file-preview`);
+      if (itemEl) itemEl.textContent = "Decrypting...";
+      
+      await loadNoteDetails(id);
+      
+      if (itemEl) {
+          const rawText = file._cachedPreview || getPreviewText(file.content?.trim() || '');
+          const firstLine = rawText.split('\n')[0] || '[Empty note]';
+          itemEl.textContent = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
+      }
+  }
+
+  // 5. UNLOCK & LOAD EDITOR (This sets editable to true)
+  loadActiveToEditor();
+  updateSidebarInfo(file);
+
+  // 6. UPDATE TABS
+  const historyPanel = document.getElementById('version-history');
+  if (historyPanel && historyPanel.classList.contains('active')) {
+      if (file.versionsMetadataCache) {
+          renderVersionList(file, file.versionsMetadataCache);
+      } else if (pb.authStore.isValid && !file.id.startsWith('temp_')) {
+          updateVersionHistory(file);
+      } else {
+          renderVersionList(file, []);
+      }
+  }
 }
 
 // Simplified createPreviewBanner
@@ -2131,48 +2282,71 @@ async function handleRestore() {
   try {
     const contentToRestore = versionToRestore.content;
     const restorePreview = versionToRestore._cachedPreview;
-    const editorMode = versionToRestore.editor || (contentToRestore.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain');
     
-    // 1. Create a backup of the current content before we overwrite it
+    // 1. Detect the mode of the version we are restoring
+    const restoredMode = versionToRestore.editor || (contentToRestore.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain');
+    
+    // 2. Create a backup of the current content before we overwrite it
     const tempBackupId = `temp_version_${Date.now()}`;
     const backupVersion = {
         id: tempBackupId,
         created: new Date().toISOString(),
         content: file.content,
-        editor: isRichMode ? 'rich' : 'plain',
+        editor: file.editor || (isRichMode ? 'rich' : 'plain'),
         _cachedPreview: file._cachedPreview || getPreviewText(file.content)
     };
 
-    // 2. UNIFY: Add the backup to the top of the history list
+    // 3. Update the local state metadata
     if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
     file.versionsMetadataCache.unshift(backupVersion);
 
-    // 3. Update the active file locally
     file.content = contentToRestore;
     file.updated = new Date().toISOString();
+    file.editor = restoredMode; // Update metadata to match restored version
     file._cachedPreview = restorePreview;
 
-    // 4. Exit preview and sync UI
-    exitPreviewMode();
+    // 4. MANUAL EXIT PREVIEW (Instead of exitPreviewMode to prevent mode reversion)
+    previewMode = false;
+    previewVersion = null;
+    originalBeforePreview = ''; 
     
-    if (editorMode === 'rich') {
-      isRichMode = true;
-      updateEditorModeUI();
-      try { tiptapEditor.commands.setContent(JSON.parse(contentToRestore)); }
-      catch(e) { tiptapEditor.commands.setContent(contentToRestore); }
+    // Remove Banner and UI Locks
+    document.getElementById('previewBanner')?.remove();
+    setToolbarVisibility(true);
+    
+    const textarea = document.getElementById('textEditor');
+    if (textarea) {
+        textarea.disabled = false;
+        textarea.classList.remove('preview-mode');
+    }
+    
+    if (tiptapEditor) {
+        tiptapEditor.setOptions({ editable: true });
+        document.querySelector('.ProseMirror')?.classList.remove('preview-mode');
+    }
+
+    // 5. Apply the Restored Mode
+    isRichMode = (restoredMode === 'rich');
+    applyEditorMode();
+    updateEditorModeUI();
+
+    // 6. Load Restored Content
+    if (isRichMode) {
+      try { 
+        tiptapEditor.commands.setContent(JSON.parse(contentToRestore)); 
+      } catch(e) { 
+        tiptapEditor.commands.setContent(contentToRestore); 
+      }
     } else {
-      isRichMode = false;
-      updateEditorModeUI();
       document.getElementById('textEditor').value = contentToRestore;
     }
     
     originalContent = contentToRestore;
 
-    // 5. Background Sync
+    // 7. Background Sync
     await saveFile(file);
     
     if (pb.authStore.isValid && derivedKey) {
-        // Create the backup version on server
         createVersionSnapshot(pb, derivedKey, file.id, backupVersion.content, backupVersion.editor)
             .then(result => {
                 const idx = file.versionsMetadataCache.findIndex(v => v.id === tempBackupId);
@@ -2184,6 +2358,13 @@ async function handleRestore() {
                 finalizeUIUpdate();
             })
             .catch(e => console.error("Backup snapshot failed:", e));
+    } else {
+        // Guest Logic: Finalize the backup version ID
+        const finalGuestId = `ver_${Date.now()}`;
+        backupVersion.id = finalGuestId;
+        if (!file.versions) file.versions = [];
+        file.versions.unshift({...backupVersion});
+        guestStorage.saveData({ categories: state.categories, files: state.files });
     }
 
     showToast(`Restored version from ${formatDate(versionToRestore.created)}`);
@@ -2703,121 +2884,7 @@ function initTiptap() {
   setupTiptapButtons();
 }
 
-function setupEditorSwitching() {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  
-  // 1. GENERIC DROPDOWN LOGIC (Handles Editor Mode AND Tools Menu)
-  const dropdownGroups = [
-      { trigger: 'editorModeTriggerPlain', menu: 'editorModeDropdownPlain' },
-      { trigger: 'editorModeTriggerRich', menu: 'editorModeDropdownRich' },
-      { trigger: 'toolsMenuBtn', menu: 'toolsDropdown' }
-  ];
 
-  dropdownGroups.forEach(group => {
-      const btn = document.getElementById(group.trigger);
-      const menu = document.getElementById(group.menu);
-
-      if (btn && menu) {
-          btn.addEventListener('click', (e) => {
-              e.stopPropagation();
-              
-              // Close ALL other dropdowns first
-              dropdownGroups.forEach(g => {
-                  const otherMenu = document.getElementById(g.menu);
-                  if (otherMenu && otherMenu !== menu) {
-                      otherMenu.classList.add('hidden');
-                  }
-              });
-
-              // Toggle the specific menu
-              menu.classList.toggle('hidden');
-              
-              // If we just opened the Tools menu, we might want to attach listeners to its items
-              if (!menu.classList.contains('hidden') && group.trigger === 'toolsMenuBtn') {
-                  const toolBtns = menu.querySelectorAll('button');
-                  toolBtns.forEach(b => {
-                      b.onclick = () => menu.classList.add('hidden');
-                  });
-              }
-          });
-      }
-  });
-
-  // 2. GLOBAL CLOSE (Clicking outside closes everything)
-  window.addEventListener('click', () => {
-      dropdownGroups.forEach(group => {
-          const menu = document.getElementById(group.menu);
-          if (menu) menu.classList.add('hidden');
-      });
-  });
-
-  // 3. EDITOR MODE SPECIFIC LOGIC (Handling the Plain/Rich switch)
-  const options = document.querySelectorAll('.mode-option');
-  const textarea = document.getElementById('textEditor');
-
-  options.forEach(opt => {
-    opt.addEventListener('click', () => {
-      const targetMode = opt.getAttribute('data-mode');
-
-      // Close all dropdowns after selection
-      dropdownGroups.forEach(group => {
-        const menu = document.getElementById(group.menu);
-        if (menu) menu.classList.add('hidden');
-      });
-
-      // --- CASE A: SWITCHING TO RICH ---
-      if (targetMode === 'rich') {
-        if (!isUserPremium()) {
-           showRichPreviewModal(); 
-           return; 
-        }
-
-        if (isRichMode) return; 
-
-        const raw = textarea.value;
-        
-        try {
-           const json = JSON.parse(raw);
-           if (json.type === 'doc') {
-               tiptapEditor.commands.setContent(json);
-           } else {
-               throw new Error("Not a doc");
-           }
-        } catch(e) {
-           const lines = raw.split('\n');
-           const docStructure = {
-               type: 'doc',
-               content: lines.map(line => ({
-                   type: 'paragraph',
-                   content: line ? [{ type: 'text', text: line }] : [] 
-               }))
-           };
-           tiptapEditor.commands.setContent(docStructure);
-        }
-
-        isRichMode = true;
-        updateEditorModeUI();
-        handleAutoSave(JSON.stringify(tiptapEditor.getJSON()));
-      }
-
-      // --- CASE B: SWITCHING TO PLAIN ---
-      else if (targetMode === 'plain') {
-        if (!isRichMode) return; 
-
-        if(!confirm("Switching to Plain Text will remove all formatting (images, colors). Continue?")) return;
-
-        const cleanText = tiptapEditor.getText({ blockSeparator: "\n" });
-        textarea.value = cleanText;
-
-        isRichMode = false;
-        updateEditorModeUI();
-        textarea.dispatchEvent(new Event('input'));
-      }
-    });
-  });
-  
-  updateEditorModeUI();
-}
 
 function updateEditorModeUI() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
@@ -3056,25 +3123,23 @@ function handleAutoSave(newContent) {
       file.content = newContent;
       file.updated = new Date().toISOString();
       
-      // Update preview cache
+      // Sync the metadata field with current UI state
+      file.editor = isRichMode ? 'rich' : 'plain';
+
       const plainText = getPreviewText(newContent?.trim() || '');
       file._cachedPreview = plainText;
       file._contentLastPreviewed = newContent;
 
-      // 1. INSTANT SIDEBAR TEXT UPDATE
       const previewEl = document.querySelector(`.file-item[data-id="${file.id}"] .file-preview`);
       if (previewEl) {
           const firstLine = plainText.split('\n')[0] || '[Empty note]';
           previewEl.textContent = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
       }
 
-      // 2. SERVER/LOCAL SAVE DEBOUNCE
       clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => saveFile(file), 800);
 
-      // 3. UI SYNC (Ensures history stays visible for Guest)
       finalizeUIUpdate();
-      
       updateSidebarInfo(file);
   }
 }
@@ -3243,7 +3308,7 @@ async function getNoteMetadata() {
     return await pb.collection('files').getFullList({
       filter: `user = "${pb.authStore.model.id}"`,
       sort: '-updated',
-      fields: 'id,name,updated,created,category' // EXCLUDE: iv, authTag, encryptedBlob
+      fields: 'id,name,updated,created,category,editor' // Added editor field
     });
   } catch (e) {
     console.error("Failed to load note metadata", e);
@@ -3306,16 +3371,18 @@ async function loadUserFiles() {
       state.categories = serverCats;
 
       const records = await getNoteMetadata();
-      state.files = records.map(r => ({
-        id: r.id, 
-        name: r.name, 
-        content: null, 
-        created: r.created, 
-        updated: r.updated, 
-        categoryId: r.category,
-        _isLoaded: false, 
-        _cachedPreview: null 
-      }));
+      // Inside loadUserFiles, update the mapping:
+state.files = records.map(r => ({
+    id: r.id, 
+    name: r.name, 
+    content: null, 
+    created: r.created, 
+    updated: r.updated, 
+    categoryId: r.category,
+    editor: r.editor || 'plain', // Store the editor mode
+    _isLoaded: false, 
+    _cachedPreview: null 
+}));
 
     } catch (e) { 
         console.error("PocketBase Load Failed:", e); 
@@ -3425,59 +3492,7 @@ function renderSidebarNotes() {
   });
 }
 
-async function selectFile(id) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  if (previewMode) exitPreviewMode();
 
-  // 1. INSTANT VISUAL SELECTION
-  state.activeId = id;
-  document.querySelectorAll('.file-item').forEach(el => {
-      el.classList.toggle('active', el.dataset.id === id);
-  });
-
-  const file = state.files.find(f => f.id === id);
-  if (!file) return;
-
-  // 2. LOCK EDITOR DURING DECRYPTION
-  if (tiptapEditor) tiptapEditor.setOptions({ editable: false });
-  const textarea = document.getElementById('textEditor');
-  if (textarea) {
-    textarea.disabled = true;
-    textarea.placeholder = "Decrypting note...";
-  }
-
-  // 3. ASYNC DECRYPTION (Only if needed for server notes)
-  if (!file._isLoaded && !file.id.startsWith('temp_')) {
-      const itemEl = document.querySelector(`.file-item[data-id="${id}"] .file-preview`);
-      if (itemEl) itemEl.textContent = "Decrypting...";
-      
-      await loadNoteDetails(id);
-      
-      if (itemEl) {
-          const rawText = file._cachedPreview || getPreviewText(file.content?.trim() || '');
-          const firstLine = rawText.split('\n')[0] || '[Empty note]';
-          itemEl.textContent = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
-      }
-  }
-
-  // 4. UNLOCK & LOAD EDITOR
-  loadActiveToEditor();
-  updateSidebarInfo(file);
-
-  // 5. UPDATE TABS (Simplified Unified Fix for Guest and Logged In)
-  const historyPanel = document.getElementById('version-history');
-  if (historyPanel && historyPanel.classList.contains('active')) {
-      // Logic: Use unified cache if available, otherwise fetch from server for PB notes
-      if (file.versionsMetadataCache) {
-          renderVersionList(file, file.versionsMetadataCache);
-      } else if (pb.authStore.isValid && !file.id.startsWith('temp_')) {
-          updateVersionHistory(file);
-      } else {
-          // Fallback for brand new notes or guest notes with no history yet
-          renderVersionList(file, []);
-      }
-  }
-}
 
 
 // Init
