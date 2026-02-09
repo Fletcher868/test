@@ -22,6 +22,14 @@ function createEncryptedBackupHtml(exportData) {
       return Uint8Array.from(atob(str.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
     };
 
+    // --- FIX: HTML Escaping Utility ---
+    const escapeHTML = str => {
+        if (!str) return "";
+        return str.replace(/[&<>"']/g, m => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[m]));
+    };
+
     // 1. Derive MASTER KEY (MK) from Password
     async function deriveMasterKey(password, salt) {
       const baseKey = await crypto.subtle.importKey(
@@ -67,6 +75,7 @@ function createEncryptedBackupHtml(exportData) {
 
     // Main Decryption Logic
     async function decryptData() {
+        console.error('[EXECUTING]', new Error().stack.split('\\n')[1].trim().split(' ')[1]);
         const password = document.getElementById('passwordInput').value;
         const resultDiv = document.getElementById('result');
         const notesContentDiv = document.getElementById('notesContent');
@@ -90,10 +99,8 @@ function createEncryptedBackupHtml(exportData) {
             const salt = b64ToArray(data.encryption.salt);
             const wrappedKeyData = JSON.parse(atob(data.encryption.wrappedKey));
 
-            // Derive Master Key
             const masterKey = await deriveMasterKey(password, salt);
             
-            // Unwrap Data Key (DK) using Master Key (MK)
             const dataKey = await unwrapDataKey({
                 iv: b64ToArray(wrappedKeyData.iv),
                 authTag: b64ToArray(wrappedKeyData.authTag),
@@ -103,9 +110,9 @@ function createEncryptedBackupHtml(exportData) {
             let notesHtml = '';
 
             for (const file of data.files) {
-                let plaintext = ''; // Initialize plaintext
+                let plaintext = '';
                 
-                try { // <--- ADDED TRY BLOCK HERE
+                try {
                     plaintext = await decryptBlob(
                         { 
                             iv: b64ToArray(file.iv), 
@@ -114,31 +121,30 @@ function createEncryptedBackupHtml(exportData) {
                         },
                         dataKey
                     );
-                } catch (e) { // <--- ADDED CATCH BLOCK HERE
-                    console.error("Note decryption failed in export file:", e);
-                    plaintext = '[ERROR: Failed to decrypt this note. The data is likely corrupted.]'; 
+                } catch (e) {
+                    plaintext = '[ERROR: Failed to decrypt this note.]'; 
                 }
                 
+                // --- FIX: Escape Title and Content to prevent rendering HTML tags ---
                 notesHtml += \`
                     <div class="note-card">
                         <div class="note-header">
-                            <span class="note-title">\${file.name}</span>
+                            <span class="note-title">\${escapeHTML(file.name)}</span>
                             <span class="note-date">\${new Date(file.updated).toLocaleDateString()} \${new Date(file.updated).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                         </div>
-                        <pre class="note-content">\${plaintext || '[Empty Note]'}</pre>
+                        <pre class="note-content">\${escapeHTML(plaintext) || '[Empty Note]'}</pre>
                     </div>
                 \`;
             }
 
-            // Success State
-            resultDiv.innerHTML = \`<strong>✅ Decryption Successful!</strong> <p>All \${data.files.length} notes are now visible below.</p>\`;
+            resultDiv.innerHTML = \`<strong>✅ Decryption Successful!</strong> <p>All \${data.files.length} notes are visible below.</p>\`;
             resultDiv.classList.remove('error');
             resultDiv.classList.add('success');
             
             document.getElementById('notesList').innerHTML = notesHtml;
             notesContentDiv.style.display = 'block';
-            decryptBtn.style.display = 'none'; // Hide decrypt button on success
-            document.getElementById('passwordInput').style.display = 'none'; // Hide input
+            decryptBtn.style.display = 'none';
+            document.getElementById('passwordInput').style.display = 'none';
 
         } catch (e) {
             console.error(e);
@@ -149,25 +155,19 @@ function createEncryptedBackupHtml(exportData) {
         }
     }
     
-    // Initialize
     window.onload = () => {
         document.getElementById('decryptBtn').addEventListener('click', decryptData);
         document.getElementById('passwordInput').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') decryptData();
         });
-        
-        // Expose function globally for the onclick attribute
         window.decryptData = decryptData;
     };
   `;
   // =========================================================================
 
-  // Dynamic values for the header
   const totalNotes = exportData.files.length;
   const exportedDate = new Date(exportData.meta.exportedAt).toLocaleString();
 
-
-  // The full HTML structure for the self-contained backup file (FINAL DESIGN)
   return `
 <!doctype html>
 <html lang="en">
@@ -176,340 +176,115 @@ function createEncryptedBackupHtml(exportData) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KryptNote Encrypted Backup</title>
     <style>
-        body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #f8fafc;
-            color: #1e293b;
-        }
-        .container {
-            background: white;
-            border-radius: 12px;
-            padding: 30px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-            border: 1px solid #e2e8f0;
-        }
-        h1 {
-            color: #6366f1;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            border-bottom: 1px solid #e2e8f0;
-            padding-bottom: 15px;
-        }
-        .info-box {
-            background: #f0f9ff;
-            border-left: 4px solid #3b82f6;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 0 8px 8px 0;
-        }
-        .warning-box {
-            background: #fef3c7;
-            border-left: 4px solid #f59e0b;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 0 8px 8px 0;
-        }
-        /* Hidden data box */
-        #encrypted-data {
-             display: none;
-        }
-        
-        input[type="password"] {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #cbd5e1;
-            border-radius: 8px;
-            font-size: 16px;
-            margin: 15px 0 0;
-            box-sizing: border-box;
-        }
-        input[type="password"]:focus {
-            outline: none;
-            border-color: #6366f1;
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
-        }
-        button {
-            background: linear-gradient(135deg, #6366f1, #4f46e5);
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            width: 100%;
-            margin-top: 10px;
-        }
-        button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-        }
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
-        }
-        
-        /* Result Box Styling */
-        #result {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 8px;
-            display: none;
-        }
-        .result.success {
-            background: #d1fae5;
-            border-left: 4px solid #10b981;
-            display: block;
-        }
-        .result.error {
-            background: #fee2e2;
-            border-left: 4px solid #ef4444;
-            display: block;
-        }
-        
-        /* Stats Grid */
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
-        }
-        .stat-box {
-            background: #f8fafc;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-            border: 1px solid #e2e8f0;
-        }
-        .stat-value {
-            font-size: 24px;
-            font-weight: 700;
-            color: #6366f1;
-        }
-        .stat-label {
-            font-size: 12px;
-            color: #64748b;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        /* Notes List Styling */
-        h3 { 
-            color: #1e293b; 
-            margin-top: 30px; 
-            font-weight: 600; 
-            font-size: 20px; 
-        }
-        .note-card { 
-            border: 1px solid #e2e8f0; 
-            padding: 15px; 
-            margin-bottom: 15px; 
-            border-radius: 8px; 
-            background: #fff; 
-        }
-        .note-header { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
-            border-bottom: 1px dashed #f1f5f9; 
-            padding-bottom: 8px; 
-            margin-bottom: 8px; 
-        }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f8fafc; color: #1e293b; }
+        .container { background: white; border-radius: 12px; padding: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border: 1px solid #e2e8f0; }
+        h1 { color: #6366f1; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 15px; }
+        .info-box { background: #f0f9ff; border-left: 4px solid #3b82f6; padding: 15px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+        .warning-box { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+        #encrypted-data { display: none; }
+        input[type="password"] { width: 100%; padding: 12px; border: 2px solid #cbd5e1; border-radius: 8px; font-size: 16px; margin: 15px 0 0; box-sizing: border-box; }
+        input[type="password"]:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2); }
+        button { background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; border: none; padding: 12px 24px; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: all 0.2s ease; width: 100%; margin-top: 10px; }
+        button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        #result { margin-top: 20px; padding: 15px; border-radius: 8px; display: none; }
+        .result.success { background: #d1fae5; border-left: 4px solid #10b981; display: block; }
+        .result.error { background: #fee2e2; border-left: 4px solid #ef4444; display: block; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin: 20px 0; }
+        .stat-box { background: #f8fafc; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #e2e8f0; }
+        .stat-value { font-size: 24px; font-weight: 700; color: #6366f1; }
+        .stat-label { font-size: 12px; color: #64748b; text-transform: uppercase; }
+        h3 { color: #1e293b; margin-top: 30px; font-weight: 600; font-size: 20px; }
+        .note-card { border: 1px solid #e2e8f0; padding: 15px; margin-bottom: 15px; border-radius: 8px; background: #fff; }
+        .note-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed #f1f5f9; padding-bottom: 8px; margin-bottom: 8px; }
         .note-title { font-weight: 600; font-size: 16px; }
         .note-date { font-size: 12px; color: #94a3b8; }
-        .note-content {
-            white-space: pre-wrap;
-            font-family: monospace;
-            font-size: 14px;
-            padding: 10px;
-            background: #f1f5f9;
-            border-radius: 4px;
-            border: 1px solid #e2e8f0;
-            overflow-x: auto;
-        }
+        .note-content { white-space: pre-wrap; font-family: monospace; font-size: 14px; padding: 10px; background: #f1f5f9; border-radius: 4px; border: 1px solid #e2e8f0; overflow-x: auto; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-                <polyline points="17 21 17 13 7 13 7 21"></polyline>
-                <polyline points="7 3 7 8 15 8"></polyline>
-            </svg>
-            KryptNote Encrypted Backup
-        </h1>
-        
-        <div class="info-box">
-            <strong>🔒 Encrypted Backup File</strong>
-            <p>This HTML file contains your notes encrypted with AES-GCM 256-bit. Decryption happens locally in your browser using your KryptNote password.</p>
-        </div>
-        
-        <div class="warning-box">
-            <strong>⚠️ Important Security Notice</strong>
-            <p>
-               • You MUST remember your **KryptNote Password** to decrypt<br>
-               • Created: ${exportedDate}</p>
-        </div>
-        
+        <h1>KryptNote Encrypted Backup</h1>
+        <div class="info-box"><strong>🔒 Encrypted Backup File</strong><p>Decryption happens locally in your browser using your password.</p></div>
+        <div class="warning-box"><strong>⚠️ Notice</strong><p>Created: ${exportedDate}</p></div>
         <div class="stats">
-            <div class="stat-box">
-                <div class="stat-value">${totalNotes}</div>
-                <div class="stat-label">Total Notes</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-value">AES-256</div>
-                <div class="stat-label">Encryption</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-value">E2E</div>
-                <div class="stat-label">Scheme</div>
-            </div>
+            <div class="stat-box"><div class="stat-value">${totalNotes}</div><div class="stat-label">Total Notes</div></div>
+            <div class="stat-box"><div class="stat-value">AES-256</div><div class="stat-label">Encryption</div></div>
         </div>
-        
-        <h3>🔓 Decrypt Your Notes</h3>
-        
-        <input type="password" id="passwordInput" placeholder="Enter your KryptNote password" />
-        
-        <button id="decryptBtn" onclick="decryptData()">Decrypt & View Notes</button>
-        
-        <div id="result" class="result"></div>
-        
-        <div id="notesContent" style="display: none; margin-top: 30px;">
-            <h3>📋 Your Decrypted Notes</h3>
-            <div id="notesList"></div>
-        </div>
+        <input type="password" id="passwordInput" placeholder="Enter password" />
+        <button id="decryptBtn">Decrypt & View Notes</button>
+        <div id="result"></div>
+        <div id="notesContent" style="display: none; margin-top: 30px;"><div id="notesList"></div></div>
     </div>
-    
-    <div id="encrypted-data">
-        <!-- ENCRYPTED DATA JSON EMBEDDED HERE -->
-        ${JSON.stringify(exportData)}
-    </div>
-
-    <script>
-        // Embedded KryptNote Crypto Functions for Standalone Decryption
-        ${CRYPTO_SNIPPET}
-    </script>
+    <div id="encrypted-data">${JSON.stringify(exportData)}</div>
+    <script>${CRYPTO_SNIPPET}</script>
 </body>
 </html>
 `;
 }
 
-/**
- * Initializes the export functionality by setting up the event listener for the export button.
- * This function now first removes any previous handler before adding a new one.
- * 
- * @param {PocketBase} pb - The PocketBase instance.
- * @param {CryptoKey} derivedKey - The active derived (Data) encryption key.
- * @param {function} showToast - Function to display user notifications.
- */
 export function setupExport(pb, derivedKey, showToast) {
+    console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
     const exportBtn = document.getElementById('exportAll');
     if (!exportBtn) return;
 
-    // --- FIX: Remove previous handler to prevent duplicates ---
     if (currentExportHandler) {
         exportBtn.removeEventListener('click', currentExportHandler);
     }
-    // ---------------------------------------------------------
     
-    // Define the new handler function
     const newExportHandler = async () => {
+      console.error('[EXECUTING] exportHandler');
       if (!pb.authStore.isValid || !derivedKey) {
-        showToast('You must be logged in to export encrypted data.', 4000);
+        showToast('You must be logged in to export.', 4000);
         return;
       }
       
-      showToast('Preparing encrypted backup, please wait...', 5000);
+      showToast('Preparing backup...', 5000);
 
       try {
         const user = pb.authStore.model;
-        
-        // --- Fetch Setup (Bypassing getFullList for stability) ---
         const url = pb.baseUrl + `/api/collections/files/records`;
         const params = new URLSearchParams({
             filter: `user = "${user.id}"`, 
-            sort: '-updated', 
-            fields: 'id,name,created,updated,iv,authTag,encryptedBlob',
             perPage: 500,
-            page: 1
+            fields: 'id,name,created,updated,iv,authTag,encryptedBlob'
         });
 
-        const fullUrl = `${url}?${params.toString()}`;
-
-        const response = await fetch(fullUrl, {
-            method: 'GET',
-            headers: {
-                'Authorization': pb.authStore.token, 
-                'Content-Type': 'application/json'
-            }
+        const response = await fetch(`${url}?${params.toString()}`, {
+            headers: { 'Authorization': pb.authStore.token }
         });
-
-        if (!response.ok) {
-            throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
-        }
 
         const data = await response.json();
         const records = data.items;
-        // -------------------
         
         if (records.length === 0) {
-            showToast('No notes found to export.', 4000);
+            showToast('No notes to export.', 4000);
             return;
         }
 
-        // 2. Prepare the data structure
         const exportData = {
-            meta: { 
-                name: user.name, 
-                email: user.email, 
-                exportedAt: new Date().toISOString() 
-            },
-            encryption: { 
-                salt: user.encryptionSalt,
-                wrappedKey: user.wrappedKey
-            },
+            meta: { name: user.name, email: user.email, exportedAt: new Date().toISOString() },
+            encryption: { salt: user.encryptionSalt, wrappedKey: user.wrappedKey },
             files: records.map(r => ({
-                id: r.id, name: r.name, created: r.created, updated: r.updated,
+                id: r.id, name: r.name, updated: r.updated,
                 iv: r.iv, authTag: r.authTag, encryptedBlob: r.encryptedBlob
             }))
         };
         
-        // 3. Generate the self-contained HTML file
-        const htmlContent = createEncryptedBackupHtml(exportData);
-        
-        // 4. Download the HTML file (Includes cleanup)
-        const blob = new Blob([htmlContent], { type: 'text/html' });
+        const blob = new Blob([createEncryptedBackupHtml(exportData)], { type: 'text/html' });
         const a = document.createElement('a');
-        
         a.href = URL.createObjectURL(blob);
-        a.download = `KryptNote_Encrypted_Backup_${new Date().toISOString().slice(0, 10)}.html`;
-        a.style.display = 'none';
-
-        document.body.appendChild(a);
+        a.download = `KryptNote_Backup_${new Date().toISOString().slice(0,10)}.html`;
         a.click();
-        
         URL.revokeObjectURL(a.href); 
-        document.body.removeChild(a); 
-
-        showToast('Encrypted backup downloaded successfully! Keep this file and your password safe.', 6000);
+        showToast('Backup downloaded successfully!');
 
       } catch (e) {
-        console.error("Export failed:", e);
-        showToast('Export failed. An error occurred during the fetch. Check console.', 8000);
+        console.error(e);
+        showToast('Export failed.');
       }
     };
     
-    // Assign the handler and store its reference
     currentExportHandler = newExportHandler;
     exportBtn.addEventListener('click', currentExportHandler);
-
 }
