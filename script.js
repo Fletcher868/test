@@ -3384,21 +3384,30 @@ function getPreviewText(content) {
   if (!content) return '';
 
   try {
-    const json = JSON.parse(content);
-    if (json.type === 'doc' && Array.isArray(json.content)) {
-      const extractText = (node) => {
-        if (node.type === 'text' && node.text) return node.text;
-        if (node.content && Array.isArray(node.content)) {
-          return node.content.map(child => extractText(child)).join(' ');
+    // Optimization: check start char to avoid try/catch overhead on plain text
+    const trimmed = content.trim();
+    if (trimmed.startsWith('{"')) {
+      const json = JSON.parse(content);
+      if (json.type === 'doc' && Array.isArray(json.content)) {
+        let text = '';
+        // Optimization: Only look at the first 5 blocks
+        for (const node of json.content.slice(0, 5)) {
+            if (node.content && Array.isArray(node.content)) {
+                // Simple extraction without recursion for speed
+                text += node.content.map(c => c.text || '').join(' ') + ' ';
+            }
+            // Stop early if we have enough text for a preview
+            if (text.length > 150) break;
         }
-        return '';
-      };
-      return extractText(json);
+        return text.trim();
+      }
     }
   } catch (e) {
-    // Not JSON, return as is
+    // Not JSON, fall through
   }
-  return content;
+  
+  // Return plain text clipped
+  return content.substring(0, 150);
 }
 function renderSidebarNotes() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
