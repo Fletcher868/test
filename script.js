@@ -32,7 +32,7 @@ let previewVersion = null;
 // Auto-save
 let saveTimeout = null;
 let originalBeforePreview = ''; 
-const PB_URL = 'https://repeatedly-pleasant-elk.ngrok-free.app/';
+const PB_URL = 'https://paleontographical-gabrielle-mightiest.ngrok-free.dev/';
 let pb = null, 
     // UPDATE: Added categories and set default active category
     state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK }, 
@@ -771,13 +771,13 @@ async function saveFile(file) {
   if (file.id.startsWith('temp_')) return;
   
   if (pb.authStore.isValid && derivedKey) {
+    // 1. Determine mode explicitly
+    const editorMode = isRichMode ? 'rich' : 'plain';
+
     try {
         const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
         const categoryRecord = state.categories.find(c => c.localId === file.categoryId || c.id === file.categoryId);
         const pbCategoryId = categoryRecord?.id || file.categoryId;
-
-        // Determine mode to send to server for validation
-        const editorMode = isRichMode ? 'rich' : 'plain';
 
         await pb.collection('files').update(file.id, {
           name: file.name,
@@ -789,10 +789,19 @@ async function saveFile(file) {
           lastEditor: SESSION_ID 
         });
     } catch (e) { 
-        if (e.status === 400 || e.status === 403) {
+        // 2. Smart Error Handling
+        // Only blame the "Pro Plan" if we are actually trying to save Rich Text
+        const isLikelyPlanError = (editorMode === 'rich') && (e.status === 400 || e.status === 403);
+        
+        if (isLikelyPlanError) {
             showToast("Premium feature: Rich text requires a Pro plan.");
+        } else if (e.status === 400 || e.status === 413) {
+            // If we are in Plain Text mode, a 400 error is definitely a size limit issue
+            showToast("Save failed: Note exceeds server size limit (Max ~1MB).");
+        } else {
+            showToast("Error saving note to server.");
         }
-        console.error(e); 
+        console.error("Save Error:", e); 
     }
   } else {
     guestStorage.saveData({ categories: state.categories, files: state.files });
@@ -2941,8 +2950,14 @@ function updateTiptapToolbar(editor) {
   }
 }
 
+// Add a property to the function itself to track if it has run
 function setupTiptapButtons() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+
+  // 🔥 FIX: Guard clause to ensure listeners are added ONLY ONCE
+  if (setupTiptapButtons.isInitialized) return;
+  setupTiptapButtons.isInitialized = true;
+
   // 1. Specialized Handler for History (Undo/Redo)
   const setupHistoryBtn = (id, action) => {
     const btn = document.getElementById(id);
@@ -2953,13 +2968,10 @@ function setupTiptapButtons() {
       e.stopPropagation(); // Stop bubbling
       
       // Force focus back to editor immediately
-      tiptapEditor.view.focus();
-      
-      // Execute command
-      if (action === 'undo') {
-        tiptapEditor.commands.undo();
-      } else {
-        tiptapEditor.commands.redo();
+      if (tiptapEditor) {
+         tiptapEditor.view.focus();
+         if (action === 'undo') tiptapEditor.commands.undo();
+         else tiptapEditor.commands.redo();
       }
     });
   };
@@ -2974,8 +2986,7 @@ function setupTiptapButtons() {
     
     btn.addEventListener('mousedown', (e) => {
       e.preventDefault(); // Stop focus loss
-      // Chain allows keeping selection state valid
-      callback(tiptapEditor.chain().focus()); 
+      if (tiptapEditor) callback(tiptapEditor.chain().focus()); 
     });
   };
 
@@ -2997,28 +3008,23 @@ function setupTiptapButtons() {
 
   // --- SPECIAL INPUTS ---
   
-  // Color Picker (FIXED)
+  // Color Picker
   const colorInput = document.getElementById('ttColor');
   if (colorInput) {
-      // 1. Intercept the click to prevent the editor from losing focus (and selection)
       colorInput.addEventListener('mousedown', (e) => {
           e.preventDefault(); 
-          // Manually trigger the click after a tiny delay so the browser opens the picker
-          // without blurring the text editor field.
-          setTimeout(() => {
-             colorInput.click();
-          }, 10);
+          setTimeout(() => { colorInput.click(); }, 10);
       });
 
-      // 2. Apply the color
       colorInput.addEventListener('input', (e) => {
-          tiptapEditor.chain().focus().setColor(e.target.value).run();
+          if(tiptapEditor) tiptapEditor.chain().focus().setColor(e.target.value).run();
       });
   }
   
   // Link
   document.getElementById('ttLink')?.addEventListener('mousedown', (e) => {
     e.preventDefault();
+    if (!tiptapEditor) return;
     const previousUrl = tiptapEditor.getAttributes('link').href;
     setTimeout(() => {
         const url = window.prompt('URL', previousUrl);
@@ -3036,7 +3042,7 @@ function setupTiptapButtons() {
     e.preventDefault();
     setTimeout(() => {
         const url = window.prompt('Image URL');
-        if (url) {
+        if (url && tiptapEditor) {
             tiptapEditor.chain().focus().setImage({ src: url }).run();
         }
     }, 10);
@@ -3055,6 +3061,8 @@ function setupTiptapButtons() {
       dropdown.querySelectorAll('.dropdown-item').forEach(item => {
           item.addEventListener('mousedown', (e) => {
               e.preventDefault(); 
+              if (!tiptapEditor) return;
+
               const level = parseInt(e.target.getAttribute('data-level'));
               if (level === 0) {
                   tiptapEditor.chain().focus().setParagraph().run();
