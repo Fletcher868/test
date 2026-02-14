@@ -199,7 +199,8 @@ async function initPocketBase() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   pb = new PocketBase(PB_URL);
 
-  initTiptap();
+  // REMOVED: initTiptap(); -> Now lazy loaded via ensureTiptap() when needed
+  
   setupEditorSwitching();
 
   // 1. Network Sync (Fresh Auth & Data)
@@ -367,7 +368,6 @@ async function signup(name, email, password) {
 }
 
 
-
 function logout() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (previewMode) {
@@ -384,6 +384,8 @@ function logout() {
   sessionStorage.removeItem('dataKey');
   derivedKey = null;
   
+  destroyTiptap(); // <--- CLEANUP
+  
   state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK };
   previewMode = false;
   previewVersion = null;
@@ -393,10 +395,6 @@ function logout() {
   const editor = document.getElementById('textEditor');
   if (editor) editor.value = '';
 
-  if (tiptapEditor) {
-      tiptapEditor.commands.setContent('');
-  }
-  
   loadUserFiles();
   updateProfileState();
   updateVersionFooter();
@@ -895,74 +893,56 @@ async function deleteFile(id) {
   const file = state.files.find(f => f.id === id);
   if (!file) return;
 
-  // 1. Identify the Trash Category System ID
-  const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH; // "trash"
+  const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH; 
   const trashCat = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
-  
-  // On server, we need the UUID (cat.id). On guest, we use "trash".
   const trashSystemId = pb.authStore.isValid ? trashCat?.id : trashIdentifier;
-
-  // 2. Check if the note is already in the trash
   const isInTrash = file.categoryId === trashSystemId || file.categoryId === trashIdentifier;
 
   if (isInTrash) {
-    // === HARD DELETE (Already in Trash) ===
-    if (!confirm(`Permanently delete "${file.name}"? This cannot be undone.`)) return;
+    // === HARD DELETE ===
+    if (!confirm(`Permanently delete "${file.name}"?`)) return;
 
-    // Optimistic UI update: Remove from local state immediately
     state.files = state.files.filter(f => f.id !== id);
-    if (state.activeId === id) state.activeId = null;
+    if (state.activeId === id) {
+        state.activeId = null;
+        destroyTiptap(); // <--- CLEANUP
+    }
 
     if (pb.authStore.isValid && !id.startsWith('temp_')) {
-      try {
-        await pb.collection('files').delete(id);
-      } catch (e) {
-        console.error("Failed to delete from server:", e);
-        showToast("Server delete failed. Please refresh.");
-      }
+      try { await pb.collection('files').delete(id); } catch (e) { console.error(e); }
     }
     showToast("Permanently deleted.");
   } 
   else {
-    // === SOFT DELETE (Move to Trash) ===
+    // === SOFT DELETE ===
     const oldCategoryId = file.categoryId;
-    file.categoryId = trashSystemId; // Move it
+    file.categoryId = trashSystemId; 
     file.updated = new Date().toISOString();
 
-    // If the note was currently open, we might want to clear the editor
+    // Clear editor if this was the active note
     if (state.activeId === id) {
-       // Optional: keep it open, or clear it. Usually better to clear.
        state.activeId = null;
+       destroyTiptap(); // <--- CLEANUP
        document.getElementById('textEditor').value = '';
-       if (tiptapEditor) tiptapEditor.commands.setContent('');
     }
 
     if (pb.authStore.isValid && !id.startsWith('temp_')) {
       try {
-        await pb.collection('files').update(id, { 
-          category: trashSystemId,
-          lastEditor: SESSION_ID 
-        });
+        await pb.collection('files').update(id, { category: trashSystemId, lastEditor: SESSION_ID });
       } catch (e) {
-        console.error("Failed to move to trash:", e);
-        file.categoryId = oldCategoryId; // Revert on failure
-        showToast("Move to trash failed.");
+        file.categoryId = oldCategoryId; 
       }
     }
     showToast("Moved to Trash");
   }
 
-  // 3. Persist for Guest users
   if (!pb.authStore.isValid) {
     guestStorage.saveData({ categories: state.categories, files: state.files });
   }
 
-  // 4. Update the sidebar list and counts
-  // If we moved the active file, we need to pick a new one in the current category
   if (!state.activeId) {
     selectCategory(state.activeCategoryId, true);
   }
-
   finalizeUIUpdate();
 }
 
@@ -1534,25 +1514,29 @@ function loadActiveToEditor() {
   
   // CASE: No Note Selected (Empty State)
   if (!f) {
+    // Destroy rich editor to save resources
+    destroyTiptap(); 
+
     const textarea = document.getElementById('textEditor');
     if (textarea) {
       textarea.value = '';
       textarea.disabled = true;
       textarea.placeholder = "Select or create a note to start writing...";
     }
-
-    if (tiptapEditor) {
-      tiptapEditor.setOptions({ editable: false });
-      tiptapEditor.commands.setContent('');
-    }
-
+    
+    // Ensure UI shows plain wrapper (empty state looks better in plain)
+    isRichMode = false;
+    applyEditorMode();
+    updateEditorModeUI();
+    
     originalContent = '';
-    return; // Exit early
+    return;
   }
 
-  // CASE: Note Selected (Normal Loading)
+  // CASE: Note Selected
   const newContent = f.content !== null ? f.content : '';
 
+  // Determine Mode
   if (isUserPremium()) {
     if (f.editor) {
       isRichMode = (f.editor === 'rich');
@@ -1563,22 +1547,20 @@ function loadActiveToEditor() {
     isRichMode = false;
   }
   
+  // Update UI classes
   applyEditorMode(); 
   updateEditorModeUI();
 
-  const textarea = document.getElementById('textEditor');
-  if (textarea) {
-    textarea.value = newContent;
-    textarea.disabled = false;
-    textarea.placeholder = "Write or edit your text here...";
-  }
+  if (isRichMode) {
+    // === RICH MODE ===
+    ensureTiptap(); // <--- LAZY LOAD HERE
 
-  if (tiptapEditor) {
-    tiptapEditor.setOptions({ editable: true });
-    
+    // Disable autosave trigger during load
     const originalOnUpdate = tiptapEditor.options.onUpdate;
     tiptapEditor.options.onUpdate = undefined;
     
+    tiptapEditor.setOptions({ editable: true });
+
     try {
       if (!newContent || newContent === '') {
         tiptapEditor.commands.setContent('<p></p>');
@@ -1587,6 +1569,7 @@ function loadActiveToEditor() {
           const json = JSON.parse(newContent);
           tiptapEditor.commands.setContent(json);
         } catch (e) {
+          // Fallback if converting plain -> rich automatically
           const lines = newContent.split('\n');
           const docStructure = {
             type: 'doc',
@@ -1599,9 +1582,21 @@ function loadActiveToEditor() {
         }
       }
     } finally {
+      // Re-enable autosave
       setTimeout(() => {
-        tiptapEditor.options.onUpdate = originalOnUpdate;
+        if(tiptapEditor) tiptapEditor.options.onUpdate = originalOnUpdate;
       }, 100);
+    }
+
+  } else {
+    // === PLAIN MODE ===
+    destroyTiptap(); // <--- DESTROY HERE
+
+    const textarea = document.getElementById('textEditor');
+    if (textarea) {
+      textarea.value = newContent;
+      textarea.disabled = false;
+      textarea.placeholder = "Write or edit your text here...";
     }
   }
   
@@ -1799,10 +1794,7 @@ function renderVersionList(file, versionsMetadata) {
     </li>
   `; 
 
-  // 2. List Items (Metadata only)
-  // Note: We removed the "duplicate content filter" because we don't know the content yet.
-  // This is a necessary trade-off for performance.
-  
+  // 2. List Items
   if (!versionsMetadata || versionsMetadata.length === 0) {
     html += `<li class="muted">No previous versions saved yet.</li>`;
   } else {
@@ -1810,7 +1802,13 @@ function renderVersionList(file, versionsMetadata) {
       const loadingClass = v.id.startsWith('temp_version_') ? ' version-loading' : '';
       const loadingIndicator = v.id.startsWith('temp_version_') ? ' <span class="loading-dots">Saving...</span>' : '';
       
-      // Since we don't have content, we show a generic label or the editor type
+      // Use cached preview if available, otherwise generic text
+      // We do NOT try to parse v.content here because v.content might be undefined now
+      let previewSnippet = v._cachedPreview;
+      if (!previewSnippet && v.content) previewSnippet = getPreviewText(v.content);
+      if (!previewSnippet) previewSnippet = "Click to load preview...";
+      if (previewSnippet.length > 50) previewSnippet = previewSnippet.substring(0, 50) + "...";
+
       const metaInfo = v.editor === 'rich' ? 'Rich Text' : 'Plain Text';
       
       html += `
@@ -1819,7 +1817,7 @@ function renderVersionList(file, versionsMetadata) {
             <strong>${formatDate(v.created)}${loadingIndicator}</strong>
             <span class="v-meta">${metaInfo}</span>
           </div>
-          <small class="v-preview">Click to load preview...</small>
+          <small class="v-preview">${previewSnippet}</small>
         </li>
       `;
     });
@@ -1828,48 +1826,44 @@ function renderVersionList(file, versionsMetadata) {
   versionList.innerHTML = html;
 
   // 3. Attach Listeners
-
-  // A. Current Version Click
   versionList.querySelector('.version-current')?.addEventListener('click', () => {
     exitPreviewMode();
     loadActiveToEditor();
     highlightSelectedVersion(null);
   });
 
-  // B. History Item Click (Async Load)
   versionList.querySelectorAll('.version-item').forEach(item => {
     item.addEventListener('click', async () => {
       const versionId = item.dataset.versionId;
       
-      // Prevent double clicks or clicking temp items
       if (item.classList.contains('version-loading') || item.classList.contains('is-fetching')) return;
 
-      // Visual Feedback: Loading
-      const originalText = item.querySelector('.v-preview').textContent;
-      item.querySelector('.v-preview').textContent = "Downloading & Decrypting...";
+      const previewEl = item.querySelector('.v-preview');
+      const originalText = previewEl.textContent;
+      previewEl.textContent = "Downloading...";
       item.classList.add('is-fetching');
       
       try {
         let fullVersion = null;
 
         if (pb.authStore.isValid) {
-            // --- SERVER FETCH ---
+            // Server: Fetch content on demand (Memory Efficient)
             fullVersion = await loadVersionDetails(pb, derivedKey, versionId);
         } else {
-            // --- GUEST FETCH (Local) ---
+            // Guest: Content is in the array
             fullVersion = file.versions.find(v => v.id === versionId);
         }
 
         if (fullVersion) {
             enterPreviewMode(fullVersion);
             highlightSelectedVersion(versionId);
-            // Update the preview text in the list now that we have it
-            item.querySelector('.v-preview').textContent = fullVersion._cachedPreview || 'Loaded';
+            // Update the preview text permanently for this session
+            previewEl.textContent = fullVersion._cachedPreview || 'Loaded';
         }
 
       } catch (err) {
         showToast("Failed to load version");
-        item.querySelector('.v-preview').textContent = "Error loading content";
+        previewEl.textContent = "Error loading content";
       } finally {
         item.classList.remove('is-fetching');
       }
@@ -1898,7 +1892,6 @@ function setupEditorSwitching() {
       { trigger: 'editorModeTriggerRich', menu: 'editorModeDropdownRich' },
       { trigger: 'toolsMenuBtn', menu: 'toolsDropdown' }
   ];
-
   dropdownGroups.forEach(group => {
       const btn = document.getElementById(group.trigger);
       const menu = document.getElementById(group.menu);
@@ -1913,7 +1906,6 @@ function setupEditorSwitching() {
           });
       }
   });
-
   window.addEventListener('click', () => {
       dropdownGroups.forEach(group => {
           const menu = document.getElementById(group.menu);
@@ -1928,17 +1920,22 @@ function setupEditorSwitching() {
     opt.addEventListener('click', async () => {
       const targetMode = opt.getAttribute('data-mode');
 
+      // === SWITCHING TO RICH ===
       if (targetMode === 'rich') {
-        if (!isUserPremium()) {
-           showRichPreviewModal(); 
-           return; 
-        }
+        if (!isUserPremium()) { showRichPreviewModal(); return; }
         if (isRichMode) return; 
 
-        // Save current plain state as a version before converting
-        await saveVersionIfChanged();
+        await saveVersionIfChanged(); // Save plain version first
 
         const raw = textarea.value;
+        
+        isRichMode = true;
+        applyEditorMode(); // Shows rich wrapper
+        updateEditorModeUI();
+
+        ensureTiptap(); // <--- CREATE
+        
+        // Load content
         try {
            const json = JSON.parse(raw);
            if (json.type === 'doc') tiptapEditor.commands.setContent(json);
@@ -1954,26 +1951,31 @@ function setupEditorSwitching() {
            });
         }
 
-        isRichMode = true;
-        updateEditorModeUI();
         const newJson = JSON.stringify(tiptapEditor.getJSON());
         handleAutoSave(newJson);
-        originalContent = newJson; // Sync tracking base
+        originalContent = newJson; 
       }
+      
+      // === SWITCHING TO PLAIN ===
       else if (targetMode === 'plain') {
         if (!isRichMode) return; 
         if(!confirm("Switching to Plain Text will remove all formatting. Continue?")) return;
 
-        // Save current rich state as a version before converting
-        await saveVersionIfChanged();
+        await saveVersionIfChanged(); // Save rich version first
 
-        const cleanText = tiptapEditor.getText({ blockSeparator: "\n" });
-        textarea.value = cleanText;
+        // Extract text before destruction
+        // Note: ensureTiptap() isn't needed here because we are already in rich mode
+        const cleanText = tiptapEditor ? tiptapEditor.getText({ blockSeparator: "\n" }) : "";
+        
+        destroyTiptap(); // <--- DESTROY
 
         isRichMode = false;
+        applyEditorMode(); // Shows plain wrapper
         updateEditorModeUI();
+        
+        textarea.value = cleanText;
         handleAutoSave(cleanText);
-        originalContent = cleanText; // Sync tracking base
+        originalContent = cleanText; 
       }
     });
   });
@@ -1985,69 +1987,80 @@ async function saveVersionIfChanged() {
   if (!file || !file._isLoaded) return;
 
   let currentContent = '';
-  let versionMode = isRichMode ? 'rich' : 'plain'; 
-  let isEmpty = false;
-
+  // Determine content based on mode
   if (isRichMode && tiptapEditor) {
-    isEmpty = tiptapEditor.isEmpty;
+    if (tiptapEditor.isEmpty) return; // Don't save empty versions
     currentContent = JSON.stringify(tiptapEditor.getJSON());
   } else {
-    const rawVal = document.getElementById('textEditor').value;
-    isEmpty = !rawVal || rawVal.trim().length === 0;
-    currentContent = rawVal;
+    currentContent = document.getElementById('textEditor').value;
+    if (!currentContent || currentContent.trim().length === 0) return;
   }
 
-  if (currentContent === originalContent || isEmpty) return;
+  // Deduplication check
+  if (currentContent === originalContent) return;
   if (isSavingVersion) return;
   
   isSavingVersion = true;
 
   try {
     const tempId = `temp_version_${Date.now()}`;
-    const backupContent = originalContent; // The version is a snapshot of the OLD state
-    
-    // Detection logic to ensure metadata matches content exactly
+    // The version is a snapshot of the OLD state (originalContent)
+    const backupContent = originalContent; 
     const actualEditorMode = backupContent.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain';
+    const previewTxt = getPreviewText(backupContent);
 
-    const tempVersion = {
+    // 1. Create Metadata Object (What we show in the list)
+    // CRITICAL CHANGE: We do NOT store 'content' here for Online users to save RAM.
+    const metaData = {
         id: tempId,
         created: new Date().toISOString(),
-        content: backupContent,
         editor: actualEditorMode,
-        _cachedPreview: getPreviewText(backupContent)
+        _cachedPreview: previewTxt,
+        // Only store content locally if we are Guest (no server to fetch from later)
+        content: !pb.authStore.isValid ? backupContent : undefined 
     };
     
+    // 2. Update Cache
     if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
-    file.versionsMetadataCache.unshift(tempVersion);
+    file.versionsMetadataCache.unshift(metaData);
     
+    // 3. Update UI if panel is open
     if (document.getElementById('version-history')?.classList.contains('active')) {
       renderVersionList(file, file.versionsMetadataCache);
     }
     
+    // 4. Persistence
     if (pb.authStore.isValid && derivedKey) {
+      // Send FULL content to server, but keep local cache light
       createVersionSnapshot(pb, derivedKey, file.id, backupContent, actualEditorMode)
         .then(result => {
           const idx = file.versionsMetadataCache.findIndex(v => v.id === tempId);
           if (idx !== -1) {
-              file.versionsMetadataCache[idx] = {
-                  id: result.id, created: result.created, content: backupContent, editor: actualEditorMode
-              };
+              // Update ID and Time, keep content undefined
+              file.versionsMetadataCache[idx].id = result.id;
+              file.versionsMetadataCache[idx].created = result.created;
           }
           finalizeUIUpdate();
         })
         .catch(e => {
+          console.error("Version upload failed", e);
+          // Remove from local list if server failed
           file.versionsMetadataCache = file.versionsMetadataCache.filter(v => v.id !== tempId);
           finalizeUIUpdate();
         });
     } else {
+      // Guest: We already added content to metaData, just save storage
       const finalGuestId = `ver_${Date.now()}`;
-      tempVersion.id = finalGuestId;
+      metaData.id = finalGuestId;
+      
       if (!file.versions) file.versions = [];
-      file.versions.unshift({...tempVersion});
+      file.versions.unshift(metaData); // Guest needs full object in array
+      
       guestStorage.saveData({ categories: state.categories, files: state.files });
       finalizeUIUpdate();
     }
 
+    // Update tracking baseline
     originalContent = currentContent;
     
   } catch (e) {
@@ -2059,6 +2072,8 @@ async function saveVersionIfChanged() {
 
 function enterPreviewMode(version) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  // Capture current state
   if (originalBeforePreview === '') {
     originalBeforePreview = isRichMode && tiptapEditor 
       ? JSON.stringify(tiptapEditor.getJSON())
@@ -2066,7 +2081,7 @@ function enterPreviewMode(version) {
     originalEditorMode = isRichMode;
   }
 
-  // Robust Detection: Prioritize content structure over metadata label to avoid JSON-in-Plain bug
+  // Detect Version Type
   const versionIsRich = version.content.trim().startsWith('{"type":"doc"') || version.editor === 'rich';
 
   setToolbarVisibility(false);
@@ -2075,8 +2090,11 @@ function enterPreviewMode(version) {
   const richWrap = document.getElementById('richWrapper');
 
   if (versionIsRich) {
+    // === RICH PREVIEW ===
     plainWrap.classList.add('hidden');
     richWrap.classList.remove('hidden');
+    
+    ensureTiptap(); // <--- LAZY LOAD
     
     try {
       tiptapEditor.commands.setContent(JSON.parse(version.content));
@@ -2086,7 +2104,12 @@ function enterPreviewMode(version) {
     
     tiptapEditor.setOptions({ editable: false });
     document.querySelector('.ProseMirror')?.classList.add('preview-mode');
+
   } else {
+    // === PLAIN PREVIEW ===
+    // If we were in rich mode before, destroy it temporarily
+    if (isRichMode) destroyTiptap();
+
     richWrap.classList.add('hidden');
     plainWrap.classList.remove('hidden');
     
@@ -2105,9 +2128,10 @@ function exitPreviewMode() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
   // 1. Restore original mode state
-  isRichMode = originalEditorMode;
+  const targetModeRich = originalEditorMode; 
+  isRichMode = targetModeRich;
 
-  // 2. Global UI Cleanup (Do this regardless of mode)
+  // 2. Global UI Cleanup
   document.getElementById('previewBanner')?.remove();
   setToolbarVisibility(true);
   
@@ -2118,26 +2142,32 @@ function exitPreviewMode() {
     textarea.classList.remove('preview-mode');
   }
 
-  // 4. Clean up Rich Editor (Crucial: do this even if switching to plain)
-  if (tiptapEditor) {
-    tiptapEditor.setOptions({ editable: true });
-    // Remove the class from the DOM element directly
-    const proseMirrorEl = document.querySelector('.ProseMirror');
-    if (proseMirrorEl) {
-      proseMirrorEl.classList.remove('preview-mode');
-      proseMirrorEl.setAttribute('contenteditable', 'true');
-    }
-  }
+  // 4. Handle Tiptap Lifecycle based on target mode
+  if (targetModeRich) {
+      // Returning to Rich Mode
+      ensureTiptap(); // <--- Restore Instance
+      
+      tiptapEditor.setOptions({ editable: true });
+      const proseMirrorEl = document.querySelector('.ProseMirror');
+      if (proseMirrorEl) {
+          proseMirrorEl.classList.remove('preview-mode');
+          proseMirrorEl.setAttribute('contenteditable', 'true');
+      }
 
-  // 5. Restore Content
-  if (isRichMode) {
-    try {
-      tiptapEditor.commands.setContent(JSON.parse(originalBeforePreview));
-    } catch(e) {
-      tiptapEditor.commands.setContent(originalBeforePreview);
-    }
-  } else if (textarea) {
-    textarea.value = originalBeforePreview;
+      // Restore Content
+      try {
+        tiptapEditor.commands.setContent(JSON.parse(originalBeforePreview));
+      } catch(e) {
+        tiptapEditor.commands.setContent(originalBeforePreview);
+      }
+
+  } else {
+      // Returning to Plain Mode
+      destroyTiptap(); // <--- Kill if it was used for preview
+      
+      if (textarea) {
+        textarea.value = originalBeforePreview;
+      }
   }
 
   // 6. Final UI Sync
@@ -2258,31 +2288,30 @@ async function handleRestore() {
     // 1. Detect the mode of the version we are restoring
     const restoredMode = versionToRestore.editor || (contentToRestore.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain');
     
-    // 2. Create a backup of the current content before we overwrite it
+    // 2. Backup Logic
     const tempBackupId = `temp_version_${Date.now()}`;
     const backupVersion = {
         id: tempBackupId,
         created: new Date().toISOString(),
-        content: file.content,
+        content: file.content, // Temp storage for UI
         editor: file.editor || (isRichMode ? 'rich' : 'plain'),
         _cachedPreview: file._cachedPreview || getPreviewText(file.content)
     };
 
-    // 3. Update the local state metadata
+    // 3. Update the local state metadata immediately
     if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
     file.versionsMetadataCache.unshift(backupVersion);
 
+    // Apply Content to State
     file.content = contentToRestore;
     file.updated = new Date().toISOString();
-    file.editor = restoredMode; // Update metadata to match restored version
+    file.editor = restoredMode; 
     file._cachedPreview = restorePreview;
 
-    // 4. MANUAL EXIT PREVIEW (Instead of exitPreviewMode to prevent mode reversion)
+    // 4. MANUAL EXIT PREVIEW 
     previewMode = false;
     previewVersion = null;
     originalBeforePreview = ''; 
-    
-    // Remove Banner and UI Locks
     document.getElementById('previewBanner')?.remove();
     setToolbarVisibility(true);
     
@@ -2292,51 +2321,69 @@ async function handleRestore() {
         textarea.classList.remove('preview-mode');
     }
     
-    if (tiptapEditor) {
+    // 5. Apply the Restored Mode & Lifecycle
+    isRichMode = (restoredMode === 'rich');
+    
+    if (isRichMode) {
+        ensureTiptap(); 
         tiptapEditor.setOptions({ editable: true });
         document.querySelector('.ProseMirror')?.classList.remove('preview-mode');
+        
+        try { 
+            tiptapEditor.commands.setContent(JSON.parse(contentToRestore)); 
+        } catch(e) { 
+            tiptapEditor.commands.setContent(contentToRestore); 
+        }
+    } else {
+        destroyTiptap();
+        document.getElementById('textEditor').value = contentToRestore;
     }
 
-    // 5. Apply the Restored Mode
-    isRichMode = (restoredMode === 'rich');
     applyEditorMode();
     updateEditorModeUI();
-
-    // 6. Load Restored Content
-    if (isRichMode) {
-      try { 
-        tiptapEditor.commands.setContent(JSON.parse(contentToRestore)); 
-      } catch(e) { 
-        tiptapEditor.commands.setContent(contentToRestore); 
-      }
-    } else {
-      document.getElementById('textEditor').value = contentToRestore;
-    }
     
     originalContent = contentToRestore;
 
-    // 7. Background Sync
+    // 6. Background Sync
     await saveFile(file);
     
     if (pb.authStore.isValid && derivedKey) {
         createVersionSnapshot(pb, derivedKey, file.id, backupVersion.content, backupVersion.editor)
             .then(result => {
-                const idx = file.versionsMetadataCache.findIndex(v => v.id === tempBackupId);
-                if (idx !== -1) {
-                    file.versionsMetadataCache[idx] = {
-                        id: result.id, created: result.created, content: backupVersion.content, editor: backupVersion.editor
-                    };
+                // 🔥 FIX: Re-find the LIVE file object in state.
+                // (The 'file' var might be stale if Realtime sync replaced the object during await)
+                const liveFile = state.files.find(f => f.id === file.id);
+                
+                if (liveFile && liveFile.versionsMetadataCache) {
+                    const idx = liveFile.versionsMetadataCache.findIndex(v => v.id === tempBackupId);
+                    if (idx !== -1) {
+                        // Update the ID and Timestamp on the LIVE object
+                        liveFile.versionsMetadataCache[idx].id = result.id;
+                        liveFile.versionsMetadataCache[idx].created = result.created;
+                        
+                        // Optimization: Clear content from cache to free RAM (we fetch on demand)
+                        liveFile.versionsMetadataCache[idx].content = undefined; 
+                    }
                 }
                 finalizeUIUpdate();
             })
-            .catch(e => console.error("Backup snapshot failed:", e));
+            .catch(e => {
+                console.error("Backup snapshot failed:", e);
+                // Clean up on failure
+                const liveFile = state.files.find(f => f.id === file.id);
+                if(liveFile && liveFile.versionsMetadataCache) {
+                    liveFile.versionsMetadataCache = liveFile.versionsMetadataCache.filter(v => v.id !== tempBackupId);
+                    finalizeUIUpdate();
+                }
+            });
     } else {
-        // Guest Logic: Finalize the backup version ID
+        // Guest Logic
         const finalGuestId = `ver_${Date.now()}`;
         backupVersion.id = finalGuestId;
         if (!file.versions) file.versions = [];
         file.versions.unshift({...backupVersion});
         guestStorage.saveData({ categories: state.categories, files: state.files });
+        finalizeUIUpdate();
     }
 
     showToast(`Restored version from ${formatDate(versionToRestore.created)}`);
@@ -2825,38 +2872,6 @@ if (shareModal) {
 // TIPTAP & SWITCHING LOGIC
 // ===================================================================
 
-function initTiptap() {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  tiptapEditor = new Editor({
-    element: document.getElementById('tiptapEditor'),
-    extensions: [
-      StarterKit,
-      TextStyle, 
-      Color, 
-      Link.configure({ openOnClick: false }),
-      Image, 
-      Placeholder.configure({ placeholder: 'Write rich text...' }),
-      // --- FIX: Add TextAlign Extension ---
-      TextAlign.configure({
-        types: ['heading', 'paragraph'],
-      }),
-    ],
-    content: '',
-    onUpdate: ({ editor }) => {
-      updateTiptapToolbar(editor);
-      const json = JSON.stringify(editor.getJSON());
-      handleAutoSave(json);
-    },
-    onSelectionUpdate: ({ editor }) => updateTiptapToolbar(editor),
-    onBlur: async () => {
-        if(isRichMode) await saveVersionIfChanged();
-    }
-  });
-  
-  setupTiptapButtons();
-}
-
-
 
 function updateEditorModeUI() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
@@ -3094,13 +3109,16 @@ function handleAutoSave(newContent) {
       file.content = newContent;
       file.updated = new Date().toISOString();
       
-      // Sync the metadata field with current UI state
+      // Sync the metadata field
       file.editor = isRichMode ? 'rich' : 'plain';
 
-      const plainText = getPreviewText(newContent?.trim() || '');
+      // Optimized preview generation
+      const plainText = getPreviewText(newContent);
       file._cachedPreview = plainText;
-      file._contentLastPreviewed = newContent;
+      
+      // REMOVED: file._contentLastPreviewed = newContent; (Redundant memory usage)
 
+      // Update Sidebar UI Preview
       const previewEl = document.querySelector(`.file-item[data-id="${file.id}"] .file-preview`);
       if (previewEl) {
           const firstLine = plainText.split('\n')[0] || '[Empty note]';
@@ -3295,7 +3313,6 @@ async function loadNoteDetails(noteId) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === noteId);
   
-  // If already loaded or is a local temp note, return
   if (!file || file._isLoaded || file.id.startsWith('temp_')) return file;
   if (!pb.authStore.isValid || !derivedKey) return file;
 
@@ -3304,16 +3321,21 @@ async function loadNoteDetails(noteId) {
     
     let plaintext = '';
     if (r.iv && r.authTag && r.encryptedBlob) {
+      // Decrypt directly to local var
       plaintext = await decryptBlob(
         { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
         derivedKey
       );
     }
 
+    // Assign directly to state
     file.content = plaintext;
-    file._isLoaded = true; // Mark as fully fetched
-    file._cachedPreview = getPreviewText(plaintext?.trim() || '');
-    file._contentLastPreviewed = plaintext;
+    file._isLoaded = true;
+    
+    // Generate preview once and cache it
+    file._cachedPreview = getPreviewText(plaintext);
+    
+    // REMOVED: file._contentLastPreviewed = plaintext;
 
     return file;
   } catch (e) {
@@ -3408,6 +3430,50 @@ function getPreviewText(content) {
   
   // Return plain text clipped
   return content.substring(0, 150);
+}
+function destroyTiptap() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (tiptapEditor) {
+    tiptapEditor.destroy(); // Kills the instance and ProseMirror view
+    tiptapEditor = null;    // Frees memory
+    
+    // Visual cleanup of toolbar
+    document.querySelectorAll('.rich-btn-item').forEach(btn => btn.classList.remove('is-active'));
+  }
+}
+function ensureTiptap() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  // 1. If already exists, do nothing (Lazy Check)
+  if (tiptapEditor) return;
+
+  // 2. Create Instance
+  tiptapEditor = new Editor({
+    element: document.getElementById('tiptapEditor'),
+    extensions: [
+      StarterKit,
+      TextStyle, 
+      Color, 
+      Link.configure({ openOnClick: false }),
+      Image, 
+      Placeholder.configure({ placeholder: 'Write rich text...' }),
+      TextAlign.configure({ types: ['heading', 'paragraph'] }),
+    ],
+    content: '', // Start empty, content is loaded by caller
+    onUpdate: ({ editor }) => {
+      updateTiptapToolbar(editor);
+      const json = JSON.stringify(editor.getJSON());
+      handleAutoSave(json);
+    },
+    onSelectionUpdate: ({ editor }) => updateTiptapToolbar(editor),
+    onBlur: async () => {
+        // Only save if we are still in rich mode (editor hasn't been destroyed during blur)
+        if(tiptapEditor) await saveVersionIfChanged();
+    }
+  });
+  
+  // 3. Ensure buttons are wired up (Safe to call multiple times due to internal guard)
+  setupTiptapButtons();
 }
 function renderSidebarNotes() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
