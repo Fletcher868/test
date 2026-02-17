@@ -225,9 +225,13 @@ function createEncryptedBackupHtml(exportData) {
 
 export function setupExport(pb, derivedKey, showToast) {
     console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-    const exportBtn = document.getElementById('exportAll');
+    
+    // CHANGED: Target the button inside Settings Modal
+    const exportBtn = document.getElementById('exportJsonBtn');
+    
     if (!exportBtn) return;
 
+    // Clean up old listener if it exists
     if (currentExportHandler) {
         exportBtn.removeEventListener('click', currentExportHandler);
     }
@@ -239,14 +243,18 @@ export function setupExport(pb, derivedKey, showToast) {
         return;
       }
       
-      showToast('Preparing backup...', 5000);
+      // Visual feedback on the button
+      const originalText = exportBtn.innerHTML;
+      exportBtn.innerHTML = '<span class="st-action-text">Generating Backup...</span>';
+      exportBtn.disabled = true;
 
       try {
         const user = pb.authStore.model;
+        // Fetch ALL encrypted records directly (Full Backup)
         const url = pb.baseUrl + `/api/collections/files/records`;
         const params = new URLSearchParams({
             filter: `user = "${user.id}"`, 
-            perPage: 500,
+            perPage: 500, // Adjust pagination if you have >500 notes
             fields: 'id,name,created,updated,iv,authTag,encryptedBlob'
         });
 
@@ -282,6 +290,10 @@ export function setupExport(pb, derivedKey, showToast) {
       } catch (e) {
         console.error(e);
         showToast('Export failed.');
+      } finally {
+        // Reset button
+        exportBtn.innerHTML = originalText;
+        exportBtn.disabled = false;
       }
     };
     
