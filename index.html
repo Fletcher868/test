@@ -107,10 +107,6 @@
                 <div class="icon-box"><svg class="btn-icon"><use href="#icon-settings"/></svg></div>
                 <span>Settings</span>
               </button>
-              <button id="exportAll" class="dropdown-item">
-                <div class="icon-box"><svg class="btn-icon"><use href="#icon-export"/></svg></div>
-                <span>Export Data</span>
-              </button>
             </div>
 
             <div class="menu-divider"></div>
@@ -745,22 +741,18 @@
       <!-- TAB: Data (Import/Export/Delete) -->
       <div id="tab-data" class="st-tab-content">
         
-        <div class="st-label" style="margin-bottom:12px">Backup & Restore</div>
+        <div class="st-label" style="margin-bottom:12px">Backup</div>
         
         <!-- Big Clickable Cards Grid -->
         <div class="st-action-grid">
           <button id="exportJsonBtn" class="st-action-card-btn">
-            <svg class="btn-icon"><use href="#icon-export"/></svg>
-            <span class="st-action-text">Export JSON</span>
-          </button>
-          
-          <button id="importJsonBtn" class="st-action-card-btn">
             <svg class="btn-icon"><use href="#icon-download"/></svg>
-            <span class="st-action-text">Import JSON</span>
+            <span class="st-action-text">Export Data</span>
           </button>
+
         </div>
 
-        <input type="file" id="importFileInput" accept=".json" hidden />
+
 
         <!-- Danger Zone at the bottom -->
         <div class="st-danger-section">
