@@ -32,6 +32,8 @@ let previewVersion = null;
 // Auto-save
 let saveTimeout = null;
 let originalBeforePreview = ''; 
+let activeVersionController = null; // Track the current version fetch
+
 const PB_URL = 'https://paleontographical-gabrielle-mightiest.ngrok-free.dev/';
 let pb = null, 
     // UPDATE: Added categories and set default active category
@@ -199,19 +201,13 @@ async function initPocketBase() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   pb = new PocketBase(PB_URL);
 
-  // REMOVED: initTiptap(); -> Now lazy loaded via ensureTiptap() when needed
-  
   setupEditorSwitching();
 
-  // 1. Network Sync (Fresh Auth & Data)
   if (pb.authStore.isValid) {
     try {
       await pb.collection('users').authRefresh();
       memoizedIsPremium = null; 
-
-      // Proceed to heavy decryption
       await restoreEncryptionKeyAndLoad();
-      
     } catch (err) {
       console.warn("Session expired:", err);
       logout();
@@ -221,7 +217,8 @@ async function initPocketBase() {
     updateProfileState();
   }
 
-  initSettings(pb, state, derivedKey, loadUserFiles, saveFile, renderFiles, loadActiveToEditor);
+  // CHANGED: Removed extra arguments
+  initSettings(pb, state, derivedKey);
 }
 
 async function restoreEncryptionKeyAndLoad() {
@@ -768,8 +765,12 @@ async function saveFile(file) {
   file.updated = new Date().toISOString();
   if (file.id.startsWith('temp_')) return;
   
+  // 1. UI: Set "Saving..." state
+  file._isSaving = true;     // Flag for renderSidebarNotes
+  file._saveError = false;   // Reset error flag
+  updateFilePreviewDOM(file.id, "Saving...");
+
   if (pb.authStore.isValid && derivedKey) {
-    // 1. Determine mode explicitly
     const editorMode = isRichMode ? 'rich' : 'plain';
 
     try {
@@ -783,26 +784,45 @@ async function saveFile(file) {
           iv: arrayToB64(iv),
           authTag: arrayToB64(authTag),
           encryptedBlob: arrayToB64(ciphertext),
-          editor: editorMode, // Sent for backend plan validation
+          editor: editorMode, 
           lastEditor: SESSION_ID 
         });
-    } catch (e) { 
-        // 2. Smart Error Handling
-        // Only blame the "Pro Plan" if we are actually trying to save Rich Text
-        const isLikelyPlanError = (editorMode === 'rich') && (e.status === 400 || e.status === 403);
+
+        // 2. SUCCESS: Revert to actual content preview
+        file._isSaving = false;
         
-        if (isLikelyPlanError) {
-            showToast("Premium feature: Rich text requires a Pro plan.");
-        } else if (e.status === 400 || e.status === 413) {
-            // If we are in Plain Text mode, a 400 error is definitely a size limit issue
-            showToast("Save failed: Note exceeds server size limit (Max ~1MB).");
-        } else {
-            showToast("Error saving note to server.");
-        }
-        console.error("Save Error:", e); 
+        // Use the cached preview we generated in handleAutoSave
+        const contentPreview = file._cachedPreview || "Loaded";
+        // formatting the preview text (first line only)
+        const displayPreview = contentPreview.split('\n')[0].substring(0, 35) + (contentPreview.length > 35 ? '...' : '');
+        
+        updateFilePreviewDOM(file.id, displayPreview);
+
+    } catch (e) { 
+        // 3. ERROR: Show Failed state and KEEP IT
+        file._isSaving = false;
+        file._saveError = true;
+        
+        console.error("Save Error:", e);
+
+        // Determine error message
+        let errorMsg = "Save Failed";
+        const isLikelyPlanError = (editorMode === 'rich') && (e.status === 400 || e.status === 403);
+        if (isLikelyPlanError) errorMsg = "Plan Limit";
+        else if (e.status === 413) errorMsg = "Too Large";
+        
+        updateFilePreviewDOM(file.id, errorMsg, true); // true = isError
+        
+        // Optional: Show toast for details
+        if (isLikelyPlanError) showToast("Premium feature: Rich text requires a Pro plan.");
     }
   } else {
+    // Guest Mode (Local Storage is instant, but let's simulate the UI state for consistency)
     guestStorage.saveData({ categories: state.categories, files: state.files });
+    file._isSaving = false;
+    const contentPreview = file._cachedPreview || "Loaded";
+    const displayPreview = contentPreview.split('\n')[0].substring(0, 35) + (contentPreview.length > 35 ? '...' : '');
+    updateFilePreviewDOM(file.id, displayPreview);
   }
 }
 
@@ -1512,32 +1532,41 @@ function loadActiveToEditor() {
   
   const f = state.files.find(x => x.id === state.activeId);
   
-  // CASE: No Note Selected (Empty State)
+  // 1. EMPTY STATE
   if (!f) {
-    // Destroy rich editor to save resources
     destroyTiptap(); 
-
     const textarea = document.getElementById('textEditor');
     if (textarea) {
       textarea.value = '';
       textarea.disabled = true;
       textarea.placeholder = "Select or create a note to start writing...";
     }
-    
-    // Ensure UI shows plain wrapper (empty state looks better in plain)
     isRichMode = false;
     applyEditorMode();
     updateEditorModeUI();
-    
     originalContent = '';
     return;
   }
 
-  // CASE: Note Selected
   const newContent = f.content !== null ? f.content : '';
 
-  // Determine Mode
-  if (isUserPremium()) {
+  // 2. CHECK FOR LOCKED / ERROR STATES
+  const isContentRich = f.editor === 'rich' || (newContent && newContent.trim().startsWith('{"type":"doc"'));
+  const isPremium = isUserPremium();
+  const isError = f._hasFetchError === true; // <--- Check error flag
+
+  // A. LOCKED (Premium content for Free user)
+  if (isContentRich && !isPremium && !isError) {
+      originalContent = newContent; 
+      const lockedVersion = {
+          id: f.id, content: newContent, created: f.updated, editor: 'rich', _cachedPreview: f._cachedPreview
+      };
+      enterPreviewMode(lockedVersion, true);
+      return; 
+  }
+
+  // B. STANDARD LOADING
+  if (isPremium) {
     if (f.editor) {
       isRichMode = (f.editor === 'rich');
     } else {
@@ -1547,19 +1576,16 @@ function loadActiveToEditor() {
     isRichMode = false;
   }
   
-  // Update UI classes
   applyEditorMode(); 
   updateEditorModeUI();
 
   if (isRichMode) {
-    // === RICH MODE ===
-    ensureTiptap(); // <--- LAZY LOAD HERE
-
-    // Disable autosave trigger during load
+    ensureTiptap(); 
     const originalOnUpdate = tiptapEditor.options.onUpdate;
     tiptapEditor.options.onUpdate = undefined;
     
-    tiptapEditor.setOptions({ editable: true });
+    // === FIX: Disable Tiptap if Error ===
+    tiptapEditor.setOptions({ editable: !isError }); 
 
     try {
       if (!newContent || newContent === '') {
@@ -1569,34 +1595,27 @@ function loadActiveToEditor() {
           const json = JSON.parse(newContent);
           tiptapEditor.commands.setContent(json);
         } catch (e) {
-          // Fallback if converting plain -> rich automatically
-          const lines = newContent.split('\n');
-          const docStructure = {
-            type: 'doc',
-            content: lines.map(line => ({
-              type: 'paragraph',
-              content: line ? [{ type: 'text', text: line }] : [] 
-            }))
-          };
-          tiptapEditor.commands.setContent(docStructure);
+          // If error text is plain text, render it as paragraph
+          tiptapEditor.commands.setContent(newContent); 
         }
       }
     } finally {
-      // Re-enable autosave
-      setTimeout(() => {
-        if(tiptapEditor) tiptapEditor.options.onUpdate = originalOnUpdate;
-      }, 100);
+      setTimeout(() => { if(tiptapEditor) tiptapEditor.options.onUpdate = originalOnUpdate; }, 100);
     }
-
   } else {
-    // === PLAIN MODE ===
-    destroyTiptap(); // <--- DESTROY HERE
-
+    destroyTiptap(); 
     const textarea = document.getElementById('textEditor');
     if (textarea) {
       textarea.value = newContent;
-      textarea.disabled = false;
-      textarea.placeholder = "Write or edit your text here...";
+      
+      // === FIX: Disable Textarea if Error ===
+      textarea.disabled = isError; 
+      
+      if (isError) {
+          textarea.placeholder = "Check internet connection and click note to retry.";
+      } else {
+          textarea.placeholder = "Write or edit your text here...";
+      }
     }
   }
   
@@ -1786,7 +1805,7 @@ function renderVersionList(file, versionsMetadata) {
   versionList.classList.remove('loading');
   versionList.dataset.currentFileId = file.id;
 
-  // 1. Header: Current Version
+  // 1. Header
   let html = `
     <li class="version-current">
       <strong>Current version</strong>
@@ -1794,7 +1813,7 @@ function renderVersionList(file, versionsMetadata) {
     </li>
   `; 
 
-  // 2. List Items
+  // 2. Body
   if (!versionsMetadata || versionsMetadata.length === 0) {
     html += `<li class="muted">No previous versions saved yet.</li>`;
   } else {
@@ -1802,8 +1821,6 @@ function renderVersionList(file, versionsMetadata) {
       const loadingClass = v.id.startsWith('temp_version_') ? ' version-loading' : '';
       const loadingIndicator = v.id.startsWith('temp_version_') ? ' <span class="loading-dots">Saving...</span>' : '';
       
-      // Use cached preview if available, otherwise generic text
-      // We do NOT try to parse v.content here because v.content might be undefined now
       let previewSnippet = v._cachedPreview;
       if (!previewSnippet && v.content) previewSnippet = getPreviewText(v.content);
       if (!previewSnippet) previewSnippet = "Click to load preview...";
@@ -1822,24 +1839,58 @@ function renderVersionList(file, versionsMetadata) {
       `;
     });
   }
-
   versionList.innerHTML = html;
 
-  // 3. Attach Listeners
+  // 3. Listeners
+  
+  // A. Current Version Click
   versionList.querySelector('.version-current')?.addEventListener('click', () => {
+    // If clicking current, abort any history download
+    if (activeVersionController) activeVersionController.abort();
     exitPreviewMode();
     loadActiveToEditor();
     highlightSelectedVersion(null);
   });
 
+  // B. History Item Click
   versionList.querySelectorAll('.version-item').forEach(item => {
     item.addEventListener('click', async () => {
       const versionId = item.dataset.versionId;
       
-      if (item.classList.contains('version-loading') || item.classList.contains('is-fetching')) return;
+      // === CHECK 1: Ignore if this version is actively saving (temp) ===
+      if (item.classList.contains('version-loading')) return;
+
+      // === CHECK 2: Ignore if this version is ALREADY displayed ===
+      if (previewMode && previewVersion && previewVersion.id === versionId) {
+          console.log("Version already displayed.");
+          return;
+      }
+
+      // === CHECK 3: Ignore if this specific version is CURRENTLY downloading ===
+      if (item.classList.contains('is-fetching')) {
+          console.log("Version already downloading.");
+          return;
+      }
+
+      // === STEP 1: Abort Previous Download ===
+      // If we are downloading Version A, and clicked Version B, stop A.
+      if (activeVersionController) {
+          activeVersionController.abort();
+          
+          // Reset UI of the PREVIOUS item
+          const prevItem = versionList.querySelector('.version-item.is-fetching');
+          if (prevItem) {
+              prevItem.classList.remove('is-fetching');
+              const prevTxt = prevItem.querySelector('.v-preview');
+              if(prevTxt) prevTxt.textContent = "Click to load preview..."; 
+          }
+      }
+
+      // === STEP 2: Start New Download ===
+      activeVersionController = new AbortController();
+      const currentSignal = activeVersionController.signal; 
 
       const previewEl = item.querySelector('.v-preview');
-      const originalText = previewEl.textContent;
       previewEl.textContent = "Downloading...";
       item.classList.add('is-fetching');
       
@@ -1847,25 +1898,34 @@ function renderVersionList(file, versionsMetadata) {
         let fullVersion = null;
 
         if (pb.authStore.isValid) {
-            // Server: Fetch content on demand (Memory Efficient)
-            fullVersion = await loadVersionDetails(pb, derivedKey, versionId);
+            fullVersion = await loadVersionDetails(pb, derivedKey, versionId, currentSignal);
         } else {
-            // Guest: Content is in the array
             fullVersion = file.versions.find(v => v.id === versionId);
         }
+
+        // Checkpoint: Did we get aborted while waiting?
+        if (currentSignal.aborted) return;
 
         if (fullVersion) {
             enterPreviewMode(fullVersion);
             highlightSelectedVersion(versionId);
-            // Update the preview text permanently for this session
+            // Update preview text locally
             previewEl.textContent = fullVersion._cachedPreview || 'Loaded';
+            
+            // NOTE: We do NOT save fullVersion.content to versionsMetadataCache here
+            // This ensures RAM is freed when we switch away.
         }
 
       } catch (err) {
+        if (err.name === 'AbortError' || currentSignal.aborted) return;
+
         showToast("Failed to load version");
         previewEl.textContent = "Error loading content";
       } finally {
-        item.classList.remove('is-fetching');
+        if (!currentSignal.aborted) {
+            item.classList.remove('is-fetching');
+            activeVersionController = null;
+        }
       }
     });
   });
@@ -1873,7 +1933,6 @@ function renderVersionList(file, versionsMetadata) {
   if (previewMode && previewVersion) highlightSelectedVersion(previewVersion.id);
   else highlightSelectedVersion(null);
 }
-
 
 
 // Helper function to handle toolbar visibility
@@ -1987,56 +2046,94 @@ async function saveVersionIfChanged() {
   if (!file || !file._isLoaded) return;
 
   let currentContent = '';
-  // Determine content based on mode
+
+  // 1. Get Current Content
   if (isRichMode && tiptapEditor) {
-    if (tiptapEditor.isEmpty) return; // Don't save empty versions
-    currentContent = JSON.stringify(tiptapEditor.getJSON());
+    if (tiptapEditor.isEmpty) { 
+        // Capture specific empty structure for consistency
+        currentContent = JSON.stringify(tiptapEditor.getJSON());
+    } else {
+        currentContent = JSON.stringify(tiptapEditor.getJSON());
+    }
   } else {
-    currentContent = document.getElementById('textEditor').value;
-    if (!currentContent || currentContent.trim().length === 0) return;
+    const textarea = document.getElementById('textEditor');
+    currentContent = textarea ? textarea.value : '';
   }
 
-  // Deduplication check
+  // 2. Deduplication Check
   if (currentContent === originalContent) return;
   if (isSavingVersion) return;
-  
+
+  // 3. === FIX: ROBUST EMPTY CHECK (Rich & Plain) ===
+  const isRichContentEmpty = (str) => {
+    try {
+      if (!str || !str.startsWith('{')) return false;
+      const json = JSON.parse(str);
+      
+      // Case 1: Completely empty doc
+      if (!json.content || json.content.length === 0) return true;
+      
+      // Case 2: Single block (Paragraph or Heading)
+      if (json.content.length === 1 && ['paragraph', 'heading'].includes(json.content[0].type)) {
+         const children = json.content[0].content;
+         // No text nodes or images inside
+         if (!children || children.length === 0) return true;
+         
+         // Check if children are only whitespace text
+         const hasMeaningfulContent = children.some(child => {
+             // If it's an image, embed, etc., it's not empty
+             if (child.type !== 'text') return true;
+             // If it's text, it must have non-whitespace characters
+             return child.text && child.text.trim() !== '';
+         });
+         return !hasMeaningfulContent;
+      }
+      return false;
+    } catch (e) { return false; }
+  };
+
+  const isPlainEmpty = !originalContent || originalContent.trim() === '';
+  const isRichEmpty = isRichContentEmpty(originalContent);
+
+  if (isPlainEmpty || isRichEmpty) {
+      // Just update the baseline to the new content so we track future changes
+      // BUT do not save a history version for this empty state.
+      originalContent = currentContent; 
+      return; 
+  }
+
   isSavingVersion = true;
 
   try {
     const tempId = `temp_version_${Date.now()}`;
-    // The version is a snapshot of the OLD state (originalContent)
     const backupContent = originalContent; 
     const actualEditorMode = backupContent.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain';
     const previewTxt = getPreviewText(backupContent);
 
-    // 1. Create Metadata Object (What we show in the list)
-    // CRITICAL CHANGE: We do NOT store 'content' here for Online users to save RAM.
+    // 4. Create Metadata Object
     const metaData = {
         id: tempId,
         created: new Date().toISOString(),
         editor: actualEditorMode,
         _cachedPreview: previewTxt,
-        // Only store content locally if we are Guest (no server to fetch from later)
         content: !pb.authStore.isValid ? backupContent : undefined 
     };
     
-    // 2. Update Cache
+    // 5. Update Cache
     if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
     file.versionsMetadataCache.unshift(metaData);
     
-    // 3. Update UI if panel is open
+    // 6. Update UI
     if (document.getElementById('version-history')?.classList.contains('active')) {
       renderVersionList(file, file.versionsMetadataCache);
     }
     
-    // 4. Persistence
+    // 7. Persistence
     if (pb.authStore.isValid && derivedKey) {
-      // Send FULL content to server, but keep local cache light
       createVersionSnapshot(pb, derivedKey, file.id, backupContent, actualEditorMode)
         .then(result => {
           const idx = file.versionsMetadataCache.findIndex(v => v.id === tempId);
           if (idx !== -1) {
-              // Update ID and Time, keep content undefined
               file.versionsMetadataCache[idx].id = result.id;
               file.versionsMetadataCache[idx].created = result.created;
           }
@@ -2044,23 +2141,18 @@ async function saveVersionIfChanged() {
         })
         .catch(e => {
           console.error("Version upload failed", e);
-          // Remove from local list if server failed
           file.versionsMetadataCache = file.versionsMetadataCache.filter(v => v.id !== tempId);
           finalizeUIUpdate();
         });
     } else {
-      // Guest: We already added content to metaData, just save storage
       const finalGuestId = `ver_${Date.now()}`;
       metaData.id = finalGuestId;
-      
       if (!file.versions) file.versions = [];
-      file.versions.unshift(metaData); // Guest needs full object in array
-      
+      file.versions.unshift(metaData); 
       guestStorage.saveData({ categories: state.categories, files: state.files });
       finalizeUIUpdate();
     }
 
-    // Update tracking baseline
     originalContent = currentContent;
     
   } catch (e) {
@@ -2070,18 +2162,17 @@ async function saveVersionIfChanged() {
   }
 }
 
-function enterPreviewMode(version) {
+function enterPreviewMode(version, isLocked = false) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
-  // Capture current state
   if (originalBeforePreview === '') {
+    // Capture state before we switch (so we can switch back cleanly)
     originalBeforePreview = isRichMode && tiptapEditor 
       ? JSON.stringify(tiptapEditor.getJSON())
-      : document.getElementById('textEditor').value;
+      : document.getElementById('textEditor')?.value || '';
     originalEditorMode = isRichMode;
   }
 
-  // Detect Version Type
   const versionIsRich = version.content.trim().startsWith('{"type":"doc"') || version.editor === 'rich';
 
   setToolbarVisibility(false);
@@ -2090,11 +2181,10 @@ function enterPreviewMode(version) {
   const richWrap = document.getElementById('richWrapper');
 
   if (versionIsRich) {
-    // === RICH PREVIEW ===
     plainWrap.classList.add('hidden');
     richWrap.classList.remove('hidden');
     
-    ensureTiptap(); // <--- LAZY LOAD
+    ensureTiptap(); 
     
     try {
       tiptapEditor.commands.setContent(JSON.parse(version.content));
@@ -2104,12 +2194,9 @@ function enterPreviewMode(version) {
     
     tiptapEditor.setOptions({ editable: false });
     document.querySelector('.ProseMirror')?.classList.add('preview-mode');
-
   } else {
-    // === PLAIN PREVIEW ===
-    // If we were in rich mode before, destroy it temporarily
+    // Handle Plain Text preview (rare in this specific Upgrade scenario, but safe to keep)
     if (isRichMode) destroyTiptap();
-
     richWrap.classList.add('hidden');
     plainWrap.classList.remove('hidden');
     
@@ -2119,7 +2206,9 @@ function enterPreviewMode(version) {
     textarea.classList.add('preview-mode');
   }
 
-  createPreviewBanner(version.created);
+  // === PASS isLocked TO BANNER ===
+  createPreviewBanner(version.created, isLocked);
+  
   previewMode = true;
   previewVersion = version;
 }
@@ -2185,28 +2274,32 @@ async function selectFile(id) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (previewMode) exitPreviewMode();
 
+  const file = state.files.find(f => f.id === id);
+  if (!file) return;
+
   // 1. INSTANT VISUAL SELECTION
   state.activeId = id;
   document.querySelectorAll('.file-item').forEach(el => {
       el.classList.toggle('active', el.dataset.id === id);
   });
 
-  const file = state.files.find(f => f.id === id);
-  if (!file) return;
-
-  // 2. LOCK EDITOR DURING DECRYPTION
+  // 2. LOCK EDITOR & SHOW LOADING STATE IMMEDIATELY
+  // This ensures that if we switch back to a loading note, we see "Decrypting"
+  // instead of an empty white box while waiting for the promise.
   if (tiptapEditor) tiptapEditor.setOptions({ editable: false });
   const textarea = document.getElementById('textEditor');
   if (textarea) {
     textarea.disabled = true;
+    textarea.value = ''; // Clear previous content to avoid confusion
     textarea.placeholder = "Decrypting note...";
   }
 
-  // 3. ASYNC DECRYPTION
+  // 3. ASYNC DECRYPTION (Join Promise)
   if (!file._isLoaded && !file.id.startsWith('temp_')) {
       const itemEl = document.querySelector(`.file-item[data-id="${id}"] .file-preview`);
       if (itemEl) itemEl.textContent = "Decrypting...";
       
+      // logic is now handled inside loadNoteDetails to wait for existing promise
       await loadNoteDetails(id);
       
       // Update sidebar element if it exists
@@ -2218,11 +2311,16 @@ async function selectFile(id) {
       }
   }
 
-  // 4. UNLOCK & LOAD EDITOR
+  // 4. RACE CONDITION CHECK
+  // If user clicked Note C while Note A was finishing, activeId will be C.
+  // We should only render if we are still the active note.
+  if (state.activeId !== id) return;
+
+  // 5. UNLOCK & LOAD EDITOR
   loadActiveToEditor();
   updateSidebarInfo(file);
 
-  // 5. UPDATE TABS
+  // 6. UPDATE TABS
   const historyPanel = document.getElementById('version-history');
   if (historyPanel && historyPanel.classList.contains('active')) {
       if (file.versionsMetadataCache) {
@@ -2234,41 +2332,75 @@ async function selectFile(id) {
       }
   }
   
-  // TRIGGER UI: This updates the "Active" note visually and ensures the sidebar is in sync
   finalizeUIUpdate();
 }
+function updateFilePreviewDOM(fileId, text, isError = false) {
+  const previewEl = document.querySelector(`.file-item[data-id="${fileId}"] .file-preview`);
+  if (!previewEl) return;
 
-// Simplified createPreviewBanner
-function createPreviewBanner(date) {
+  previewEl.textContent = text;
+  
+  if (isError) {
+    previewEl.style.color = '#ef4444'; // Red for error
+    previewEl.style.fontWeight = '600';
+  } else if (text === 'Saving...') {
+    previewEl.style.color = 'var(--accent1)'; // Accent color for saving
+    previewEl.style.fontWeight = 'normal';
+  } else {
+    previewEl.style.color = ''; // Reset to default
+    previewEl.style.fontWeight = '';
+  }
+}
+function createPreviewBanner(date, isLocked = false) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  // Remove existing banner
   document.getElementById('previewBanner')?.remove();
 
   const banner = document.createElement('div');
   banner.id = 'previewBanner';
   banner.className = 'preview-banner';
-  banner.innerHTML = `
-    <div class="banner-text">Previewing version from ${formatDate(date)} (Read Only)</div>
-    <div class="banner-actions">
-      <button id="restoreBtn">Restore This Version</button>
-      <button id="cancelBtn">Exit Preview</button>
-    </div>
-  `;
 
-  // Insert into active wrapper before editor
+  if (isLocked) {
+    // === LOCKED STATE (Free User / Rich Note) ===
+    banner.classList.add('locked-banner'); // Optional: for extra CSS styling
+    banner.innerHTML = `
+      <div class="banner-text">
+        <span style="margin-right:8px">🔒</span> 
+        <strong>Read Only:</strong> This is a Rich Text note. Upgrade to edit formatting.
+      </div>
+      <div class="banner-actions">
+        <button id="upgradeLockBtn" class="st-btn-primary small">Upgrade Now</button>
+      </div>
+    `;
+    
+    // Wire up the Upgrade button
+    banner.querySelector('#upgradeLockBtn').onclick = () => {
+       window.location.href = 'Pricing.html'; 
+    };
+
+  } else {
+    // === HISTORY STATE (Standard Preview) ===
+    banner.innerHTML = `
+      <div class="banner-text">Previewing version from ${formatDate(date)} (Read Only)</div>
+      <div class="banner-actions">
+        <button id="restoreBtn">Restore This Version</button>
+        <button id="cancelBtn">Exit Preview</button>
+      </div>
+    `;
+
+    // Wire up Restore/Cancel
+    banner.querySelector('#restoreBtn').onclick = handleRestore;
+    banner.querySelector('#cancelBtn').onclick = () => {
+      exitPreviewMode();
+      highlightSelectedVersion(null);
+    };
+  }
+
+  // Insert banner
   const activeWrapper = document.querySelector('.editor-mode-wrapper:not(.hidden)');
   const editorArea = activeWrapper?.querySelector('.editor-left');
-  
   if (activeWrapper && editorArea) {
     activeWrapper.insertBefore(banner, editorArea);
   }
-
-  // Attach events
-  banner.querySelector('#restoreBtn').onclick = handleRestore;
-  banner.querySelector('#cancelBtn').onclick = () => {
-    exitPreviewMode();
-    highlightSelectedVersion(null);
-  };
 }
 
 async function handleRestore() {
@@ -3148,6 +3280,18 @@ function openShareModal(fileId) {
     shareModal.classList.remove('hidden');
 }
 
+// Prevent closing tab if there are unsaved changes or errors
+window.addEventListener('beforeunload', (e) => {
+  // Check if ANY file has a save error or is currently in the middle of saving
+  const hasUnsavedWork = state.files.some(f => f._saveError || f._isSaving);
+  
+  if (hasUnsavedWork) {
+    e.preventDefault();
+    // Setting returnValue triggers the browser's native "Leave site?" dialog
+    e.returnValue = 'You have unsaved changes.'; 
+  }
+});
+
 document.getElementById('generateShareBtn')?.addEventListener('click', async () => {
     if (!currentShareFileId) return;
     
@@ -3259,10 +3403,12 @@ async function getVersionMetadata(pb, fileId, signal) {
  * NEW: Fetch a SINGLE version's full data and decrypt it.
  * Called only when user clicks a version item.
  */
-async function loadVersionDetails(pb, derivedKey, versionId) {
+// Updated to accept 'signal'
+async function loadVersionDetails(pb, derivedKey, versionId, signal) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   try {
-    const r = await pb.collection('versions').getOne(versionId);
+    // PASS SIGNAL TO POCKETBASE
+    const r = await pb.collection('versions').getOne(versionId, { signal: signal });
     
     let content = '';
     try {
@@ -3277,11 +3423,10 @@ async function loadVersionDetails(pb, derivedKey, versionId) {
       created: r.created,
       content: content,
       editor: r.editor || (content.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain'),
-      _cachedPreview: getPreviewText(content), // Generate preview only now
+      _cachedPreview: getPreviewText(content), 
       lastEditor: r.lastEditor
     };
   } catch (err) {
-    console.error("Failed to load specific version", err);
     throw err;
   }
 }
@@ -3313,36 +3458,50 @@ async function loadNoteDetails(noteId) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const file = state.files.find(f => f.id === noteId);
   
-  if (!file || file._isLoaded || file.id.startsWith('temp_')) return file;
+  if (!file) return null;
+  // If loaded or local temp file, return
+  if (file._isLoaded || file.id.startsWith('temp_')) return file;
   if (!pb.authStore.isValid || !derivedKey) return file;
 
-  try {
-    const r = await pb.collection('files').getOne(noteId);
-    
-    let plaintext = '';
-    if (r.iv && r.authTag && r.encryptedBlob) {
-      // Decrypt directly to local var
-      plaintext = await decryptBlob(
-        { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
-        derivedKey
-      );
-    }
+  // Reuse existing promise
+  if (file._loadingPromise) return file._loadingPromise;
 
-    // Assign directly to state
-    file.content = plaintext;
-    file._isLoaded = true;
-    
-    // Generate preview once and cache it
-    file._cachedPreview = getPreviewText(plaintext);
-    
-    // REMOVED: file._contentLastPreviewed = plaintext;
+  file._loadingPromise = (async () => {
+      try {
+        const r = await pb.collection('files').getOne(noteId);
+        
+        let plaintext = '';
+        if (r.iv && r.authTag && r.encryptedBlob) {
+          plaintext = await decryptBlob(
+            { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
+            derivedKey
+          );
+        }
 
-    return file;
-  } catch (e) {
-    console.error("Failed to load note content", e);
-    file.content = "[Error: Could not load content]";
-    return file;
-  }
+        file.content = plaintext;
+        file._isLoaded = true; // Mark as success
+        file._hasFetchError = false; // Clear error flag
+        file._cachedPreview = getPreviewText(plaintext);
+        
+        return file;
+      } catch (e) {
+        if (!e.isAbort) {
+            console.error("Failed to load note content", e);
+            file.content = "[Error: Could not load content]";
+            
+            // === FIX START ===
+            file._hasFetchError = true; // Flag for Editor UI to disable typing
+            file._isLoaded = false;     // Critical: Keeps it "unloaded" so clicking again triggers a retry
+            // === FIX END ===
+        }
+        return file;
+      } finally {
+        file._loadingPromise = null;
+        if(state.activeId !== noteId) finalizeUIUpdate();
+      }
+  })();
+
+  return file._loadingPromise;
 }
 
 async function loadUserFiles() {
@@ -3509,9 +3668,24 @@ function renderSidebarNotes() {
     d.dataset.id = f.id;
 
     let previewText = '';
+    let isError = false;
+    let isSaving = false;
+
+    // === PRIORITY 1: LOADING / SAVING / ERROR STATES ===
     if (!f._isLoaded) {
-        previewText = 'Click to load preview...';
-    } else {
+        if (f._loadingPromise) previewText = 'Decrypting...';
+        else previewText = 'Click to load preview...';
+    } 
+    else if (f._saveError) {
+        previewText = 'Save Failed';
+        isError = true;
+    }
+    else if (f._isSaving) {
+        previewText = 'Saving...';
+        isSaving = true;
+    }
+    // === PRIORITY 2: CONTENT PREVIEW ===
+    else {
         const rawText = f._cachedPreview || getPreviewText(f.content?.trim() || '');
         if (!rawText) previewText = '[Empty note]';
         else {
@@ -3523,7 +3697,6 @@ function renderSidebarNotes() {
     const contentDiv = document.createElement('div');
     contentDiv.className = 'file-content';
     
-    // FIX: Use textContent for name and preview to safely show HTML tags
     const nameSpan = document.createElement('span');
     nameSpan.className = 'file-name';
     nameSpan.textContent = f.name || 'Untitled';
@@ -3531,6 +3704,14 @@ function renderSidebarNotes() {
     const previewSpan = document.createElement('span');
     previewSpan.className = 'file-preview';
     previewSpan.textContent = previewText;
+
+    // Apply styles based on state
+    if (isError) {
+        previewSpan.style.color = '#ef4444';
+        previewSpan.style.fontWeight = '600';
+    } else if (isSaving) {
+        previewSpan.style.color = 'var(--accent1)';
+    }
 
     contentDiv.appendChild(nameSpan);
     contentDiv.appendChild(previewSpan);
