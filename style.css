@@ -726,11 +726,18 @@ html, body, #app {
 /* ================================================
    TOOLS DROPDOWN - FIXED POSITIONING
    ================================================ */
+/* FIX: Make Tools Dropdown behave like a button group */
 .tools-dropdown {
-  position: relative;
-  display: inline-block;
-  flex-shrink: 0;
+  display: inline-flex !important; /* Forces it to sit side-by-side */
+  align-items: center;
+  height: 36px;       /* Matches button height */
+  margin: 0 4px;      /* Consistent spacing */
+  flex-shrink: 0;     /* Prevents it from squishing/overlapping neighbors */
+  position: relative; /* Keeps context for desktop (Mobile uses fixed) */
+  vertical-align: middle;
 }
+
+
 
 .tools-btn {
   padding: 6px 12px;
@@ -2078,27 +2085,99 @@ html, body, #app {
 .editor-mode-wrapper.hidden {
   display: none !important;
 }
-
 /* ================================================
-   TOP TOOLBAR
+   TOP TOOLBAR - FIXED SCROLLING BEHAVIOR
    ================================================ */
 
-
-.toolbar-slider { 
-  height: 36px; 
-  width: 100%; 
-  overflow-x: auto;
+/* 1. CONTAINER: Must allow overflowing content (dropdowns) to pass through */
+.toolbar-container {
+  z-index: 20;
+  flex-shrink: 0;
+  padding: 1px 0 0 0;
+  margin-bottom: 5px;
+  position: relative;
+  border-right: none;
+  border-radius: 0 0 8px 8px;
+  overflow: visible !important; /* CRITICAL FOR DESKTOP */
 }
 
-.toolbar-panel {
-  display: flex; 
+/* 2. SLIDER - DESKTOP DEFAULT: No Scrollbars, Floating Dropdowns */
+.toolbar-slider {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  height: auto;
+  padding-bottom: 0;
+  
+  /* CRITICAL: Allows dropdowns to hang outside the toolbar */
+  overflow: visible !important; 
+}
+
+/* 3. MOBILE OVERRIDES (Max Width 768px) */
+@media (max-width: 768px) {
+  .toolbar-slider {
+    /* Enable Horizontal Scroll */
+    overflow-x: auto !important;
+    overflow-y: hidden !important; 
+    -webkit-overflow-scrolling: touch;
+    
+    /* Scrollbar Styling */
+    scrollbar-width: thin; 
+    scrollbar-color: #6366f1 transparent;
+    padding-bottom: 6px; 
+  }
+
+  /* Webkit Scrollbar */
+  .toolbar-slider::-webkit-scrollbar {
+    height: 3px;
+    display: block;
+  }
+  .toolbar-slider::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .toolbar-slider::-webkit-scrollbar-thumb {
+    background: #6366f1;
+    border-radius: 10px;
+  }
+
+  /* FIX DROPDOWNS ON MOBILE: Force Fixed Positioning */
+  .tools-dropdown-content, 
+  .dropdown-menu,
+  #editorModeDropdownPlain,
+  #editorModeDropdownRich {
+    position: fixed !important;
+    
+    /* CHANGED: Increased from 60px to 100px to sit BELOW the toolbar buttons */
+    top: 100px !important; 
+    
+    right: 10px !important; /* Anchor to right side */
+    left: auto !important;
+    margin-top: 0 !important;
+    max-height: calc(100vh - 110px); /* Prevent cutting off at bottom */
+    overflow-y: auto;
+    z-index: 10005 !important;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+    border: 1px solid #e2e8f0;
+  }
+}
+
+/* 4. CONTENT WRAPPERS */
+.toolbar-panel, .simple-toolbar {
+  display: flex !important; 
   gap: 8px; 
   align-items: center;
   height: 36px;
   min-width: min-content;
 }
 
-/* --- NEW: Specific Class for Plain Text Buttons --- */
+/* Helper to push items right */
+.ml-auto { margin-left: auto !important; }
+
+/* 5. BUTTON STYLES (Unchanged) */
+.toolbar-btn, .btn-group-item, .rich-btn-item {
+  padding: 10px 14px; 
+}
+
 .plain-btn {
   padding: 6px 12px; 
   border-radius: 8px;
@@ -2125,41 +2204,7 @@ html, body, #app {
   box-shadow: inset 0 1px 3px rgba(0,0,0,.08);
 }
 
-/* ================================================
-   2. MODERN RICH TOOLBAR (Simple Template)
-   ================================================ */
-
-.toolbar-container {
-  z-index: 20;
-  flex-shrink: 0;
-  padding: 1px 0px;
-  margin-bottom: 5px;
-  position: relative;
-  border-right: none;
-  border-radius: 0 0 8px 8px;
-}
-.toolbar-slider {
-  width: 100%;
-  overflow: visible !important; /* Allow dropdowns to show */
-  padding: 4px 4px 4px 1px; /* top:4px, right:1px, bottom:4px, left:4px */
-  display: flex;
-  align-items: center;
-}
-
-/* Match .toolbar-panel sizing from Plain mode */
-.simple-toolbar {
-  display: flex !important;
-  flex-direction: row !important;
-  align-items: center;
-  width: 100%;
-  gap: 8px; /* Consistent gap between groups */
-  padding: 4px;
-}
-/* Helper to push the last item to the right */
-.ml-auto {
-  margin-left: auto !important;
-}
-/* --- Buttons --- */
+/* 6. RICH TEXT BUTTONS & DROPDOWNS */
 .toolbar-btn {
   display: inline-flex;
   align-items: center;
@@ -2175,9 +2220,7 @@ html, body, #app {
   font-size: 1.1rem;
   flex-shrink: 0;
   text-decoration: none;
-  box-shadow: 
-    0 1px 2px rgba(0, 0, 0, 0.03),
-    0 1px 1px rgba(255, 255, 255, 0.8) inset;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 1px 1px rgba(255, 255, 255, 0.8) inset;
 }
 
 .toolbar-btn:hover {
@@ -2185,9 +2228,7 @@ html, body, #app {
   color: #1d4ed8;
   border-color: #bfdbfe;
   transform: translateY(-1px);
-  box-shadow: 
-    0 4px 10px rgba(59, 130, 246, 0.12),
-    0 1px 1px rgba(255, 255, 255, 0.8) inset;
+  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.12), 0 1px 1px rgba(255, 255, 255, 0.8) inset;
 }
 
 .toolbar-btn.is-active {
@@ -2195,12 +2236,9 @@ html, body, #app {
   color: #1d4ed8;
   border-color: #93c5fd;
   font-weight: 600;
-  box-shadow: 
-    0 2px 8px rgba(59, 130, 246, 0.2),
-    inset 0 1px 1px rgba(255, 255, 255, 0.6);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.6);
 }
 
-/* --- Vertical Divider --- */
 .simple-toolbar .divider {
   width: 1px;
   height: 20px;
@@ -2208,7 +2246,6 @@ html, body, #app {
   margin: 0 4px;
 }
 
-/* --- Heading Dropdown --- */
 .dropdown {
   position: relative;
   height: 36px;
@@ -2218,7 +2255,7 @@ html, body, #app {
 
 .dropdown-trigger {
   width: auto !important;
-  height: 36px; /* Match buttons */
+  height: 36px;
   padding: 0 8px;
   font-size: 13px;
   font-weight: 550;
@@ -2275,18 +2312,16 @@ html, body, #app {
   color: #1d4ed8;
 }
 
-/* --- Color Picker Button --- */
 .color-wrapper {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: auto !important; /* Remove fixed width */
-  padding: 11px 14px !important; /* Match button padding */
+  width: auto !important;
+  padding: 11px 14px !important;
   cursor: pointer;
 }
 
-/* Ensure the color input covers the entire area */
 .color-input {
   position: absolute;
   top: 0;
@@ -2303,7 +2338,7 @@ html, body, #app {
   background-color: #f9fafb !important;
   z-index: 2;
 }
-/* --- Switch Mode Button (Align with toolbar height) --- */
+
 .simple-toolbar .switch-mode-btn {
   margin-left: auto !important; 
   height: 36px; 
@@ -2341,77 +2376,9 @@ html, body, #app {
   margin-right: 8px; /* Space between groups */
 }
 
-/* The individual button styling */
-.btn-group-item {
-  position: relative;
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  gap: 8px; /* gap-2 */
-  padding: 8px 12px; /* py-3 px-4 (adjusted slightly for toolbar height) */
-  background-color: #ffffff; /* bg-white */
-  border: 1px solid #e5e7eb; /* border-gray-200 */
-  color: #111827; /* text-gray-900 */
-  font-size: 14px; /* text-sm */
-  font-weight: 500; /* font-medium */
-  line-height: 1.5;
-  cursor: pointer;
-  margin-left: -1px; /* -ml-px (merges borders) */
-  transition: all 0.2s ease-in-out;
-  flex-shrink: 0;
-}
 
-/* First item in group: Round left corners */
-.btn-group-item:first-child {
-  margin-left: 0;
-  border-top-left-radius: 8px;
-  border-bottom-left-radius: 8px;
-}
 
-/* Last item in group: Round right corners */
-.btn-group-item:last-child {
-  border-top-right-radius: 8px;
-  border-bottom-right-radius: 8px;
-}
 
-/* Hover State - Light Indigo Background + Darker Text */
-.btn-group-item:hover {
-  background-color: #eef2ff; /* Light Indigo background */
-  color: #4338ca;            /* Dark Indigo text */
-  border-color: #c7d2fe;     /* Light Indigo border */
-  z-index: 2;                /* Ensure border overlaps neighbors */
-}
-
-/* Force SVGs to change color on hover */
-.btn-group-item:hover svg, 
-.btn-group-item:hover svg path {
-  stroke: currentColor;      /* Uses the text color defined above */
-}
-
-/* Focus State - Fix: Use focus-visible to prevent sticky focus on click */
-.btn-group-item:focus {
-  outline: none; /* Removes default browser outline on click */
-}
-
-.btn-group-item:focus-visible {
-  z-index: 10;
-  outline: none;
-  border-color: #4f46e5; 
-  box-shadow: 0 0 0 2px #4f46e5; 
-}
-
-/* SVG Icon Sizing to match w-4 h-4 (16px) */
-.btn-group-item svg {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-}
-
-/* Tools Dropdown adjustment for new button style */
-.tools-dropdown {
-  display: inline-flex;
-  margin-right: 8px;
-}
 /* =========================================
    VERTICAL DROPDOWN BUTTONS (Tools Menu)
    ========================================= */
@@ -2741,4 +2708,139 @@ html, body, #app {
 @keyframes pulse {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
+}
+/* =================================================================
+   MOBILE RESPONSIVENESS (Max Width 768px)
+   ================================================================= */
+
+/* 1. Base Styles for Mobile Header */
+.mobile-header {
+  display: none; /* Hidden on desktop */
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+  height: 50px;
+  position: relative;
+  z-index: 1001; /* HIGHER than sidebar so button remains clickable */
+}
+
+/* Mobile Logo Adjustments */
+.mobile-logo .logo-icon {
+  height: 24px; /* Slightly smaller for mobile header */
+  width: 24px;
+}
+.mobile-logo .logo-text {
+  font-size: 20px; /* Slightly smaller text */
+}
+
+.mobile-btn {
+  background: transparent;
+  border: none;
+  padding: 8px;
+  cursor: pointer;
+  color: #334155;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+
+.mobile-btn:active {
+  background: #f1f5f9;
+}
+
+.mobile-btn svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* 2. Mobile Overlay (Backdrop) */
+.mobile-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(2px);
+  z-index: 999; /* Behind Sidebar, Above Content */
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.mobile-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* =========================================
+   MEDIA QUERY
+   ========================================= */
+@media (max-width: 768px) {
+
+  /* A. Show Mobile Header */
+  .mobile-header {
+    display: flex;
+  }
+  .tools-dropdown {
+    margin-left: 16px; /* Creates space between the Replace group and Tools button */
+  }
+  /* B. Transform Left Sidebar into Drawer */
+  .sidebar {
+    position: fixed;
+    top: 50px; /* Starts BELOW the header */
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    background: #ffffff;
+    z-index: 1000; /* Between Overlay and Header */
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 10px 0 25px rgba(0,0,0,0.1);
+    border-right: none;
+  }
+
+  .sidebar.active {
+    transform: translateX(0);
+  }
+
+  /* C. Transform Right Sidebar (Info/History) into Drawer */
+  .editor-right {
+    position: fixed;
+    top: 50px; /* Starts BELOW the header */
+    right: 0;
+    bottom: 0;
+    width: 300px;
+    background: #ffffff;
+    z-index: 1000;
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: -10px 0 25px rgba(0,0,0,0.1);
+    border-left: none;
+  }
+
+  .editor-right.active {
+    transform: translateX(0);
+  }
+
+  /* D. Editor Area adjustments */
+  .workspace {
+    width: 100%;
+    margin: 0;
+    /* Height is viewport minus header */
+    height: calc(100vh - 50px); 
+  }
+
+  .editor-container {
+    padding: 0;
+    width: 100%;
+  }
+
+
+
+  /* F. Hide Logo inside Sidebar (since it's now in the header) */
+  .sidebar .sb-head {
+    display: none;
+  }
 }
