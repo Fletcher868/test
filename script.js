@@ -73,7 +73,66 @@ const guestStorage = {
 };
 
 
+/* =================================================================
+   MOBILE UI LOGIC
+   ================================================================= */
+function setupMobileUI() {
+  const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+  const mobileInfoBtn = document.getElementById('mobileInfoBtn');
+  const overlay = document.getElementById('mobileOverlay');
+  const sidebar = document.querySelector('.sidebar');
+  const rightSidebar = document.querySelector('.editor-right');
 
+  // Helper to close all
+  const closeAllDrawers = () => {
+    sidebar.classList.remove('active');
+    rightSidebar.classList.remove('active');
+    overlay.classList.remove('active');
+  };
+
+  // Toggle Left Sidebar
+  if (mobileMenuBtn) {
+    mobileMenuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isActive = sidebar.classList.contains('active');
+      closeAllDrawers(); // Close others first
+      if (!isActive) {
+        sidebar.classList.add('active');
+        overlay.classList.add('active');
+      }
+    });
+  }
+
+  // Toggle Right Sidebar
+  if (mobileInfoBtn) {
+    mobileInfoBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isActive = rightSidebar.classList.contains('active');
+      closeAllDrawers(); // Close others first
+      if (!isActive) {
+        rightSidebar.classList.add('active');
+        overlay.classList.add('active');
+      }
+    });
+  }
+
+  // Close when clicking overlay
+  if (overlay) {
+    overlay.addEventListener('click', closeAllDrawers);
+  }
+
+  // OPTIONAL: Auto-close sidebar when a file is selected on mobile
+  // We attach this to the file list container
+  const filesList = document.getElementById('filesList');
+  if (filesList) {
+    filesList.addEventListener('click', (e) => {
+      // Only close if we clicked a file-item AND we are on mobile (window width < 768)
+      if (window.innerWidth < 768 && e.target.closest('.file-item')) {
+        closeAllDrawers();
+      }
+    });
+  }
+}
 
 
 // ===================================================================
@@ -199,6 +258,8 @@ document.getElementById('upgradeFromPreviewBtn')?.addEventListener('click', () =
 
 async function initPocketBase() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+    setupMobileUI(); 
+
   pb = new PocketBase(PB_URL);
 
   setupEditorSwitching();
@@ -333,6 +394,7 @@ async function login(email, password) {
 async function signup(name, email, password) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   try {
+    // 1. Client-Side Encryption
     const saltArray = randomSalt();
     const saltB64 = arrayToB64(saltArray);
     const masterKey = await deriveMasterKey(password, saltArray);
@@ -348,19 +410,50 @@ async function signup(name, email, password) {
     };
     const wrappedB64 = btoa(JSON.stringify(wrappedObj));
 
+    // 2. Server Request
     await pb.collection('users').create({ 
       name, 
-      email, 
+      email: email.toLowerCase(), 
       password, 
       passwordConfirm: password, 
       encryptionSalt: saltB64,
       wrappedKey: wrappedB64
     });
     
+    // 3. Auto-Login
     return await login(email, password);
+
   } catch (e) {
-    alert('Signup failed: ' + e.message);
-    return false;
+    // Case 1: Validation Error (400)
+    if (e.status === 400) {
+        // Extract validation errors from nested structure (e.data.data)
+        const responseData = e.data || {}; 
+        const fieldErrors = responseData.data || {}; 
+
+        if (fieldErrors.email) {
+            throw new Error("This email is already registered. Please log in.");
+        }
+        if (fieldErrors.username) {
+            throw new Error("Username is already taken.");
+        }
+        if (fieldErrors.password) {
+            throw new Error("Password must be at least 10 characters.");
+        }
+        if (fieldErrors.passwordConfirm) {
+            throw new Error("Passwords do not match.");
+        }
+
+        // Fallback message
+        throw new Error(responseData.message || "Invalid registration details.");
+    }
+    
+    // Case 2: Offline
+    if (e.status === 0 || e.isAbort) {
+        throw new Error("No internet connection. Please check your network.");
+    }
+
+    // Case 3: Other Server Error
+    throw new Error(e.message || "Server error. Please try again later.");
   }
 }
 
@@ -2891,14 +2984,37 @@ document.getElementById('submitLogin')?.addEventListener('click', async () => {
   if (e && p) await login(e, p);
 });
 document.getElementById('submitSignup')?.addEventListener('click', async () => {
-  const n = document.getElementById('signupName').value.trim();
-  const e = document.getElementById('signupEmail').value.trim();
-  const p = document.getElementById('signupPassword').value;
-  const pc = document.getElementById('signupPasswordConfirm').value;
+  // UI Elements
+  const btn = document.getElementById('submitSignup');
+  const nameInput = document.getElementById('signupName');
+  const emailInput = document.getElementById('signupEmail');
+  const passInput = document.getElementById('signupPassword');
+  const confirmInput = document.getElementById('signupPasswordConfirm');
 
+  // 1. Capture Values & Normalize
+  const n = nameInput.value.trim();
+  const e = emailInput.value.trim().toLowerCase(); 
+  const p = passInput.value; 
+  const pc = confirmInput.value;
+
+  // 2. Basic Validation
   if (!n || !e || !p || !pc) {
     return alert('Please fill in all fields.');
   }
+
+  // --- START FIX: Field Length Limits ---
+  if (n.length > 100) {
+    return alert('Username is too long. Maximum 100 characters allowed.');
+  }
+  
+  if (e.length > 150) {
+    return alert('Email is too long. Maximum 150 characters allowed.');
+  }
+
+  if (p.length > 128) {
+    return alert('Password is too long. Maximum 128 characters allowed.');
+  }
+  // --- END FIX ---
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(e)) {
@@ -2913,7 +3029,32 @@ document.getElementById('submitSignup')?.addEventListener('click', async () => {
     return alert('Password must be at least 10 characters long.');
   }
 
-  await signup(n, e, p);
+  // 3. START LOADING STATE
+  const originalText = btn.textContent;
+  btn.disabled = true; 
+  btn.textContent = "Creating Account..."; 
+  btn.style.cursor = "wait";
+  btn.style.opacity = "0.7";
+
+  try {
+    // 4. Attempt Signup
+    await signup(n, e, p);
+    
+  } catch (err) {
+    // 5. HANDLE ERRORS
+    alert(err.message);
+    
+    // Reset UI
+    btn.disabled = false;
+    btn.textContent = originalText;
+    btn.style.cursor = "pointer";
+    btn.style.opacity = "1";
+    
+    // UX Focus
+    if (err.message.toLowerCase().includes("email")) {
+        emailInput.select();
+    }
+  }
 });
 document.querySelectorAll('#backToMenu, #backToMenuSignup').forEach(b => b.addEventListener('click', showMenu));
 document.addEventListener('click', e => {
