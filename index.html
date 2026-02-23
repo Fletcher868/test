@@ -209,7 +209,35 @@
 <!-- LEFT: Toolbar + Editor (ONE container, full height) -->
 <div class="editor-container">
 
-  <!-- === MODE 1: PLAIN TEXT (Your Existing Setup) === -->
+<!-- === MOBILE HEADER (Visible only on < 768px) === -->
+<div class="mobile-header">
+  <!-- Menu Button -->
+  <button id="mobileMenuBtn" class="mobile-btn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </button>
+  
+  <!-- Logo (Reused from Sidebar) -->
+  <a href="/" class="logo-link mobile-logo">
+    <svg class="logo-icon" viewBox="0 0 24 24">
+      <use href="#icon-logo"/>
+    </svg>
+    <div class="logo-text">Krypt<span>Note</span></div>
+  </a>
+  
+  <!-- Info/Right Sidebar Button -->
+  <button id="mobileInfoBtn" class="mobile-btn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10"></circle>
+      <line x1="12" y1="16" x2="12" y2="12"></line>
+      <line x1="12" y1="8" x2="12.01" y2="8"></line>
+    </svg>
+  </button>
+</div>
+
 <!-- === MODE 1: PLAIN TEXT === -->
   <div id="plainWrapper" class="editor-mode-wrapper">
     <!-- TOOLBAR -->
@@ -232,7 +260,7 @@
         <!-- GROUP 2: Clipboard (With NEW ICONS) -->
         <div class="btn-group">
           <!-- Copy -->
-          <button id="copyBtn" class="btn-group-item" title="Copy">
+          <button id="copyBtn" class="rich-btn-item" title="Copy">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M8.66667 15.3333V19.3333C8.66667 20.8061 9.86057 22 11.3333 22H19.3333C20.8061 22 22 20.8061 22 19.3333V11.3333C22 9.86057 20.8061 8.66667 19.3333 8.66667H15.3333M4.66667 15.3333H12.6667C14.1394 15.3333 15.3333 14.1394 15.3333 12.6667V4.66667C15.3333 3.19391 14.1394 2 12.6667 2H4.66667C3.19391 2 2 3.19391 2 4.66667V12.6667C2 14.1394 3.19391 15.3333 4.66667 15.3333Z" stroke="#111827" stroke-width="1.6" stroke-linecap="round" class="my-path"></path>
             </svg>
@@ -240,7 +268,7 @@
           </button>
 
           <!-- Cut -->
-          <button id="cutBtn" class="btn-group-item" title="Cut">
+          <button id="cutBtn" class="rich-btn-item" title="Cut">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M8.52464 15.8155C9.58965 17.0908 9.4241 18.9922 8.15487 20.0624C6.88565 21.1325 4.99338 20.9661 3.92838 19.6908C2.86337 18.4155 3.02892 16.5141 4.29815 15.4439C5.56737 14.3738 7.45964 14.5401 8.52464 15.8155ZM8.52464 15.8155L19.2493 6.77307" stroke="#111827" stroke-width="1.6" stroke-linecap="round" class="my-path"></path>
               <path d="M8.71703 8.18449C7.65202 9.45984 5.75975 9.62619 4.49053 8.55605C3.22131 7.48591 3.05575 5.58452 4.12076 4.30917C5.18576 3.03383 7.07803 2.86748 8.34726 3.93762C9.61648 5.00776 9.78203 6.90915 8.71703 8.18449ZM8.71703 8.18449L19.4416 17.2269" stroke="#111827" stroke-width="1.6" stroke-linecap="round" class="my-path"></path>
@@ -250,7 +278,7 @@
           </button>
 
           <!-- Paste -->
-          <button id="pasteBtn" class="btn-group-item" title="Paste">
+          <button id="pasteBtn" class="rich-btn-item" title="Paste">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M20 8.25V18C20 21 18.21 22 16 22H8C5.79 22 4 21 4 18V8.25C4 5 5.79 4.25 8 4.25C8 4.87 8.24997 5.43 8.65997 5.84C9.06997 6.25 9.63 6.5 10.25 6.5H13.75C14.99 6.5 16 5.49 16 4.25C18.21 4.25 20 5 20 8.25Z" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
               <path d="M16 4.25C16 5.49 14.99 6.5 13.75 6.5H10.25C9.63 6.5 9.06997 6.25 8.65997 5.84C8.24997 5.43 8 4.87 8 4.25C8 3.01 9.01 2 10.25 2H13.75C14.37 2 14.93 2.25 15.34 2.66C15.75 3.07 16 3.63 16 4.25Z" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
@@ -263,15 +291,15 @@
 
         <!-- GROUP 3: Editing Tools -->
         <div class="btn-group">
-          <button id="selectAllBtn" class="btn-group-item" title="Select All">
+          <button id="selectAllBtn" class="rich-btn-item" title="Select All">
             <svg class="btn-icon"><use href="#icon-select-all"/></svg>
             <span class="btn-text">Select All</span>
           </button>
-          <button id="findDockBtn" class="btn-group-item" title="Find">
+          <button id="findDockBtn" class="rich-btn-item" title="Find">
             <svg class="btn-icon"><use href="#icon-search"/></svg>
             <span class="btn-text">Find</span>
           </button>
-          <button id="replaceDockBtn" class="btn-group-item" title="Replace">
+          <button id="replaceDockBtn" class="rich-btn-item" title="Replace">
             <svg class="btn-icon"><use href="#icon-replace"/></svg>
             <span class="btn-text">Replace</span>
           </button>
@@ -279,7 +307,7 @@
           
         <!-- Tools Dropdown (Kept separate or grouped) -->
         <div class="tools-dropdown">
-          <button id="toolsMenuBtn" class="btn-group-item" style="border-radius: 8px;">
+          <button id="toolsMenuBtn" class="rich-btn-item" style="border-radius: 8px;">
             <svg class="btn-icon"><use href="#icon-tools"/></svg>
             <span class="btn-text">Tools</span>
           </button>
@@ -309,7 +337,7 @@
 <!-- EDITOR MODE SWITCHER (Plain Toolbar) -->
 <div class="tools-dropdown ml-auto">
   <!-- Trigger -->
-  <button id="editorModeTriggerPlain" class="btn-group-item" style="border-radius: 8px; gap: 6px; min-width: 120px; justify-content: space-between;">
+  <button id="editorModeTriggerPlain" class="rich-btn-item" style="border-radius: 8px; gap: 6px; min-width: 120px; justify-content: space-between;">
     <span class="current-mode-label">Plain Text</span>
     <svg class="btn-icon"><use href="#icon-chevron-down"/></svg>
   </button>
@@ -458,7 +486,7 @@
         <!-- EDITOR MODE SWITCHER (Rich Toolbar) -->
         <div class="tools-dropdown ml-auto">
           <!-- Trigger -->
-            <button id="editorModeTriggerRich" class="btn-group-item" style="border-radius: 8px; gap: 6px; min-width: 120px; justify-content: space-between;">
+            <button id="editorModeTriggerRich" class="rich-btn-item" style="border-radius: 8px; gap: 6px; min-width: 120px; justify-content: space-between;">
     <span class="current-mode-label">Super Editor</span>
     <svg class="btn-icon"><use href="#icon-chevron-down"/></svg>
   </button>
@@ -908,6 +936,7 @@
 </div>
   <!-- Scripts -->
   <!-- icons.js moved to the bottom of body to fix "null" error -->
+   <div id="mobileOverlay" class="mobile-overlay hidden"></div>
   <script src="icons.js"></script>
   <script src="crypto.js" type="module"></script>
   <script src="settings.js" type="module"></script>
