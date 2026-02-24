@@ -153,7 +153,28 @@
         /* --- FOOTER --- */
         footer { border-top: 1px solid var(--border); background: white; padding: 4rem 0 2rem; text-align: center; }
         .copyright { color: #94a3b8; font-size: 0.875rem; }
-        
+        /* --- MOBILE MENU STYLES --- */
+@media (max-width: 767px) {
+    .nav-links.mobile-open {
+        display: flex;
+        flex-direction: column;
+        position: absolute;
+        top: 64px;
+        left: 0;
+        right: 0;
+        background: white;
+        padding: 2rem;
+        border-bottom: 1px solid var(--border);
+        box-shadow: var(--shadow-lg);
+        gap: 1.5rem;
+        z-index: 99;
+    }
+    
+    /* Override the helper class when menu is open */
+    .nav-links.mobile-open.hidden-mobile {
+        display: flex; 
+    }
+}
     </style>
     <!-- Google Fonts: Inter (Required for Logo) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -261,6 +282,18 @@
             <p class="copyright">© 2026 KryptNote. All rights reserved.</p>
         </div>
     </footer>
+<script>
+    const menuBtn = document.querySelector('.mobile-menu-btn');
+    const navLinks = document.querySelector('.nav-links');
 
+    if (menuBtn && navLinks) {
+        menuBtn.addEventListener('click', () => {
+            // Toggle the class that applies the mobile styles
+            navLinks.classList.toggle('mobile-open');
+            // Toggle the utility class that hides it
+            navLinks.classList.toggle('hidden-mobile');
+        });
+    }
+</script>
 </body>
 </html>
