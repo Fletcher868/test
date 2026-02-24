@@ -699,26 +699,22 @@ async function createFile() {
   })) + 1 : 0;
   const name = nextNum === 0 ? baseName : `${baseName}_${nextNum}`;
 
-  // 2. STRICT TIMESTAMP LOGIC:
-  // Find the timestamp of the newest note currently in the list
+  // 2. STRICT TIMESTAMP LOGIC
   let newestExistingTime = 0;
   if (state.files.length > 0) {
       newestExistingTime = Math.max(...state.files.map(f => new Date(f.updated).getTime()));
   }
-  
-  // Ensure the new note is at least 1ms newer than the newest existing note
   const now = Date.now();
   const safeNewTime = new Date(Math.max(now, newestExistingTime + 1)).toISOString();
 
+  // 3. Create optimistic local file object
   const tempId = `temp_${Date.now()}`;
-
-  // 3. Optimistic local file object
   const newFile = {
     id: tempId,
     name,
     content: '',
     created: safeNewTime,
-    updated: safeNewTime, // This ensures it stays at the top
+    updated: safeNewTime,
     categoryId: targetCategoryId,
     _isLoaded: true,
     _cachedPreview: '[Empty note]',
@@ -731,15 +727,19 @@ async function createFile() {
 
   loadActiveToEditor();
   originalContent = '';
-  
-  // Trigger immediate sort and render
   finalizeUIUpdate();
 
-  // 5. Background Persistence
+  // 5. Persistence
   if (pb.authStore.isValid && derivedKey) {
     createFileOnServer(tempId, name, targetCategoryId);
   } else {
+    // FIX: Assign a permanent Guest ID immediately instead of leaving it as temp_
+    const guestId = `guest_${Date.now()}`;
+    newFile.id = guestId;
+    if (state.activeId === tempId) state.activeId = guestId;
+    
     guestStorage.saveData({ categories: state.categories, files: state.files });
+    finalizeUIUpdate(); // Refresh UI to show the real Guest ID
   }
 }
 
@@ -855,17 +855,28 @@ async function createCategory(name) {
 
 async function saveFile(file) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  file.updated = new Date().toISOString();
-  if (file.id.startsWith('temp_')) return;
   
+  const isGuest = !pb.authStore.isValid;
+  file.updated = new Date().toISOString();
+  
+  // Guard for server-side temp files
+  if (!isGuest && file.id.startsWith('temp_')) return;
+
+  // Track this specific attempt
+  const currentAttemptId = Date.now();
+  file._lastSaveAttempt = currentAttemptId;
+
   // 1. UI: Set "Saving..." state
-  file._isSaving = true;     // Flag for renderSidebarNotes
-  file._saveError = false;   // Reset error flag
-  updateFilePreviewDOM(file.id, "Saving...");
+  file._isSaving = true;     
+  file._saveError = false;   
+  
+  // Show "Saving..." only for logged in users initially (Guest handles it in try/catch)
+  if (!isGuest) {
+    updateFilePreviewDOM(file.id, "Saving...");
+  }
 
-  if (pb.authStore.isValid && derivedKey) {
+  if (!isGuest && derivedKey) {
     const editorMode = isRichMode ? 'rich' : 'plain';
-
     try {
         const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
         const categoryRecord = state.categories.find(c => c.localId === file.categoryId || c.id === file.categoryId);
@@ -881,41 +892,55 @@ async function saveFile(file) {
           lastEditor: SESSION_ID 
         });
 
-        // 2. SUCCESS: Revert to actual content preview
-        file._isSaving = false;
-        
-        // Use the cached preview we generated in handleAutoSave
-        const contentPreview = file._cachedPreview || "Loaded";
-        // formatting the preview text (first line only)
-        const displayPreview = contentPreview.split('\n')[0].substring(0, 35) + (contentPreview.length > 35 ? '...' : '');
-        
-        updateFilePreviewDOM(file.id, displayPreview);
+        // 2. SUCCESS
+        if (file._lastSaveAttempt === currentAttemptId) {
+            file._isSaving = false;
+            file._saveError = false;
+            finalizeUIUpdate(); 
+        }
 
     } catch (e) { 
-        // 3. ERROR: Show Failed state and KEEP IT
+        // 3. ERROR HANDLING
+        if (e.isAbort || e.status === 0) return;
+
+        if (file._lastSaveAttempt === currentAttemptId) {
+            file._isSaving = false;
+            file._saveError = true;
+            console.error("Actual Save Error:", e);
+            
+            let errorMsg = "Save Failed";
+            if (e.status === 400 || e.status === 403) errorMsg = "Plan Limit";
+            else if (e.status === 413) errorMsg = "Too Large";
+            
+            updateFilePreviewDOM(file.id, errorMsg, true); 
+        }
+    }
+  } else {
+    // === GUEST MODE ===
+    try {
+        guestStorage.saveData({ categories: state.categories, files: state.files });
+        
+        // Success
+        file._isSaving = false;
+        file._saveError = false;
+        finalizeUIUpdate();
+        
+    } catch (e) {
+        // === GUEST STORAGE FULL ===
+        console.warn("Guest Save Failed:", e);
+        
+        // Reset flags immediately so it doesn't get stuck
         file._isSaving = false;
         file._saveError = true;
         
-        console.error("Save Error:", e);
-
-        // Determine error message
-        let errorMsg = "Save Failed";
-        const isLikelyPlanError = (editorMode === 'rich') && (e.status === 400 || e.status === 403);
-        if (isLikelyPlanError) errorMsg = "Plan Limit";
-        else if (e.status === 413) errorMsg = "Too Large";
-        
-        updateFilePreviewDOM(file.id, errorMsg, true); // true = isError
-        
-        // Optional: Show toast for details
-        if (isLikelyPlanError) showToast("Premium feature: Rich text requires a Pro plan.");
+        // Check for QuotaExceededError (Browsers name it differently)
+        if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22) {
+            // Explicitly update DOM to "Storage Full"
+            updateFilePreviewDOM(file.id, "Storage Full", true);
+        } else {
+            updateFilePreviewDOM(file.id, "Save Error", true);
+        }
     }
-  } else {
-    // Guest Mode (Local Storage is instant, but let's simulate the UI state for consistency)
-    guestStorage.saveData({ categories: state.categories, files: state.files });
-    file._isSaving = false;
-    const contentPreview = file._cachedPreview || "Loaded";
-    const displayPreview = contentPreview.split('\n')[0].substring(0, 35) + (contentPreview.length > 35 ? '...' : '');
-    updateFilePreviewDOM(file.id, displayPreview);
   }
 }
 
@@ -1910,7 +1935,20 @@ function renderVersionList(file, versionsMetadata) {
   if (!versionsMetadata || versionsMetadata.length === 0) {
     html += `<li class="muted">No previous versions saved yet.</li>`;
   } else {
+    // === CRITICAL FIX: DEDUPLICATION ===
+    // Use a Map to ensure unique IDs only. 
+    // If duplicates exist, this keeps the first one (newest) and discards the rest.
+    const uniqueVersions = [];
+    const seenIds = new Set();
+
     versionsMetadata.forEach(v => {
+        if (!seenIds.has(v.id)) {
+            seenIds.add(v.id);
+            uniqueVersions.push(v);
+        }
+    });
+
+    uniqueVersions.forEach(v => {
       const loadingClass = v.id.startsWith('temp_version_') ? ' version-loading' : '';
       const loadingIndicator = v.id.startsWith('temp_version_') ? ' <span class="loading-dots">Saving...</span>' : '';
       
@@ -1935,42 +1973,23 @@ function renderVersionList(file, versionsMetadata) {
   versionList.innerHTML = html;
 
   // 3. Listeners
-  
-  // A. Current Version Click
   versionList.querySelector('.version-current')?.addEventListener('click', () => {
-    // If clicking current, abort any history download
     if (activeVersionController) activeVersionController.abort();
     exitPreviewMode();
     loadActiveToEditor();
     highlightSelectedVersion(null);
   });
 
-  // B. History Item Click
   versionList.querySelectorAll('.version-item').forEach(item => {
     item.addEventListener('click', async () => {
       const versionId = item.dataset.versionId;
       
-      // === CHECK 1: Ignore if this version is actively saving (temp) ===
       if (item.classList.contains('version-loading')) return;
+      if (previewMode && previewVersion && previewVersion.id === versionId) return;
+      if (item.classList.contains('is-fetching')) return;
 
-      // === CHECK 2: Ignore if this version is ALREADY displayed ===
-      if (previewMode && previewVersion && previewVersion.id === versionId) {
-          console.log("Version already displayed.");
-          return;
-      }
-
-      // === CHECK 3: Ignore if this specific version is CURRENTLY downloading ===
-      if (item.classList.contains('is-fetching')) {
-          console.log("Version already downloading.");
-          return;
-      }
-
-      // === STEP 1: Abort Previous Download ===
-      // If we are downloading Version A, and clicked Version B, stop A.
       if (activeVersionController) {
           activeVersionController.abort();
-          
-          // Reset UI of the PREVIOUS item
           const prevItem = versionList.querySelector('.version-item.is-fetching');
           if (prevItem) {
               prevItem.classList.remove('is-fetching');
@@ -1979,7 +1998,6 @@ function renderVersionList(file, versionsMetadata) {
           }
       }
 
-      // === STEP 2: Start New Download ===
       activeVersionController = new AbortController();
       const currentSignal = activeVersionController.signal; 
 
@@ -1993,25 +2011,20 @@ function renderVersionList(file, versionsMetadata) {
         if (pb.authStore.isValid) {
             fullVersion = await loadVersionDetails(pb, derivedKey, versionId, currentSignal);
         } else {
+            // Guest Mode: simple find
             fullVersion = file.versions.find(v => v.id === versionId);
         }
 
-        // Checkpoint: Did we get aborted while waiting?
         if (currentSignal.aborted) return;
 
         if (fullVersion) {
             enterPreviewMode(fullVersion);
             highlightSelectedVersion(versionId);
-            // Update preview text locally
             previewEl.textContent = fullVersion._cachedPreview || 'Loaded';
-            
-            // NOTE: We do NOT save fullVersion.content to versionsMetadataCache here
-            // This ensures RAM is freed when we switch away.
         }
 
       } catch (err) {
         if (err.name === 'AbortError' || currentSignal.aborted) return;
-
         showToast("Failed to load version");
         previewEl.textContent = "Error loading content";
       } finally {
@@ -2143,7 +2156,6 @@ async function saveVersionIfChanged() {
   // 1. Get Current Content
   if (isRichMode && tiptapEditor) {
     if (tiptapEditor.isEmpty) { 
-        // Capture specific empty structure for consistency
         currentContent = JSON.stringify(tiptapEditor.getJSON());
     } else {
         currentContent = JSON.stringify(tiptapEditor.getJSON());
@@ -2157,26 +2169,17 @@ async function saveVersionIfChanged() {
   if (currentContent === originalContent) return;
   if (isSavingVersion) return;
 
-  // 3. === FIX: ROBUST EMPTY CHECK (Rich & Plain) ===
+  // 3. ROBUST EMPTY CHECK
   const isRichContentEmpty = (str) => {
     try {
       if (!str || !str.startsWith('{')) return false;
       const json = JSON.parse(str);
-      
-      // Case 1: Completely empty doc
       if (!json.content || json.content.length === 0) return true;
-      
-      // Case 2: Single block (Paragraph or Heading)
       if (json.content.length === 1 && ['paragraph', 'heading'].includes(json.content[0].type)) {
          const children = json.content[0].content;
-         // No text nodes or images inside
          if (!children || children.length === 0) return true;
-         
-         // Check if children are only whitespace text
          const hasMeaningfulContent = children.some(child => {
-             // If it's an image, embed, etc., it's not empty
              if (child.type !== 'text') return true;
-             // If it's text, it must have non-whitespace characters
              return child.text && child.text.trim() !== '';
          });
          return !hasMeaningfulContent;
@@ -2189,21 +2192,19 @@ async function saveVersionIfChanged() {
   const isRichEmpty = isRichContentEmpty(originalContent);
 
   if (isPlainEmpty || isRichEmpty) {
-      // Just update the baseline to the new content so we track future changes
-      // BUT do not save a history version for this empty state.
       originalContent = currentContent; 
       return; 
   }
 
   isSavingVersion = true;
+  const tempId = `temp_version_${Date.now()}`;
 
   try {
-    const tempId = `temp_version_${Date.now()}`;
     const backupContent = originalContent; 
     const actualEditorMode = backupContent.trim().startsWith('{"type":"doc"') ? 'rich' : 'plain';
     const previewTxt = getPreviewText(backupContent);
 
-    // 4. Create Metadata Object
+    // 4. Create Metadata Object (Initially with tempId)
     const metaData = {
         id: tempId,
         created: new Date().toISOString(),
@@ -2212,17 +2213,17 @@ async function saveVersionIfChanged() {
         content: !pb.authStore.isValid ? backupContent : undefined 
     };
     
-    // 5. Update Cache
+    // 5. Update UI Cache (This makes "Saving..." appear)
     if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
     file.versionsMetadataCache.unshift(metaData);
     
-    // 6. Update UI
     if (document.getElementById('version-history')?.classList.contains('active')) {
       renderVersionList(file, file.versionsMetadataCache);
     }
     
-    // 7. Persistence
+    // 6. Persistence
     if (pb.authStore.isValid && derivedKey) {
+      // SERVER LOGIC
       createVersionSnapshot(pb, derivedKey, file.id, backupContent, actualEditorMode)
         .then(result => {
           const idx = file.versionsMetadataCache.findIndex(v => v.id === tempId);
@@ -2238,18 +2239,43 @@ async function saveVersionIfChanged() {
           finalizeUIUpdate();
         });
     } else {
+      // === GUEST MODE LOGIC ===
       const finalGuestId = `ver_${Date.now()}`;
-      metaData.id = finalGuestId;
+      
+      // Update the reference directly (updates the object in versionsMetadataCache too)
+      metaData.id = finalGuestId; 
+      
       if (!file.versions) file.versions = [];
       file.versions.unshift(metaData); 
-      guestStorage.saveData({ categories: state.categories, files: state.files });
-      finalizeUIUpdate();
+      
+      try {
+        guestStorage.saveData({ categories: state.categories, files: state.files });
+        finalizeUIUpdate();
+      } catch (e) {
+        // === STORAGE FULL HANDLING ===
+        console.warn("Guest Version Save Skipped (Storage Full)");
+
+        // 1. Remove from Data Array
+        if (file.versions) file.versions.shift();
+        
+        // 2. Remove from UI Cache
+        // Note: metaData.id is now finalGuestId, so we filter by that AND tempId
+        file.versionsMetadataCache = file.versionsMetadataCache.filter(v => v.id !== finalGuestId && v.id !== tempId);
+        
+        // 3. Force UI Update to remove the spinner
+        finalizeUIUpdate();
+      }
     }
 
     originalContent = currentContent;
     
   } catch (e) {
-    console.error('Version save failed:', e);
+    console.error('Version save critical error:', e);
+    // Safety cleanup
+    if (file && file.versionsMetadataCache) {
+      file.versionsMetadataCache = file.versionsMetadataCache.filter(v => v.id !== tempId);
+    }
+    finalizeUIUpdate();
   } finally {
     isSavingVersion = false;
   }
@@ -3381,26 +3407,17 @@ function handleAutoSave(newContent) {
   if (file.content !== newContent) {
       file.content = newContent;
       file.updated = new Date().toISOString();
-      
-      // Sync the metadata field
       file.editor = isRichMode ? 'rich' : 'plain';
 
-      // Optimized preview generation
+      // 1. Generate and cache preview snippet
       const plainText = getPreviewText(newContent);
       file._cachedPreview = plainText;
       
-      // REMOVED: file._contentLastPreviewed = newContent; (Redundant memory usage)
-
-      // Update Sidebar UI Preview
-      const previewEl = document.querySelector(`.file-item[data-id="${file.id}"] .file-preview`);
-      if (previewEl) {
-          const firstLine = plainText.split('\n')[0] || '[Empty note]';
-          previewEl.textContent = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
-      }
-
+      // 2. Debounce the actual save to disk/server (800ms)
       clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => saveFile(file), 800);
 
+      // 3. Trigger UI update. renderSidebarNotes will use the new _cachedPreview
       finalizeUIUpdate();
       updateSidebarInfo(file);
   }
@@ -3649,18 +3666,10 @@ async function loadUserFiles() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
   if (pb.authStore.isValid && derivedKey) {
+    // ... (Server logic remains the same) ...
     try {
       let serverCats = await pb.collection('categories').getFullList({ sort: 'sortOrder, created' });
-      
-      if (serverCats.length === 0) {
-        serverCats = await createDefaultCategories();
-      } else {
-          serverCats = serverCats.map(c => {
-              if (c.iconName === 'icon-work') c.localId = DEFAULT_CATEGORY_IDS.WORK;
-              else if (c.iconName === 'icon-delete') c.localId = DEFAULT_CATEGORY_IDS.TRASH;
-              return c;
-          });
-      }
+      // ... existing server category logic ...
       state.categories = serverCats;
 
       const records = await getNoteMetadata();
@@ -3675,21 +3684,28 @@ async function loadUserFiles() {
         _isLoaded: false, 
         _cachedPreview: null 
       }));
-
-    } catch (e) { 
-        console.error("PocketBase Load Failed:", e); 
-    }
+    } catch (e) { console.error("PocketBase Load Failed:", e); }
   } else {
+    // === GUEST MODE ===
     let localData = guestStorage.loadData();
     if (!localData || !localData.categories) {
       localData = guestStorage.initData();
       guestStorage.saveData(localData);
     }
     state.categories = localData.categories;
+    
     state.files = localData.files.map(f => ({
       ...f, 
       _isLoaded: true,
-      versionsMetadataCache: f.versions || []
+      // CRITICAL FIX: Create a shallow COPY of the versions array
+      // This prevents 'saveVersionIfChanged' from pushing to the same array twice
+      versionsMetadataCache: f.versions ? [...f.versions] : [],
+      
+      // Reset runtime flags
+      _isSaving: false,
+      _saveError: false,
+      _loadingPromise: null,
+      _lastSaveAttempt: 0
     })); 
   }
 
@@ -3697,12 +3713,11 @@ async function loadUserFiles() {
     await createFile();
   }
   
-  // Triggers selectCategory -> selectFile -> finalizeUIUpdate
   await selectCategory(state.activeCategoryId, true); 
 }
 
 function getPreviewText(content) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  // console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]); // Optional debug
   if (!content) return '';
 
   try {
@@ -3728,8 +3743,8 @@ function getPreviewText(content) {
     // Not JSON, fall through
   }
   
-  // Return plain text clipped
-  return content.substring(0, 150);
+  // FIX: Trim FIRST to remove leading newlines/spaces, then slice
+  return content.trim().substring(0, 150);
 }
 function destroyTiptap() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
