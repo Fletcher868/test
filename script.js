@@ -34,7 +34,7 @@ let saveTimeout = null;
 let originalBeforePreview = ''; 
 let activeVersionController = null; // Track the current version fetch
 
-const PB_URL = 'https://paleontographical-gabrielle-mightiest.ngrok-free.dev/';
+const PB_URL = 'https://pam-unhideous-chastenedly.ngrok-free.dev/';
 let pb = null, 
     // UPDATE: Added categories and set default active category
     state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK }, 
@@ -49,6 +49,15 @@ let isFinalizingUI = false;
 let versionHistoryController = null;
 let uiUpdateQueued = false;
 let originalEditorMode = null;
+const sharedDateFormatter = new Intl.DateTimeFormat('default', {
+  year: 'numeric', 
+  month: 'numeric', 
+  day: 'numeric',
+  hour: '2-digit', 
+  minute: '2-digit'
+});
+let saveQueue = [];
+let isProcessingQueue = false;
 // ===================================================================
 // 1. GUEST STORAGE BACKEND (localStorage)
 // ===================================================================
@@ -673,7 +682,14 @@ async function selectCategory(categoryIdentifier, shouldSelectFile = true) {
       finalizeUIUpdate();
   }
 }
-
+function saveGuestDataClean() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const cleanFiles = state.files.map(f => {
+    const { _isSaving, _isQueued, _loadingPromise, _waitStarted, ...rest } = f;
+    return rest;
+  });
+  guestStorage.saveData({ categories: state.categories, files: cleanFiles });
+}
 
 async function createFile() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
@@ -689,7 +705,6 @@ async function createFile() {
     return;
   }
 
-  // 1. Generate unique name
   const today = new Date().toISOString().slice(0, 10);
   const baseName = `Note ${today}`;
   const sameDay = state.files.filter(f => f.name?.startsWith(baseName));
@@ -699,47 +714,41 @@ async function createFile() {
   })) + 1 : 0;
   const name = nextNum === 0 ? baseName : `${baseName}_${nextNum}`;
 
-  // 2. STRICT TIMESTAMP LOGIC
-  let newestExistingTime = 0;
-  if (state.files.length > 0) {
-      newestExistingTime = Math.max(...state.files.map(f => new Date(f.updated).getTime()));
-  }
-  const now = Date.now();
-  const safeNewTime = new Date(Math.max(now, newestExistingTime + 1)).toISOString();
+  const now = new Date().toISOString();
+  // Ensure this is slightly higher than any current timestamp
+  const localSortTime = Date.now(); 
 
-  // 3. Create optimistic local file object
   const tempId = `temp_${Date.now()}`;
   const newFile = {
     id: tempId,
     name,
     content: '',
-    created: safeNewTime,
-    updated: safeNewTime,
+    created: now,
+    updated: now,
+    _localSortTime: localSortTime,
     categoryId: targetCategoryId,
     _isLoaded: true,
     _cachedPreview: '[Empty note]',
-    _contentLastPreviewed: ''
   };
 
-  // 4. Immediate state and UI update
+  // Use unshift to be safe, though .sort() in finalizeUIUpdate handles it
   state.files.unshift(newFile);
   state.activeId = tempId;
 
   loadActiveToEditor();
   originalContent = '';
+  
+  // Refresh UI immediately
   finalizeUIUpdate();
 
-  // 5. Persistence
   if (pb.authStore.isValid && derivedKey) {
     createFileOnServer(tempId, name, targetCategoryId);
   } else {
-    // FIX: Assign a permanent Guest ID immediately instead of leaving it as temp_
     const guestId = `guest_${Date.now()}`;
     newFile.id = guestId;
     if (state.activeId === tempId) state.activeId = guestId;
-    
     guestStorage.saveData({ categories: state.categories, files: state.files });
-    finalizeUIUpdate(); // Refresh UI to show the real Guest ID
+    finalizeUIUpdate();
   }
 }
 
@@ -759,24 +768,41 @@ async function createFileOnServer(tempId, name, targetCategoryId) {
       iv: arrayToB64(iv),
       authTag: arrayToB64(authTag),
       encryptedBlob: arrayToB64(ciphertext),
-      editor: 'plain', // Default to plain for new notes
+      editor: 'plain',
       lastEditor: SESSION_ID
     }, { requestKey: null });
 
     const tempFile = state.files.find(f => f.id === tempId);
     if (tempFile) {
+      // Replace ID in queue immediately
+      const qIndex = saveQueue.indexOf(tempId);
+      if (qIndex !== -1) saveQueue[qIndex] = result.id;
+
       tempFile.id = result.id;
-      const serverTime = new Date(result.updated).getTime();
-      const localTime = new Date(tempFile.updated).getTime();
-      if (serverTime > localTime) tempFile.updated = result.updated;
       tempFile.created = result.created;
+      tempFile.updated = result.updated;
       if (state.activeId === tempId) state.activeId = result.id;
+      
+      // Clean up the wait timer
+      delete tempFile._waitStarted;
     }
     finalizeUIUpdate();
   } catch (e) {
+    console.error("Failed to create file on server:", e);
+    
+    // CRITICAL: Cleanup if creation failed
+    saveQueue = saveQueue.filter(id => id !== tempId);
+    const file = state.files.find(f => f.id === tempId);
+    if (file) {
+        file._saveError = true;
+        file._isQueued = false;
+        updateFilePreviewDOM(tempId, "Creation Failed", true);
+    }
+
     if (e.status === 0 || e.isAbort) return;
-    state.files = state.files.filter(f => f.id !== tempId);
-    if (state.activeId === tempId) state.activeId = null;
+    
+    // Optional: Only delete from local state if it's a hard error (not a timeout)
+    // state.files = state.files.filter(f => f.id !== tempId);
     finalizeUIUpdate();
   }
 }
@@ -856,94 +882,115 @@ async function createCategory(name) {
 async function saveFile(file) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
-  const isGuest = !pb.authStore.isValid;
-  file.updated = new Date().toISOString();
-  
-  // Guard for server-side temp files
-  if (!isGuest && file.id.startsWith('temp_')) return;
+  // Note: We no longer update _localSortTime here. 
+  // It was already updated instantly in handleAutoSave.
 
-  // Track this specific attempt
-  const currentAttemptId = Date.now();
-  file._lastSaveAttempt = currentAttemptId;
-
-  // 1. UI: Set "Saving..." state
-  file._isSaving = true;     
-  file._saveError = false;   
-  
-  // Show "Saving..." only for logged in users initially (Guest handles it in try/catch)
-  if (!isGuest) {
-    updateFilePreviewDOM(file.id, "Saving...");
+  if (!saveQueue.includes(file.id)) {
+    saveQueue.push(file.id);
   }
+  
+  file._isQueued = true;
+  file._saveError = false;
+  delete file._waitStarted; 
 
-  if (!isGuest && derivedKey) {
-    const editorMode = isRichMode ? 'rich' : 'plain';
-    try {
-        const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
-        const categoryRecord = state.categories.find(c => c.localId === file.categoryId || c.id === file.categoryId);
-        const pbCategoryId = categoryRecord?.id || file.categoryId;
+  updateFilePreviewDOM(file.id, "Queued");
 
-        await pb.collection('files').update(file.id, {
-          name: file.name,
-          category: pbCategoryId, 
-          iv: arrayToB64(iv),
-          authTag: arrayToB64(authTag),
-          encryptedBlob: arrayToB64(ciphertext),
-          editor: editorMode, 
-          lastEditor: SESSION_ID 
-        });
-
-        // 2. SUCCESS
-        if (file._lastSaveAttempt === currentAttemptId) {
-            file._isSaving = false;
-            file._saveError = false;
-            finalizeUIUpdate(); 
-        }
-
-    } catch (e) { 
-        // 3. ERROR HANDLING
-        if (e.isAbort || e.status === 0) return;
-
-        if (file._lastSaveAttempt === currentAttemptId) {
-            file._isSaving = false;
-            file._saveError = true;
-            console.error("Actual Save Error:", e);
-            
-            let errorMsg = "Save Failed";
-            if (e.status === 400 || e.status === 403) errorMsg = "Plan Limit";
-            else if (e.status === 413) errorMsg = "Too Large";
-            
-            updateFilePreviewDOM(file.id, errorMsg, true); 
-        }
-    }
-  } else {
-    // === GUEST MODE ===
-    try {
-        guestStorage.saveData({ categories: state.categories, files: state.files });
-        
-        // Success
-        file._isSaving = false;
-        file._saveError = false;
-        finalizeUIUpdate();
-        
-    } catch (e) {
-        // === GUEST STORAGE FULL ===
-        console.warn("Guest Save Failed:", e);
-        
-        // Reset flags immediately so it doesn't get stuck
-        file._isSaving = false;
-        file._saveError = true;
-        
-        // Check for QuotaExceededError (Browsers name it differently)
-        if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22) {
-            // Explicitly update DOM to "Storage Full"
-            updateFilePreviewDOM(file.id, "Storage Full", true);
-        } else {
-            updateFilePreviewDOM(file.id, "Save Error", true);
-        }
-    }
+  if (!isProcessingQueue) {
+    processSaveQueue();
   }
 }
 
+async function processSaveQueue() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (isProcessingQueue) return;
+  isProcessingQueue = true;
+
+  while (saveQueue.length > 0) {
+    const currentId = saveQueue[0];
+    const file = state.files.find(f => f.id === currentId);
+
+    // 1. If file disappeared from state, remove from queue
+    if (!file) {
+      console.warn("Queue item not found, removing:", currentId);
+      saveQueue.shift();
+      continue;
+    }
+
+    // 2. HANDLE TEMP ID HANGS
+    if (file.id.startsWith('temp_')) {
+      // Initialize a wait timer if not present
+      if (!file._waitStarted) file._waitStarted = Date.now();
+      
+      const waitDuration = Date.now() - file._waitStarted;
+
+      // If waiting for more than 10 seconds, assume the creation failed
+      if (waitDuration > 10000) {
+        console.error("Timed out waiting for real ID for:", currentId);
+        file._saveError = true;
+        file._isQueued = false;
+        delete file._waitStarted;
+        updateFilePreviewDOM(file.id, "Connection Error", true);
+        saveQueue.shift(); // Move to next note
+        continue;
+      }
+
+      console.log(`Waiting for real ID (${Math.round(waitDuration/1000)}s)...`);
+      await new Promise(r => setTimeout(r, 1000)); // Wait 1 second before checking again
+      continue; 
+    }
+
+    // 3. Clear wait timer if it exists (note now has real ID)
+    if (file._waitStarted) delete file._waitStarted;
+
+    // 4. Proceed with Saving
+    file._isQueued = false;
+    file._isSaving = true;
+    updateFilePreviewDOM(file.id, "Saving...");
+
+    try {
+      await performActualSave(file);
+      file._saveError = false;
+      
+      const rawText = file._cachedPreview || getPreviewText(file.content);
+      const display = rawText.split('\n')[0].substring(0, 35);
+      updateFilePreviewDOM(file.id, display || "[Empty note]");
+    } catch (e) {
+      console.error("Save failed for", file.id, e);
+      file._saveError = true;
+      updateFilePreviewDOM(file.id, "Save Failed", true);
+    } finally {
+      file._isSaving = false;
+      saveQueue.shift(); 
+    }
+  }
+
+  isProcessingQueue = false;
+}
+
+async function performActualSave(file) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  if (pb.authStore.isValid && derivedKey) {
+    const editorMode = file.editor || (isRichMode ? 'rich' : 'plain');
+    const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
+    
+    const categoryRecord = state.categories.find(c => c.localId === file.categoryId || c.id === file.categoryId);
+    const pbCategoryId = categoryRecord?.id || file.categoryId;
+
+    await pb.collection('files').update(file.id, {
+      name: file.name,
+      category: pbCategoryId, 
+      iv: arrayToB64(iv),
+      authTag: arrayToB64(authTag),
+      encryptedBlob: arrayToB64(ciphertext),
+      editor: editorMode, 
+      lastEditor: SESSION_ID 
+    });
+  } else {
+    // Guest Mode path
+    saveGuestDataClean();
+  }
+}
 
 
 async function clearTrash() {
@@ -1191,7 +1238,7 @@ function ensureSidebarStructure() {
  * PART 1: Render Categories Only (Heavy logic: sorting, counting, DOM creation)
  */
 function renderSidebarCategories() {
-  console.error('[EXECUTING] renderSidebarCategories'); // Uncomment for debugging
+  console.error('[EXECUTING] renderSidebarCategories'); 
   const { catContainer } = ensureSidebarStructure();
   if (!catContainer) return;
 
@@ -1229,10 +1276,7 @@ function renderSidebarCategories() {
     if (!e.target.closest('.new-note-btn-small')) {
       isCategoriesExpanded = !isCategoriesExpanded;
       localStorage.setItem('kryptNote_categoriesExpanded', isCategoriesExpanded.toString());
-      
-      // Update categories view
       renderSidebarCategories();
-      // Update notes header (spacing/collapse state)
       renderSidebarNotes(); 
     }
   });
@@ -1283,10 +1327,17 @@ function renderSidebarCategories() {
         const isDeletable = !isTrash && !isWork; 
         
         const folderItem = createFolderItem(c.name, identifier, isActive, c.iconName, getNoteCount(c), isDeletable, isTrash);
-        folderItem.addEventListener('click', e => {
+        
+        // === BUG FIX: Use 'mousedown' here too ===
+        folderItem.addEventListener('mousedown', async e => {
             if (e.target.closest('.more-btn')) return; 
+            
+            // Save current note before switching category views
+            if (state.activeId) {
+                await saveVersionIfChanged();
+            }
+
             selectCategory(identifier);
-            // Must update both: "Active" class changes in Categories, List changes in Notes
             renderSidebarCategories();
             renderSidebarNotes();
         });
@@ -1300,7 +1351,6 @@ function renderSidebarCategories() {
     catContainer.appendChild(divider);
   }
 }
-
 
 
 /**
@@ -1916,18 +1966,21 @@ async function updateVersionHistory(file = null) {
 }
 
 function renderVersionList(file, versionsMetadata) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]); 
   const versionList = document.getElementById('versionList');
   if (!versionList) return;
   
   versionList.classList.remove('loading');
   versionList.dataset.currentFileId = file.id;
 
-  // 1. Header
+  // 1. Header (Current Version)
+  // Optimization: Calculate current date once
+  const currentFormatted = formatDate(file.updated);
+  
   let html = `
     <li class="version-current">
       <strong>Current version</strong>
-      <small>${formatDate(file.updated)}</small>
+      <small>${currentFormatted}</small>
     </li>
   `; 
 
@@ -1935,44 +1988,52 @@ function renderVersionList(file, versionsMetadata) {
   if (!versionsMetadata || versionsMetadata.length === 0) {
     html += `<li class="muted">No previous versions saved yet.</li>`;
   } else {
-    // === CRITICAL FIX: DEDUPLICATION ===
-    // Use a Map to ensure unique IDs only. 
-    // If duplicates exist, this keeps the first one (newest) and discards the rest.
-    const uniqueVersions = [];
+    // Deduplication Set
     const seenIds = new Set();
+    
+    // Performance: Use a DocumentFragment string builder approach
+    // We iterate the array ONLY ONCE
+    for (let i = 0; i < versionsMetadata.length; i++) {
+        const v = versionsMetadata[i];
+        
+        // Skip duplicates
+        if (seenIds.has(v.id)) continue;
+        seenIds.add(v.id);
 
-    versionsMetadata.forEach(v => {
-        if (!seenIds.has(v.id)) {
-            seenIds.add(v.id);
-            uniqueVersions.push(v);
+        // === PERFORMANCE CACHE ===
+        // If we calculated this string before, reuse it.
+        // This makes re-renders (like when clicking items) instant.
+        if (!v._formattedDate) {
+            v._formattedDate = formatDate(v.created);
         }
-    });
 
-    uniqueVersions.forEach(v => {
-      const loadingClass = v.id.startsWith('temp_version_') ? ' version-loading' : '';
-      const loadingIndicator = v.id.startsWith('temp_version_') ? ' <span class="loading-dots">Saving...</span>' : '';
-      
-      let previewSnippet = v._cachedPreview;
-      if (!previewSnippet && v.content) previewSnippet = getPreviewText(v.content);
-      if (!previewSnippet) previewSnippet = "Click to load preview...";
-      if (previewSnippet.length > 50) previewSnippet = previewSnippet.substring(0, 50) + "...";
+        const loadingClass = v.id.startsWith('temp_version_') ? ' version-loading' : '';
+        const loadingIndicator = v.id.startsWith('temp_version_') ? ' <span class="loading-dots">Saving...</span>' : '';
+        
+        let previewSnippet = v._cachedPreview;
+        if (!previewSnippet && v.content) previewSnippet = getPreviewText(v.content);
+        if (!previewSnippet) previewSnippet = "Click to load preview...";
+        if (previewSnippet.length > 50) previewSnippet = previewSnippet.substring(0, 50) + "...";
 
-      const metaInfo = v.editor === 'rich' ? 'Rich Text' : 'Plain Text';
-      
-      html += `
-        <li class="version-item${loadingClass}" data-version-id="${v.id}">
-          <div class="v-row">
-            <strong>${formatDate(v.created)}${loadingIndicator}</strong>
-            <span class="v-meta">${metaInfo}</span>
-          </div>
-          <small class="v-preview">${previewSnippet}</small>
-        </li>
-      `;
-    });
+        const metaInfo = v.editor === 'rich' ? 'Rich Text' : 'Plain Text';
+        
+        // Use v._formattedDate (Cached)
+        html += `
+          <li class="version-item${loadingClass}" data-version-id="${v.id}">
+            <div class="v-row">
+              <strong>${v._formattedDate}${loadingIndicator}</strong>
+              <span class="v-meta">${metaInfo}</span>
+            </div>
+            <small class="v-preview">${previewSnippet}</small>
+          </li>
+        `;
+    }
   }
+  
+  // Single DOM write
   versionList.innerHTML = html;
 
-  // 3. Listeners
+  // 3. Listeners (Delegation would be faster, but keeping existing logic for safety)
   versionList.querySelector('.version-current')?.addEventListener('click', () => {
     if (activeVersionController) activeVersionController.abort();
     exitPreviewMode();
@@ -1980,7 +2041,9 @@ function renderVersionList(file, versionsMetadata) {
     highlightSelectedVersion(null);
   });
 
-  versionList.querySelectorAll('.version-item').forEach(item => {
+  const items = versionList.querySelectorAll('.version-item');
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
     item.addEventListener('click', async () => {
       const versionId = item.dataset.versionId;
       
@@ -1988,6 +2051,7 @@ function renderVersionList(file, versionsMetadata) {
       if (previewMode && previewVersion && previewVersion.id === versionId) return;
       if (item.classList.contains('is-fetching')) return;
 
+      // Abort previous fetches
       if (activeVersionController) {
           activeVersionController.abort();
           const prevItem = versionList.querySelector('.version-item.is-fetching');
@@ -2011,8 +2075,8 @@ function renderVersionList(file, versionsMetadata) {
         if (pb.authStore.isValid) {
             fullVersion = await loadVersionDetails(pb, derivedKey, versionId, currentSignal);
         } else {
-            // Guest Mode: simple find
-            fullVersion = file.versions.find(v => v.id === versionId);
+            const f = state.files.find(file => file.id === state.activeId);
+            fullVersion = f?.versions?.find(v => v.id === versionId);
         }
 
         if (currentSignal.aborted) return;
@@ -2034,7 +2098,7 @@ function renderVersionList(file, versionsMetadata) {
         }
       }
     });
-  });
+  }
 
   if (previewMode && previewVersion) highlightSelectedVersion(previewVersion.id);
   else highlightSelectedVersion(null);
@@ -2454,19 +2518,20 @@ async function selectFile(id) {
   finalizeUIUpdate();
 }
 function updateFilePreviewDOM(fileId, text, isError = false) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const previewEl = document.querySelector(`.file-item[data-id="${fileId}"] .file-preview`);
   if (!previewEl) return;
 
   previewEl.textContent = text;
   
   if (isError) {
-    previewEl.style.color = '#ef4444'; // Red for error
+    previewEl.style.color = '#ef4444'; 
     previewEl.style.fontWeight = '600';
-  } else if (text === 'Saving...') {
-    previewEl.style.color = 'var(--accent1)'; // Accent color for saving
+  } else if (text === 'Saving...' || text === 'Queued') {
+    previewEl.style.color = 'var(--accent1)'; 
     previewEl.style.fontWeight = 'normal';
   } else {
-    previewEl.style.color = ''; // Reset to default
+    previewEl.style.color = ''; 
     previewEl.style.fontWeight = '';
   }
 }
@@ -2715,10 +2780,9 @@ function highlightSelectedVersion(versionId) {
 }
 
 function formatDate(dateString) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (!dateString) return '—';
-  const date = new Date(dateString);
-  return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // Fast: uses the pre-built formatter
+  return sharedDateFormatter.format(new Date(dateString));
 }
 
 function downloadNote(file) {
@@ -3028,19 +3092,9 @@ document.getElementById('submitSignup')?.addEventListener('click', async () => {
     return alert('Please fill in all fields.');
   }
 
-  // --- START FIX: Field Length Limits ---
-  if (n.length > 100) {
-    return alert('Username is too long. Maximum 100 characters allowed.');
-  }
-  
-  if (e.length > 150) {
-    return alert('Email is too long. Maximum 150 characters allowed.');
-  }
-
-  if (p.length > 128) {
-    return alert('Password is too long. Maximum 128 characters allowed.');
-  }
-  // --- END FIX ---
+  if (n.length > 100) return alert('Username is too long. Max 100 characters.');
+  if (e.length > 150) return alert('Email is too long. Max 150 characters.');
+  if (p.length > 128) return alert('Password is too long. Max 128 characters.');
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(e)) {
@@ -3056,7 +3110,8 @@ document.getElementById('submitSignup')?.addEventListener('click', async () => {
   }
 
   // 3. START LOADING STATE
-  const originalText = btn.textContent;
+  // Store original text or default to "Create Account" to be safe
+  const originalText = "Create Account"; 
   btn.disabled = true; 
   btn.textContent = "Creating Account..."; 
   btn.style.cursor = "wait";
@@ -3065,18 +3120,30 @@ document.getElementById('submitSignup')?.addEventListener('click', async () => {
   try {
     // 4. Attempt Signup
     await signup(n, e, p);
+
+    // === FIX: RESET BUTTON ON SUCCESS ===
+    // This ensures that if you logout later, the button is back to normal
+    btn.disabled = false;
+    btn.textContent = originalText;
+    btn.style.cursor = "";
+    btn.style.opacity = "";
+    
+    // Clear form inputs
+    nameInput.value = '';
+    emailInput.value = '';
+    passInput.value = '';
+    confirmInput.value = '';
     
   } catch (err) {
     // 5. HANDLE ERRORS
     alert(err.message);
     
-    // Reset UI
+    // Reset UI on Error
     btn.disabled = false;
     btn.textContent = originalText;
-    btn.style.cursor = "pointer";
-    btn.style.opacity = "1";
+    btn.style.cursor = "";
+    btn.style.opacity = "";
     
-    // UX Focus
     if (err.message.toLowerCase().includes("email")) {
         emailInput.select();
     }
@@ -3405,20 +3472,24 @@ function handleAutoSave(newContent) {
   if (!file) return;
 
   if (file.content !== newContent) {
+      // 1. Update Content
       file.content = newContent;
-      file.updated = new Date().toISOString();
       file.editor = isRichMode ? 'rich' : 'plain';
-
-      // 1. Generate and cache preview snippet
-      const plainText = getPreviewText(newContent);
-      file._cachedPreview = plainText;
       
-      // 2. Debounce the actual save to disk/server (800ms)
+      // 2. INSTANT SORT UPDATE: Move to top immediately in the local UI
+      file._localSortTime = Date.now(); 
+      file.updated = new Date().toISOString();
+
+      // 3. Generate preview
+      file._cachedPreview = getPreviewText(newContent);
+      
+      // 4. Trigger UI Refresh so it moves to top instantly
+      finalizeUIUpdate();
+
+      // 5. Debounce the actual server/disk save
       clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => saveFile(file), 800);
-
-      // 3. Trigger UI update. renderSidebarNotes will use the new _cachedPreview
-      finalizeUIUpdate();
+      
       updateSidebarInfo(file);
   }
 }
@@ -3662,15 +3733,22 @@ async function loadNoteDetails(noteId) {
   return file._loadingPromise;
 }
 
+
+
 async function loadUserFiles() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
   if (pb.authStore.isValid && derivedKey) {
-    // ... (Server logic remains the same) ...
     try {
       let serverCats = await pb.collection('categories').getFullList({ sort: 'sortOrder, created' });
-      // ... existing server category logic ...
-      state.categories = serverCats;
+      if (serverCats.length === 0) serverCats = await createDefaultCategories();
+      
+      state.categories = serverCats.map(c => {
+          if (c.iconName === 'icon-work') c.localId = DEFAULT_CATEGORY_IDS.WORK;
+          else if (c.iconName === 'icon-delete') c.localId = DEFAULT_CATEGORY_IDS.TRASH;
+          else c.localId = c.id; 
+          return c;
+      });
 
       const records = await getNoteMetadata();
       state.files = records.map(r => ({
@@ -3679,39 +3757,26 @@ async function loadUserFiles() {
         content: null, 
         created: r.created, 
         updated: r.updated, 
+        _localSortTime: new Date(r.updated).getTime(), // <--- INITIALIZE FROM SERVER
         categoryId: r.category,
         editor: r.editor || 'plain',
         _isLoaded: false, 
         _cachedPreview: null 
       }));
-    } catch (e) { console.error("PocketBase Load Failed:", e); }
+    } catch (e) { console.error(e); }
   } else {
-    // === GUEST MODE ===
-    let localData = guestStorage.loadData();
-    if (!localData || !localData.categories) {
-      localData = guestStorage.initData();
-      guestStorage.saveData(localData);
-    }
+    // Guest Mode
+    let localData = guestStorage.loadData() || guestStorage.initData();
     state.categories = localData.categories;
-    
     state.files = localData.files.map(f => ({
       ...f, 
       _isLoaded: true,
-      // CRITICAL FIX: Create a shallow COPY of the versions array
-      // This prevents 'saveVersionIfChanged' from pushing to the same array twice
-      versionsMetadataCache: f.versions ? [...f.versions] : [],
-      
-      // Reset runtime flags
-      _isSaving: false,
-      _saveError: false,
-      _loadingPromise: null,
-      _lastSaveAttempt: 0
+      _localSortTime: new Date(f.updated).getTime() // <--- INITIALIZE FROM LOCAL
     })); 
   }
 
-  if (state.files.length === 0) {
-    await createFile();
-  }
+  if (state.files.length === 0) await createFile();
+  if (!state.activeCategoryId) state.activeCategoryId = DEFAULT_CATEGORY_IDS.WORK;
   
   await selectCategory(state.activeCategoryId, true); 
 }
@@ -3814,9 +3879,10 @@ function renderSidebarNotes() {
   notesHeader.appendChild(newNoteBtnSmall);
   noteContainer.appendChild(notesHeader);
   
+  // STABLE SORT: Strictly use the local interaction timestamp
   const filteredFiles = state.files
     .filter(f => f.categoryId === (activeCategory?.id || state.activeCategoryId) || f.categoryId === activeCategory?.localId)
-    .sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime());
+    .sort((a, b) => (b._localSortTime || 0) - (a._localSortTime || 0));
 
   filteredFiles.forEach(f => {
     const d = document.createElement('div');
@@ -3825,12 +3891,10 @@ function renderSidebarNotes() {
 
     let previewText = '';
     let isError = false;
-    let isSaving = false;
+    let isStatus = false;
 
-    // === PRIORITY 1: LOADING / SAVING / ERROR STATES ===
     if (!f._isLoaded) {
-        if (f._loadingPromise) previewText = 'Decrypting...';
-        else previewText = 'Click to load preview...';
+        previewText = f._loadingPromise ? 'Decrypting...' : 'Click to load...';
     } 
     else if (f._saveError) {
         previewText = 'Save Failed';
@@ -3838,9 +3902,12 @@ function renderSidebarNotes() {
     }
     else if (f._isSaving) {
         previewText = 'Saving...';
-        isSaving = true;
+        isStatus = true;
     }
-    // === PRIORITY 2: CONTENT PREVIEW ===
+    else if (f._isQueued) {
+        previewText = 'Queued';
+        isStatus = true;
+    }
     else {
         const rawText = f._cachedPreview || getPreviewText(f.content?.trim() || '');
         if (!rawText) previewText = '[Empty note]';
@@ -3861,11 +3928,10 @@ function renderSidebarNotes() {
     previewSpan.className = 'file-preview';
     previewSpan.textContent = previewText;
 
-    // Apply styles based on state
     if (isError) {
         previewSpan.style.color = '#ef4444';
         previewSpan.style.fontWeight = '600';
-    } else if (isSaving) {
+    } else if (isStatus) {
         previewSpan.style.color = 'var(--accent1)';
     }
 
@@ -3879,8 +3945,10 @@ function renderSidebarNotes() {
     d.appendChild(contentDiv);
     d.appendChild(moreBtn);
 
-    d.addEventListener('click', e => {
-      if (!e.target.closest('.more-btn')) selectFile(f.id);
+    d.addEventListener('mousedown', async e => {
+      if (e.target.closest('.more-btn')) return;
+      if (state.activeId && state.activeId !== f.id) await saveVersionIfChanged(); 
+      selectFile(f.id);
     });
 
     moreBtn.addEventListener('click', e => {
@@ -3891,8 +3959,6 @@ function renderSidebarNotes() {
     noteContainer.appendChild(d);
   });
 }
-
-
 
 // Init
 initPocketBase();
