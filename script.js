@@ -1,11 +1,4 @@
 import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.es.mjs';
-import { 
-  deriveMasterKey, generateDataKey, wrapDataKey, unwrapDataKey, 
-  exportKeyToString, storeDataKeyInSession, loadDataKeyFromSession, 
-  encryptBlob, decryptBlob, randomSalt, arrayToB64, b64ToArray ,
-  generateShareKey, exportKeyToUrl
-} from './crypto.js';
-
 import { Editor } from 'https://esm.sh/@tiptap/core@2.2.4';
 import StarterKit from 'https://esm.sh/@tiptap/starter-kit@2.2.4';
 import TextStyle from 'https://esm.sh/@tiptap/extension-text-style@2.2.4';
@@ -16,6 +9,12 @@ import TextAlign from 'https://esm.sh/@tiptap/extension-text-align@2.2.4';
 import Placeholder from 'https://esm.sh/@tiptap/extension-placeholder@2.2.4';
 import { initSettings } from './settings.js'; 
 import { setupExport } from './export.js'; 
+import { 
+  deriveMasterKey, generateDataKey, wrapDataKey, unwrapDataKey, 
+  exportKeyToString, storeDataKeyInSession, loadDataKeyFromSession, 
+  encryptBlob, decryptBlob, randomSalt, arrayToB64, b64ToArray ,
+  generateShareKey, exportKeyToUrl
+} from './crypto.js';
 
 // NEW: PocketBase default category IDs for new user initialization
 const DEFAULT_CATEGORY_IDS = {
@@ -142,7 +141,34 @@ function setupMobileUI() {
     });
   }
 }
+// Helper to encrypt short strings (names/titles) into a single packed string
+async function packEncrypt(text, key) {
+    console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+    if (!key) return text;
+    const { iv, authTag, ciphertext } = await encryptBlob(text, key);
+    return JSON.stringify({
+        i: arrayToB64(iv),
+        a: arrayToB64(authTag),
+        c: arrayToB64(ciphertext)
+    });
+}
 
+// Helper to decrypt packed strings, with fallback for old plaintext names
+async function packDecrypt(packed, key) {
+    console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+    if (!key || !packed) return packed;
+    try {
+        const json = JSON.parse(packed);
+        if (!json.i || !json.a || !json.c) return packed; // Not our encrypted format
+        return await decryptBlob({
+            iv: b64ToArray(json.i),
+            authTag: b64ToArray(json.a),
+            ciphertext: b64ToArray(json.c)
+        }, key);
+    } catch (e) {
+        return packed; // Return as-is if it's old plaintext
+    }
+}
 
 // ===================================================================
 // POCKETBASE & AUTH
@@ -267,27 +293,32 @@ document.getElementById('upgradeFromPreviewBtn')?.addEventListener('click', () =
 
 async function initPocketBase() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-    setupMobileUI(); 
+  setupMobileUI(); 
+
+  // 1. Initial Start (Message update)
+  toggleAppLoading(true, "Loading Secure Environment...");
 
   pb = new PocketBase(PB_URL);
-
   setupEditorSwitching();
 
   if (pb.authStore.isValid) {
     try {
       await pb.collection('users').authRefresh();
       memoizedIsPremium = null; 
+      // This calls restoreEncryptionKeyAndLoad which handles file fetching
       await restoreEncryptionKeyAndLoad();
     } catch (err) {
-      console.warn("Session expired:", err);
       logout();
     }
   } else {
-    loadUserFiles();
+    // Guest flow
+    await loadUserFiles();
     updateProfileState();
   }
 
-  // CHANGED: Removed extra arguments
+  // 2. ONLY HIDE ONCE EVERYTHING IS LOADED
+  toggleAppLoading(false);
+  
   initSettings(pb, state, derivedKey);
 }
 
@@ -356,20 +387,20 @@ async function restoreEncryptionKeyAndLoad() {
 
 async function login(email, password) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  if (previewMode) {
-    exitPreviewMode();
-    highlightSelectedVersion(null);
-  }
+  
+  const btn = document.getElementById('submitLogin');
+  if (previewMode) exitPreviewMode();
+
+  // START LOADING
+  toggleAppLoading(true, "Decrypting Vault...");
 
   try {
     const authData = await pb.collection('users').authWithPassword(email, password);
     const user = authData.record;
 
-    // --- INSTANT UI UPDATE ---
     memoizedIsPremium = null;
     updateProfileState(); 
     document.getElementById('profileDropdown').classList.add('hidden');
-    // -------------------------
 
     if (!user.wrappedKey) throw new Error("Account missing security keys.");
 
@@ -385,18 +416,23 @@ async function login(email, password) {
 
     const dkStr = await exportKeyToString(derivedKey);
     storeDataKeyInSession(dkStr);
-
     localStorage.removeItem(GUEST_STORAGE_KEY); 
-    
+
+    // Sync files
     await loadUserFiles();
     setupRealtimeSubscription(); 
     setupExport(pb, derivedKey, showToast);
 
     showToast('Logged in! Notes decrypted.');
     return true;
+
   } catch (e) {
     alert('Login failed: ' + e.message);
+    loadUserFiles(); // Restore guest view
     return false;
+  } finally {
+    // STOP LOADING
+    toggleAppLoading(false);
   }
 }
 
@@ -469,36 +505,43 @@ async function signup(name, email, password) {
 
 function logout() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  if (previewMode) {
-    exitPreviewMode();
-  }
+  
+  toggleAppLoading(true, "Logging out...");
+
+  if (previewMode) exitPreviewMode();
   
   if (pb) {
-    pb.realtime.unsubscribe('files');
-    pb.realtime.unsubscribe('categories');
-    console.log('Realtime subscription stopped.');
+    pb.realtime.unsubscribe();
   }
   
+  // 1. CLEAR AUTH & KEYS
   pb.authStore.clear();
   sessionStorage.removeItem('dataKey');
   derivedKey = null;
+
+  // 2. FORCE UI RESET TO PLAIN MODE
+  isRichMode = false;           // Reset global flag
+  localStorage.setItem('kryptNote_editorMode', 'plain'); // Reset preference
+  destroyTiptap();              // Kill TipTap instance
   
-  destroyTiptap(); // <--- CLEANUP
-  
+  // 3. RESET STATE
   state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK };
   previewMode = false;
   previewVersion = null;
   originalBeforePreview = '';
   originalContent = '';
 
-  const editor = document.getElementById('textEditor');
-  if (editor) editor.value = '';
+  // 4. SYNC UI WRAPPERS
+  applyEditorMode();            // This hides #richWrapper and shows #plainWrapper
+  updateEditorModeUI();         // Updates the toolbar labels/checks
 
-  loadUserFiles();
-  updateProfileState();
-  updateVersionFooter();
-  showMenu();
-  setupExport(pb, derivedKey, showToast);
+  // 5. RELOAD AS GUEST
+  loadUserFiles().then(() => {
+    updateProfileState();
+    updateVersionFooter();
+    toggleAppLoading(false); 
+    showToast('Signed out');
+  });
 }
 
 function setupRealtimeSubscription() {
@@ -508,22 +551,6 @@ function setupRealtimeSubscription() {
   pb.realtime.unsubscribe('files');
   pb.realtime.unsubscribe('categories'); 
   pb.realtime.unsubscribe('versions');
-  
-  const decryptRecord = async (r) => { 
-      let plaintext = '';
-      if (r.iv && r.authTag && r.encryptedBlob) {
-          try {
-              plaintext = await decryptBlob(
-                  { iv: b64ToArray(r.iv), authTag: b64ToArray(r.authTag), ciphertext: b64ToArray(r.encryptedBlob) },
-                  derivedKey
-              );
-          } catch (decErr) { plaintext = '[ERROR: Decryption Failed]'; }
-      }
-      return { 
-          id: r.id, name: r.name, content: plaintext, created: r.created, updated: r.updated, 
-          categoryId: r.category, editor: r.editor, lastEditor: r.lastEditor, _isLoaded: true
-      };
-  };
 
   pb.realtime.subscribe('files', async function (e) {
     if (e.record.user !== pb.authStore.model.id) return;
@@ -538,22 +565,54 @@ function setupRealtimeSubscription() {
       showToast(`Note deleted remotely`);
     } 
     else {
-      const newFile = await decryptRecord(e.record);
-      newFile._cachedPreview = getPreviewText(newFile.content?.trim());
+      // 1. DECRYPT THE NAME (Metadata Encryption)
+      const decryptedName = await packDecrypt(e.record.name, derivedKey);
+
+      // 2. CREATE REMOTE STUB (Metadata only)
+      const remoteFile = { 
+          id: e.record.id, 
+          name: decryptedName, 
+          content: null, 
+          created: e.record.created, 
+          updated: e.record.updated, 
+          _localSortTime: new Date(e.record.updated).getTime(),
+          categoryId: e.record.category, 
+          editor: e.record.editor, 
+          lastEditor: e.record.lastEditor, 
+          _isLoaded: false, 
+          _cachedPreview: null 
+      };
+
+      const index = state.files.findIndex(f => f.id === remoteFile.id);
       
-      const index = state.files.findIndex(f => f.id === newFile.id);
       if (index !== -1) {
-          state.files[index] = { ...state.files[index], ...newFile };
-          // If editing this note, update editor immediately
-          if (state.activeId === newFile.id) {
+          if (state.activeId === remoteFile.id) {
+              // FORCED CONTENT DECRYPTION (Active note)
+              const decryptedContent = await (async () => {
+                  try {
+                      return await decryptBlob(
+                          { iv: b64ToArray(e.record.iv), authTag: b64ToArray(e.record.authTag), ciphertext: b64ToArray(e.record.encryptedBlob) },
+                          derivedKey
+                      );
+                  } catch (err) { return '[Decryption Error]'; }
+              })();
+              
+              remoteFile.content = decryptedContent;
+              remoteFile._isLoaded = true;
+              remoteFile._cachedPreview = getPreviewText(decryptedContent);
+              
+              state.files[index] = { ...state.files[index], ...remoteFile };
               loadActiveToEditor();
-              // Invalidate version cache to force fresh fetch on remote change
+              
               state.files[index].versionsMetadataCache = null;
               updateVersionHistory(state.files[index]);
+          } else {
+              // Lazy Update
+              state.files[index] = { ...state.files[index], ...remoteFile };
           }
           showToast(`Note updated remotely`);
       } else {
-          state.files.unshift(newFile);
+          state.files.unshift(remoteFile);
           showToast(`New note synced`);
       }
     }
@@ -563,12 +622,21 @@ function setupRealtimeSubscription() {
   pb.realtime.subscribe('categories', async function (e) {
       if (e.record.user !== pb.authStore.model.id) return;
       if (e.record.lastEditor === SESSION_ID) return;
+
       if (e.action === 'delete') {
           state.categories = state.categories.filter(c => c.id !== e.record.id);
       } else {
+          // DECRYPT THE CATEGORY NAME
+          const decryptedName = await packDecrypt(e.record.name, derivedKey);
+          const localId = (e.record.iconName === 'icon-work') ? DEFAULT_CATEGORY_IDS.WORK : 
+                          (e.record.iconName === 'icon-delete') ? DEFAULT_CATEGORY_IDS.TRASH : e.record.id;
+          
+          const updatedCat = { ...e.record, name: decryptedName, localId: localId };
+          
           const index = state.categories.findIndex(c => c.id === e.record.id);
-          if (index !== -1) state.categories[index] = e.record;
-          else state.categories.push(e.record);
+          if (index !== -1) state.categories[index] = updatedCat;
+          else state.categories.push(updatedCat);
+          
           state.categories.sort((a,b) => a.sortOrder - b.sortOrder);
       }
       finalizeUIUpdate();
@@ -582,7 +650,6 @@ function setupRealtimeSubscription() {
       const file = state.files.find(f => f.id === e.record.file);
       if (!file) return;
 
-      // Update the unified metadata cache
       if (!file.versionsMetadataCache) file.versionsMetadataCache = [];
       
       const newVersionMeta = {
@@ -754,15 +821,16 @@ async function createFile() {
 
 async function createFileOnServer(tempId, name, targetCategoryId) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  
   try {
     const activeCatObj = state.categories.find(c => c.id === targetCategoryId || c.localId === targetCategoryId);
     const pbCategoryId = activeCatObj?.id;
 
+    // Encrypt both content and name
+    const encryptedName = await packEncrypt(name, derivedKey);
     const { ciphertext, iv, authTag } = await encryptBlob('', derivedKey);
 
     const result = await pb.collection('files').create({
-      name,
+      name: encryptedName, // ENCRYPTED
       user: pb.authStore.model.id,
       category: pbCategoryId,
       iv: arrayToB64(iv),
@@ -774,36 +842,41 @@ async function createFileOnServer(tempId, name, targetCategoryId) {
 
     const tempFile = state.files.find(f => f.id === tempId);
     if (tempFile) {
-      // Replace ID in queue immediately
       const qIndex = saveQueue.indexOf(tempId);
       if (qIndex !== -1) saveQueue[qIndex] = result.id;
-
       tempFile.id = result.id;
-      tempFile.created = result.created;
-      tempFile.updated = result.updated;
       if (state.activeId === tempId) state.activeId = result.id;
-      
-      // Clean up the wait timer
-      delete tempFile._waitStarted;
     }
     finalizeUIUpdate();
   } catch (e) {
-    console.error("Failed to create file on server:", e);
-    
-    // CRITICAL: Cleanup if creation failed
     saveQueue = saveQueue.filter(id => id !== tempId);
-    const file = state.files.find(f => f.id === tempId);
-    if (file) {
-        file._saveError = true;
-        file._isQueued = false;
-        updateFilePreviewDOM(tempId, "Creation Failed", true);
-    }
-
-    if (e.status === 0 || e.isAbort) return;
-    
-    // Optional: Only delete from local state if it's a hard error (not a timeout)
-    // state.files = state.files.filter(f => f.id !== tempId);
     finalizeUIUpdate();
+  }
+}
+
+async function performActualSave(file) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  if (pb.authStore.isValid && derivedKey) {
+    const editorMode = file.editor || (isRichMode ? 'rich' : 'plain');
+    
+    // Encrypt Name and Content
+    const encryptedName = await packEncrypt(file.name, derivedKey);
+    const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
+    
+    const categoryRecord = state.categories.find(c => c.localId === file.categoryId || c.id === file.categoryId);
+    const pbCategoryId = categoryRecord?.id || file.categoryId;
+
+    await pb.collection('files').update(file.id, {
+      name: encryptedName, // ENCRYPTED
+      category: pbCategoryId, 
+      iv: arrayToB64(iv),
+      authTag: arrayToB64(authTag),
+      encryptedBlob: arrayToB64(ciphertext),
+      editor: editorMode, 
+      lastEditor: SESSION_ID 
+    });
+  } else if (!pb.authStore.isValid) {
+    guestStorage.saveData({ categories: state.categories, files: state.files });
   }
 }
 
@@ -812,89 +885,58 @@ async function createFileOnServer(tempId, name, targetCategoryId) {
 async function createCategory(name) {
     console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
     if (!name?.trim()) return;
-
     const trimmedName = name.trim();
-
-    // VALIDATION: Return early if name is too long
-    if (trimmedName.length > MAX_FILENAME_LENGTH) {
-        showToast(`Category name is too long (Max ${MAX_FILENAME_LENGTH} characters).`, 4000);
-        return;
-    }
-
     const now = new Date().toISOString();
     const tempId = `cat_temp_${Date.now()}`; 
     
     const newCategory = {
-        id: tempId,
-        name: trimmedName,
-        iconName: 'icon-folder',
-        sortOrder: state.categories.length + 1,
-        created: now,
-        updated: now,
-        localId: tempId,
-        lastEditor: SESSION_ID
+        id: tempId, name: trimmedName, iconName: 'icon-folder',
+        sortOrder: state.categories.length + 1, localId: tempId
     };
     
     state.categories.push(newCategory);
-    state.categories.sort((a,b) => a.sortOrder - b.sortOrder);
     finalizeUIUpdate();
     
-    let finalCategoryId = newCategory.id; 
-
-    if (pb.authStore.isValid) {
+    if (pb.authStore.isValid && derivedKey) {
         try {
+            const encryptedName = await packEncrypt(trimmedName, derivedKey);
             const record = await pb.collection('categories').create({
-                name: trimmedName,
+                name: encryptedName, // ENCRYPTED
                 user: pb.authStore.model.id,
                 sortOrder: newCategory.sortOrder,
                 iconName: newCategory.iconName,
                 lastEditor: SESSION_ID
-            }, { requestKey: null });
-            
+            });
             const index = state.categories.findIndex(c => c.id === tempId);
-            if (index !== -1) {
-                state.categories[index] = { ...record, localId: record.id };
-            }
-
-            finalCategoryId = record.id;
-            state.activeCategoryId = finalCategoryId;
+            if (index !== -1) state.categories[index] = { ...record, name: trimmedName, localId: record.id };
+            state.activeCategoryId = record.id;
             await createFile(); 
-            finalizeUIUpdate();
-            
         } catch (e) {
-            if (e.status !== 0) {
-                console.error('Category creation failed:', e);
-                showToast('Failed to create category on server.', 3000);
-                state.categories = state.categories.filter(c => c.id !== tempId);
-                finalizeUIUpdate();
-            }
+            state.categories = state.categories.filter(c => c.id !== tempId);
         }
-    } else {
-        newCategory.id = `cat_guest_${Date.now()}`;
-        newCategory.localId = newCategory.id;
-        guestStorage.saveData({ categories: state.categories, files: state.files });
-        state.activeCategoryId = newCategory.id;
-        await createFile();
-        finalizeUIUpdate();
     }
+    finalizeUIUpdate();
 }
 
 async function saveFile(file) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
-  // Note: We no longer update _localSortTime here. 
-  // It was already updated instantly in handleAutoSave.
+  // 1. Interaction timestamp (already in handleAutoSave, but good for safety)
+  file._localSortTime = Date.now();
 
+  // 2. Add to queue if not already there
   if (!saveQueue.includes(file.id)) {
     saveQueue.push(file.id);
   }
   
+  // 3. Set flags
   file._isQueued = true;
   file._saveError = false;
-  delete file._waitStarted; 
 
-  updateFilePreviewDOM(file.id, "Queued");
+  // 4. Update UI (Priority: Saving > Queued)
+  updateFilePreviewDOM(file.id, file._isSaving ? "Saving..." : "Queued");
 
+  // 5. Start Processor
   if (!isProcessingQueue) {
     processSaveQueue();
   }
@@ -909,88 +951,65 @@ async function processSaveQueue() {
     const currentId = saveQueue[0];
     const file = state.files.find(f => f.id === currentId);
 
-    // 1. If file disappeared from state, remove from queue
     if (!file) {
-      console.warn("Queue item not found, removing:", currentId);
       saveQueue.shift();
       continue;
     }
 
-    // 2. HANDLE TEMP ID HANGS
+    // Handle Temp ID creation wait
     if (file.id.startsWith('temp_')) {
-      // Initialize a wait timer if not present
       if (!file._waitStarted) file._waitStarted = Date.now();
-      
-      const waitDuration = Date.now() - file._waitStarted;
-
-      // If waiting for more than 10 seconds, assume the creation failed
-      if (waitDuration > 10000) {
-        console.error("Timed out waiting for real ID for:", currentId);
+      if (Date.now() - file._waitStarted > 10000) {
         file._saveError = true;
         file._isQueued = false;
-        delete file._waitStarted;
-        updateFilePreviewDOM(file.id, "Connection Error", true);
-        saveQueue.shift(); // Move to next note
+        saveQueue.shift();
         continue;
       }
-
-      console.log(`Waiting for real ID (${Math.round(waitDuration/1000)}s)...`);
-      await new Promise(r => setTimeout(r, 1000)); // Wait 1 second before checking again
+      await new Promise(r => setTimeout(r, 1000));
       continue; 
     }
 
-    // 3. Clear wait timer if it exists (note now has real ID)
-    if (file._waitStarted) delete file._waitStarted;
-
-    // 4. Proceed with Saving
-    file._isQueued = false;
+    // --- START SAVE TASK ---
     file._isSaving = true;
     updateFilePreviewDOM(file.id, "Saving...");
 
     try {
       await performActualSave(file);
       file._saveError = false;
-      
-      const rawText = file._cachedPreview || getPreviewText(file.content);
-      const display = rawText.split('\n')[0].substring(0, 35);
-      updateFilePreviewDOM(file.id, display || "[Empty note]");
     } catch (e) {
-      console.error("Save failed for", file.id, e);
+      console.error("Critical save failure:", e);
       file._saveError = true;
-      updateFilePreviewDOM(file.id, "Save Failed", true);
     } finally {
       file._isSaving = false;
+      
+      // Remove the task we just finished
       saveQueue.shift(); 
+
+      // CHECK: Is this note still in the queue for a follow-up save?
+      const stillQueued = saveQueue.includes(file.id);
+      file._isQueued = stillQueued;
+
+      if (!stillQueued) {
+        // No more saves pending for this note: Restore preview
+        const rawText = file._cachedPreview || getPreviewText(file.content);
+        const display = rawText.split('\n')[0].substring(0, 35);
+        updateFilePreviewDOM(
+          file.id, 
+          file._saveError ? "Save Failed" : (display || "[Empty note]"), 
+          file._saveError
+        );
+      } else {
+        // It is still in queue, next iteration of "while" will pick it up.
+        // We keep the text as "Saving..." or "Queued" via updateFilePreviewDOM
+        updateFilePreviewDOM(file.id, "Queued");
+      }
     }
   }
 
   isProcessingQueue = false;
 }
 
-async function performActualSave(file) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  
-  if (pb.authStore.isValid && derivedKey) {
-    const editorMode = file.editor || (isRichMode ? 'rich' : 'plain');
-    const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
-    
-    const categoryRecord = state.categories.find(c => c.localId === file.categoryId || c.id === file.categoryId);
-    const pbCategoryId = categoryRecord?.id || file.categoryId;
 
-    await pb.collection('files').update(file.id, {
-      name: file.name,
-      category: pbCategoryId, 
-      iv: arrayToB64(iv),
-      authTag: arrayToB64(authTag),
-      encryptedBlob: arrayToB64(ciphertext),
-      editor: editorMode, 
-      lastEditor: SESSION_ID 
-    });
-  } else {
-    // Guest Mode path
-    saveGuestDataClean();
-  }
-}
 
 
 async function clearTrash() {
@@ -1219,8 +1238,9 @@ function ensureSidebarStructure() {
   let catContainer = document.getElementById('sb-categories-container');
   let noteContainer = document.getElementById('sb-notes-container');
 
+  // If the spinner is there, or containers are missing, reset everything
   if (!catContainer || !noteContainer) {
-    list.innerHTML = ''; // Reset if structure is wrong or empty
+    list.innerHTML = ''; 
     
     catContainer = document.createElement('div');
     catContainer.id = 'sb-categories-container';
@@ -1432,6 +1452,7 @@ function showCategoryMenu(btn, id, name, isDeletable, isTrash) {
 // 2. Rename Category (For Work and Custom Categories)
 if (!isTrash) {
     menu.querySelector('.ctx-rename').onclick = async () => {
+        console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
         menu.remove();
         
         const newName = prompt(`Rename category "${name}" to:`, name);
@@ -1449,7 +1470,7 @@ if (!isTrash) {
         if (!category) { return; }
         
         const oldName = category.name;
-        category.name = trimmedName; 
+        category.name = trimmedName; // Optimistic UI Update
         
         if (id === state.activeCategoryId) {
            const activeCategoryTitle = document.querySelector('.categories-title');
@@ -1457,29 +1478,35 @@ if (!isTrash) {
         }
         finalizeUIUpdate();
 
-        if (pb.authStore.isValid) {
+        if (pb.authStore.isValid && derivedKey) {
+            // Check if it's a real synced category
             if (category.id && !category.id.startsWith('cat_temp_') && !category.id.startsWith('cat_guest_')) {
                 try {
+                    // Metadata Encryption: Encrypt the category name before sending to server
+                    const encryptedName = await packEncrypt(trimmedName, derivedKey);
+
                     await pb.collection('categories').update(category.id, { 
-                        name: trimmedName,
+                        name: encryptedName,
                         lastEditor: SESSION_ID 
                     }, { requestKey: null }); 
+                    
                     showToast(`Category renamed`); 
                 }
                 catch (e) { 
                     if (e.status !== 0) {
-                        category.name = oldName; 
+                        category.name = oldName; // Revert local state on error
                         showToast('Category rename failed'); 
                         finalizeUIUpdate(); 
                     }
                 }
             }
         } else {
+             // Guest Mode Persistence
              guestStorage.saveData({ categories: state.categories, files: state.files });
              finalizeUIUpdate();
         }
     };
-  }
+}
 
   // 3. Delete Category
   if (isDeletable) {
@@ -1626,6 +1653,8 @@ function showFileMenu(btn, id, name) {
 
 // Rename handler
 menu.querySelector('.ctx-rename').onclick = async () => {
+    console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+    
     const newName = prompt('New name:', name);
     if (!newName?.trim()) { menu.remove(); return; }
 
@@ -1643,29 +1672,35 @@ menu.querySelector('.ctx-rename').onclick = async () => {
 
     if (file.name !== trimmedName) {
         const oldName = file.name;
-        file.name = trimmedName;
+        file.name = trimmedName; // Optimistic UI update
 
-        if (pb.authStore.isValid) {
-          try { 
-            await pb.collection('files').update(id, { 
-                name: trimmedName,
-                lastEditor: SESSION_ID 
-            }, { requestKey: null }); 
-            showToast(`Note renamed`); 
-          }
-          catch (e) { 
-            if (e.status !== 0) {
-              file.name = oldName; 
-              showToast('Rename failed'); 
+        if (pb.authStore.isValid && derivedKey) {
+            try { 
+                // Metadata Encryption: Encrypt the name before sending to PocketBase
+                const encryptedName = await packEncrypt(trimmedName, derivedKey);
+
+                await pb.collection('files').update(id, { 
+                    name: encryptedName,
+                    lastEditor: SESSION_ID 
+                }, { requestKey: null }); 
+                
+                showToast(`Note renamed`); 
             }
-          }
+            catch (e) { 
+                if (e.status !== 0) {
+                    file.name = oldName; // Revert local state on server failure
+                    showToast('Rename failed'); 
+                    finalizeUIUpdate();
+                }
+            }
         } else {
-          guestStorage.saveData({ categories: state.categories, files: state.files });
+            // Guest Mode: LocalStorage persistence
+            guestStorage.saveData({ categories: state.categories, files: state.files });
         }
         finalizeUIUpdate();
     }
     menu.remove();
-  };
+};
 
   menu.querySelector('.ctx-info').onclick = () => {
     selectFile(id);
@@ -1700,7 +1735,6 @@ function loadActiveToEditor() {
   
   const f = state.files.find(x => x.id === state.activeId);
   
-  // 1. EMPTY STATE
   if (!f) {
     destroyTiptap(); 
     const textarea = document.getElementById('textEditor');
@@ -1717,13 +1751,11 @@ function loadActiveToEditor() {
   }
 
   const newContent = f.content !== null ? f.content : '';
-
-  // 2. CHECK FOR LOCKED / ERROR STATES
   const isContentRich = f.editor === 'rich' || (newContent && newContent.trim().startsWith('{"type":"doc"'));
   const isPremium = isUserPremium();
-  const isError = f._hasFetchError === true; // <--- Check error flag
+  const isError = f._hasFetchError === true;
 
-  // A. LOCKED (Premium content for Free user)
+  // Handle Locked State for Free Users
   if (isContentRich && !isPremium && !isError) {
       originalContent = newContent; 
       const lockedVersion = {
@@ -1733,13 +1765,9 @@ function loadActiveToEditor() {
       return; 
   }
 
-  // B. STANDARD LOADING
+  // Set Mode
   if (isPremium) {
-    if (f.editor) {
-      isRichMode = (f.editor === 'rich');
-    } else {
-      isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; 
-    }
+    isRichMode = f.editor ? (f.editor === 'rich') : (localStorage.getItem('kryptNote_editorMode') === 'rich');
   } else {
     isRichMode = false;
   }
@@ -1751,19 +1779,15 @@ function loadActiveToEditor() {
     ensureTiptap(); 
     const originalOnUpdate = tiptapEditor.options.onUpdate;
     tiptapEditor.options.onUpdate = undefined;
-    
-    // === FIX: Disable Tiptap if Error ===
     tiptapEditor.setOptions({ editable: !isError }); 
 
     try {
-      if (!newContent || newContent === '') {
+      if (!newContent) {
         tiptapEditor.commands.setContent('<p></p>');
       } else {
         try {
-          const json = JSON.parse(newContent);
-          tiptapEditor.commands.setContent(json);
+          tiptapEditor.commands.setContent(JSON.parse(newContent));
         } catch (e) {
-          // If error text is plain text, render it as paragraph
           tiptapEditor.commands.setContent(newContent); 
         }
       }
@@ -1775,15 +1799,9 @@ function loadActiveToEditor() {
     const textarea = document.getElementById('textEditor');
     if (textarea) {
       textarea.value = newContent;
-      
-      // === FIX: Disable Textarea if Error ===
       textarea.disabled = isError; 
-      
-      if (isError) {
-          textarea.placeholder = "Check internet connection and click note to retry.";
-      } else {
-          textarea.placeholder = "Write or edit your text here...";
-      }
+      // Simplified placeholders since Decryption is handled by the spinner
+      textarea.placeholder = isError ? "Connection error. Click note to retry." : "Write your note...";
     }
   }
   
@@ -1825,6 +1843,26 @@ function openSidebarTab(tabName) {
     updateVersionFooter(); 
   }
 }
+function toggleAppLoading(show, message = "Syncing Vault...") {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const loader = document.getElementById('appLoader');
+  const msgEl = document.getElementById('loaderMessage');
+  if (!loader) return;
+  
+  if (show) {
+    if (msgEl) msgEl.textContent = message;
+    loader.classList.remove('hidden');
+    loader.style.visibility = "visible";
+  } else {
+    loader.classList.add('hidden');
+    // Wait for the opacity transition to finish before hiding visibility
+    setTimeout(() => {
+        if (loader.classList.contains('hidden')) {
+            loader.style.visibility = "hidden";
+        }
+    }, 200);
+  }
+}
 
 function updateSidebarInfo(file = null) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
@@ -1832,59 +1870,60 @@ function updateSidebarInfo(file = null) {
   const infoFileId = document.getElementById('infoFileId');
   const infoCreated = document.getElementById('infoCreated');
   const infoModified = document.getElementById('infoModified');
+  
   const encryptionOffline = document.getElementById('encryptionOffline');
   const encryptionOnline = document.getElementById('encryptionOnline');
+  const encryptionEmpty = document.getElementById('encryptionEmpty');
   
-  // Select buttons
   const infoDownload = document.getElementById('infoDownload');
-  const infoShare = document.getElementById('infoShare'); // <--- NEW
+  const infoShare = document.getElementById('infoShare');
   
-  if (infoFileNameDisplay) {
-    infoFileNameDisplay.onblur = null;
-    infoFileNameDisplay.onkeydown = null;
-    infoFileNameDisplay.onclick = null; 
-  }
+  // Helper to reset encryption display
+  const resetEncryptionUI = () => {
+    if (encryptionOffline) encryptionOffline.style.display = 'none';
+    if (encryptionOnline) encryptionOnline.style.display = 'none';
+    if (encryptionEmpty) encryptionEmpty.style.display = 'none';
+  };
 
-  // --- NO FILE SELECTED ---
+  // --- CASE 1: NO FILE SELECTED ---
   if (!file) {
     if (infoFileNameDisplay) infoFileNameDisplay.textContent = '—';
     if (infoFileId) infoFileId.textContent = '—';
     if (infoCreated) infoCreated.textContent = '—';
     if (infoModified) infoModified.textContent = '—';
 
-    // Disable buttons
     if (infoDownload) { infoDownload.disabled = true; infoDownload.onclick = null; }
-    if (infoShare) { infoShare.disabled = true; infoShare.onclick = null; } // <--- NEW
+    if (infoShare) { infoShare.disabled = true; infoShare.onclick = null; }
     
-    if (encryptionOffline) encryptionOffline.style.display = 'flex';
-    if (encryptionOnline) encryptionOnline.style.display = 'none';
-
+    resetEncryptionUI();
+    if (encryptionEmpty) encryptionEmpty.style.display = 'inline'; // Show the dash
     return;
   }
 
-  // --- FILE SELECTED ---
-  const isLoggedIn = pb.authStore.isValid && derivedKey;
-  
+  // --- CASE 2: FILE SELECTED ---
   if (infoFileNameDisplay) infoFileNameDisplay.textContent = file.name;
   if (infoFileId) infoFileId.textContent = file.id;
   if (infoCreated) infoCreated.textContent = formatDate(file.created);
   if (infoModified) infoModified.textContent = formatDate(file.updated);
 
-  if (encryptionOffline && encryptionOnline) {
-      encryptionOffline.style.display = isLoggedIn ? 'none' : 'flex';
-      encryptionOnline.style.display = isLoggedIn ? 'flex' : 'none';
-  }
-  
-  // Enable Download
+  // Enable buttons
   if (infoDownload) {
     infoDownload.disabled = false;
     infoDownload.onclick = () => downloadNote(file);
   }
-
-  // Enable Share (NEW)
   if (infoShare) {
     infoShare.disabled = false;
     infoShare.onclick = () => openShareModal(file.id);
+  }
+
+  // Toggle correct Encryption Badge
+  resetEncryptionUI();
+  const isLoggedIn = pb.authStore.isValid && derivedKey;
+  
+  if (isLoggedIn) {
+    if (encryptionOnline) encryptionOnline.style.display = 'flex';
+  } else {
+    if (encryptionOffline) encryptionOffline.style.display = 'flex';
   }
 }
 
@@ -2453,6 +2492,21 @@ function exitPreviewMode() {
   originalEditorMode = null;
 }
 
+function toggleEditorLoading(show) {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  
+  const loader = document.getElementById('editorLoader');
+  const globalLoader = document.getElementById('appLoader');
+
+  // PRIORITY CHECK: If the whole page is already behind a spinner, 
+  // don't show the local one inside the editor.
+  if (show && globalLoader && !globalLoader.classList.contains('hidden')) {
+    return; 
+  }
+
+  if (loader) loader.classList.toggle('hidden', !show);
+}
+
 async function selectFile(id) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (previewMode) exitPreviewMode();
@@ -2460,74 +2514,48 @@ async function selectFile(id) {
   const file = state.files.find(f => f.id === id);
   if (!file) return;
 
-  // 1. INSTANT VISUAL SELECTION
   state.activeId = id;
   document.querySelectorAll('.file-item').forEach(el => {
       el.classList.toggle('active', el.dataset.id === id);
   });
 
-  // 2. LOCK EDITOR & SHOW LOADING STATE IMMEDIATELY
-  // This ensures that if we switch back to a loading note, we see "Decrypting"
-  // instead of an empty white box while waiting for the promise.
-  if (tiptapEditor) tiptapEditor.setOptions({ editable: false });
-  const textarea = document.getElementById('textEditor');
-  if (textarea) {
-    textarea.disabled = true;
-    textarea.value = ''; // Clear previous content to avoid confusion
-    textarea.placeholder = "Decrypting note...";
-  }
-
-  // 3. ASYNC DECRYPTION (Join Promise)
   if (!file._isLoaded && !file.id.startsWith('temp_')) {
-      const itemEl = document.querySelector(`.file-item[data-id="${id}"] .file-preview`);
-      if (itemEl) itemEl.textContent = "Decrypting...";
+      // toggleEditorLoading will now check if Global Loader is visible
+      toggleEditorLoading(true);
       
-      // logic is now handled inside loadNoteDetails to wait for existing promise
-      await loadNoteDetails(id);
-      
-      // Update sidebar element if it exists
-      const refreshedItemEl = document.querySelector(`.file-item[data-id="${id}"] .file-preview`);
-      if (refreshedItemEl) {
-          const rawText = file._cachedPreview || getPreviewText(file.content?.trim() || '');
-          const firstLine = rawText.split('\n')[0] || '[Empty note]';
-          refreshedItemEl.textContent = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
+      try {
+          await loadNoteDetails(id);
+      } finally {
+          toggleEditorLoading(false);
       }
   }
 
-  // 4. RACE CONDITION CHECK
-  // If user clicked Note C while Note A was finishing, activeId will be C.
-  // We should only render if we are still the active note.
   if (state.activeId !== id) return;
 
-  // 5. UNLOCK & LOAD EDITOR
   loadActiveToEditor();
   updateSidebarInfo(file);
-
-  // 6. UPDATE TABS
-  const historyPanel = document.getElementById('version-history');
-  if (historyPanel && historyPanel.classList.contains('active')) {
-      if (file.versionsMetadataCache) {
-          renderVersionList(file, file.versionsMetadataCache);
-      } else if (pb.authStore.isValid && !file.id.startsWith('temp_')) {
-          updateVersionHistory(file);
-      } else {
-          renderVersionList(file, []);
-      }
-  }
-  
   finalizeUIUpdate();
 }
+
 function updateFilePreviewDOM(fileId, text, isError = false) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   const previewEl = document.querySelector(`.file-item[data-id="${fileId}"] .file-preview`);
   if (!previewEl) return;
 
-  previewEl.textContent = text;
+  const file = state.files.find(f => f.id === fileId);
+  
+  // PRIORITY GUARD: Don't downgrade "Saving" to "Queued" visually
+  let finalHtml = text;
+  if (text === 'Queued' && file && file._isSaving) {
+    finalHtml = "Saving...";
+  }
+
+  previewEl.textContent = finalHtml;
   
   if (isError) {
     previewEl.style.color = '#ef4444'; 
     previewEl.style.fontWeight = '600';
-  } else if (text === 'Saving...' || text === 'Queued') {
+  } else if (finalHtml === 'Saving...' || finalHtml === 'Queued') {
     previewEl.style.color = 'var(--accent1)'; 
     previewEl.style.fontWeight = 'normal';
   } else {
@@ -3740,43 +3768,66 @@ async function loadUserFiles() {
   
   if (pb.authStore.isValid && derivedKey) {
     try {
+      // 1. Load and Decrypt Categories
       let serverCats = await pb.collection('categories').getFullList({ sort: 'sortOrder, created' });
-      if (serverCats.length === 0) serverCats = await createDefaultCategories();
       
-      state.categories = serverCats.map(c => {
-          if (c.iconName === 'icon-work') c.localId = DEFAULT_CATEGORY_IDS.WORK;
-          else if (c.iconName === 'icon-delete') c.localId = DEFAULT_CATEGORY_IDS.TRASH;
-          else c.localId = c.id; 
-          return c;
-      });
+      if (serverCats.length === 0) {
+        serverCats = await createDefaultCategories();
+      }
 
+      const decryptedCats = [];
+      for (let c of serverCats) {
+        decryptedCats.push({
+          ...c,
+          name: await packDecrypt(c.name, derivedKey),
+          localId: (c.iconName === 'icon-work') ? DEFAULT_CATEGORY_IDS.WORK : 
+                   (c.iconName === 'icon-delete') ? DEFAULT_CATEGORY_IDS.TRASH : c.id
+        });
+      }
+      state.categories = decryptedCats;
+
+      // 2. Load and Decrypt File Metadata
       const records = await getNoteMetadata();
-      state.files = records.map(r => ({
-        id: r.id, 
-        name: r.name, 
-        content: null, 
-        created: r.created, 
-        updated: r.updated, 
-        _localSortTime: new Date(r.updated).getTime(), // <--- INITIALIZE FROM SERVER
-        categoryId: r.category,
-        editor: r.editor || 'plain',
-        _isLoaded: false, 
-        _cachedPreview: null 
-      }));
-    } catch (e) { console.error(e); }
+      const decryptedFiles = [];
+      
+      for (let r of records) {
+        decryptedFiles.push({
+          id: r.id, 
+          name: await packDecrypt(r.name, derivedKey), 
+          content: null, 
+          created: r.created, 
+          updated: r.updated, 
+          _localSortTime: new Date(r.updated).getTime(),
+          categoryId: r.category,
+          editor: r.editor || 'plain',
+          _isLoaded: false, 
+          _cachedPreview: null 
+        });
+      }
+      state.files = decryptedFiles;
+
+    } catch (e) { 
+      console.error("Failed to load or decrypt user data:", e); 
+    }
   } else {
-    // Guest Mode
+    // Guest Mode (Stored in plaintext local storage)
     let localData = guestStorage.loadData() || guestStorage.initData();
     state.categories = localData.categories;
     state.files = localData.files.map(f => ({
       ...f, 
       _isLoaded: true,
-      _localSortTime: new Date(f.updated).getTime() // <--- INITIALIZE FROM LOCAL
+      _localSortTime: new Date(f.updated).getTime()
     })); 
   }
 
-  if (state.files.length === 0) await createFile();
-  if (!state.activeCategoryId) state.activeCategoryId = DEFAULT_CATEGORY_IDS.WORK;
+  // 3. Post-load initialization
+  if (state.files.length === 0) {
+    await createFile();
+  }
+  
+  if (!state.activeCategoryId) {
+    state.activeCategoryId = DEFAULT_CATEGORY_IDS.WORK;
+  }
   
   await selectCategory(state.activeCategoryId, true); 
 }
@@ -3811,16 +3862,22 @@ function getPreviewText(content) {
   // FIX: Trim FIRST to remove leading newlines/spaces, then slice
   return content.trim().substring(0, 150);
 }
+
 function destroyTiptap() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   if (tiptapEditor) {
-    tiptapEditor.destroy(); // Kills the instance and ProseMirror view
-    tiptapEditor = null;    // Frees memory
-    
-    // Visual cleanup of toolbar
-    document.querySelectorAll('.rich-btn-item').forEach(btn => btn.classList.remove('is-active'));
+    tiptapEditor.destroy(); 
+    tiptapEditor = null;    
   }
+  
+  // Clean the DOM container to ensure no leftover ProseMirror elements
+  const container = document.getElementById('tiptapEditor');
+  if (container) container.innerHTML = '';
+  
+  // Reset toolbar buttons
+  document.querySelectorAll('.rich-btn-item').forEach(btn => btn.classList.remove('is-active'));
 }
+
 function ensureTiptap() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
@@ -3836,7 +3893,7 @@ function ensureTiptap() {
       Color, 
       Link.configure({ openOnClick: false }),
       Image, 
-      Placeholder.configure({ placeholder: 'Write rich text...' }),
+      Placeholder.configure({ placeholder: 'Write your note...' }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
     ],
     content: '', // Start empty, content is loaded by caller
@@ -3879,7 +3936,6 @@ function renderSidebarNotes() {
   notesHeader.appendChild(newNoteBtnSmall);
   noteContainer.appendChild(notesHeader);
   
-  // STABLE SORT: Strictly use the local interaction timestamp
   const filteredFiles = state.files
     .filter(f => f.categoryId === (activeCategory?.id || state.activeCategoryId) || f.categoryId === activeCategory?.localId)
     .sort((a, b) => (b._localSortTime || 0) - (a._localSortTime || 0));
@@ -3893,6 +3949,7 @@ function renderSidebarNotes() {
     let isError = false;
     let isStatus = false;
 
+    // --- PRIORITY LOGIC FIXED ---
     if (!f._isLoaded) {
         previewText = f._loadingPromise ? 'Decrypting...' : 'Click to load...';
     } 
@@ -3900,6 +3957,7 @@ function renderSidebarNotes() {
         previewText = 'Save Failed';
         isError = true;
     }
+    // Check SAVING before QUEUED to prevent flip-flopping on the same note
     else if (f._isSaving) {
         previewText = 'Saving...';
         isStatus = true;
