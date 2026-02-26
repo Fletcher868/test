@@ -208,7 +208,11 @@
       
 <!-- LEFT: Toolbar + Editor (ONE container, full height) -->
 <div class="editor-container">
-
+  <!-- NEW: Editor Loading Overlay -->
+  <div id="editorLoader" class="editor-loader hidden">
+    <div class="spinner-circle"></div>
+    <span>Decrypting Note...</span>
+  </div>
 <!-- === MOBILE HEADER (Visible only on < 768px) === -->
 <div class="mobile-header">
   <!-- Menu Button -->
@@ -536,13 +540,13 @@
       <!-- RIGHT: Sidebar (FULLY INDEPENDENT, FULL HEIGHT) -->
       <aside class="editor-right">
         <div class="sidebar-tabs">
-          <button class="tab-btn" data-tab="note-info">Info</button>
-          <button class="tab-btn active" data-tab="version-history">History</button>
+          <button class="tab-btn active" data-tab="note-info">Info</button>
+          <button class="tab-btn" data-tab="version-history">History</button>
         </div>
 
         <div class="sidebar-content">
           <!-- TAB: Note Info -->
-          <div id="note-info" class="tab-panel">
+          <div id="note-info" class="tab-panel active">
             <div class="info-section">
               <h4>Note Details</h4>
               <div class="detail-row">
@@ -559,26 +563,30 @@
               </div>
             </div>
 
-            <div class="info-section">
-              <h4>Encryption</h4>
-              <!-- Guest / Offline -->
-              <div id="encryptionOffline" class="offline-message">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
-                  <line x1="1" y1="1" x2="23" y2="23"></line>
-                </svg>
-                <div class="offline-text">
-                  <strong>You're offline</strong>
-                  <small>Sign in to save notes with end-to-end encryption</small>
-                </div>
-              </div>
+<div class="info-section">
+  <h4>Encryption</h4>
+  
+  <!-- Add this placeholder -->
+  <span id="encryptionEmpty">—</span>
 
-              <!-- Logged in -->
-              <div id="encryptionOnline" class="encryption-badge">
-                <svg class="btn-icon" style="fill:#10b981;"><use href="#icon-lock"/></svg>
-                <span>AES-GCM 256-bit (E2E)</span>
-              </div>
-            </div>
+  <!-- Guest / Offline -->
+  <div id="encryptionOffline" class="offline-message" style="display: none;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+      <line x1="1" y1="1" x2="23" y2="23"></line>
+    </svg>
+    <div class="offline-text">
+      <strong>You're offline</strong>
+      <small>Sign in to save notes with end-to-end encryption</small>
+    </div>
+  </div>
+
+  <!-- Logged in -->
+  <div id="encryptionOnline" class="encryption-badge" style="display: none;">
+    <svg class="btn-icon" style="fill:#10b981;"><use href="#icon-lock"/></svg>
+    <span>AES-GCM 256-bit (E2E)</span>
+  </div>
+</div>
 
 <div class="info-section">
   <h4>Actions</h4>
@@ -600,7 +608,7 @@
 
          <!-- Version History TAB - Updated sticky bottom -->
 <!-- Version History TAB - Updated sticky bottom -->
-        <div id="version-history" class="tab-panel active">
+        <div id="version-history" class="tab-panel">
           <div class="info-section">
             <h4>Version History</h4>
             <ul id="versionList" class="version-list">
@@ -932,6 +940,13 @@
       </div>
 
     </div>
+  </div>
+</div>
+<!-- Global App Loader Overlay -->
+<div id="appLoader" class="app-loader">
+  <div class="loader-content">
+    <div class="spinner-circle"></div>
+    <p id="loaderMessage">Initializing KryptNote...</p>
   </div>
 </div>
   <!-- Scripts -->
