@@ -713,13 +713,6 @@ html, body, #app {
    ================================================ */
 .workspace { flex: 1; display: flex; overflow: hidden; }
 
-.editor-container {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: 0px 6px 6px 6px;
-}
 
 
 
@@ -2065,14 +2058,15 @@ html, body, #app {
 
 /* 1. Reset the main container padding to 0 so the toolbar touches edges */
 .editor-container {
+  position: relative; /* REQUIRED so the spinner stays inside this box */
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
   background: #ffffff;
   overflow: hidden;
+  padding: 0px 6px 6px 6px;
 }
-
 /* 2. The wrapper for each mode (Plain vs Rich) */
 .editor-mode-wrapper {
   display: flex;
@@ -2112,52 +2106,148 @@ html, body, #app {
   /* CRITICAL: Allows dropdowns to hang outside the toolbar */
   overflow: visible !important; 
 }
+/* =================================================================
+   MOBILE RESPONSIVENESS (Max Width 768px)
+   ================================================================= */
 
-/* 3. MOBILE OVERRIDES (Max Width 768px) */
 @media (max-width: 768px) {
+  /* 1. Global Viewport Lockdown */
+  html, body, .app {
+    height: 100dvh; /* Dynamic height handles mobile address bar */
+    overflow: hidden; /* Stops the whole page from bouncing */
+  }
+
+  .workspace {
+    width: 100%;
+    margin: 0;
+    height: 100dvh; 
+    display: flex;
+  }
+
+  /* 2. Fixed Header & Toolbar Logic */
+  .editor-container {
+    padding: 0;
+    width: 100%;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column; /* Stack: Header -> Toolbar -> Editor */
+    overflow: hidden; 
+    position: relative;
+  }
+
+  .mobile-header {
+    display: flex;
+    flex-shrink: 0; /* Header size is fixed */
+    height: 50px;
+    z-index: 1010; /* Above everything including sidebars */
+    background: #ffffff;
+    position: relative;
+  }
+
+  .toolbar-container {
+    flex-shrink: 0; /* Toolbar size is fixed */
+    margin-bottom: 0;
+    background: #ffffff;
+    border-bottom: 1px solid var(--border);
+    overflow: visible !important; /* Allow dropdowns to hang over */
+    z-index: 10; 
+  }
+
+  /* 3. Scrolling Editor Logic (Independent Scroll) */
+  .editor-left {
+    flex: 1; /* Fills remaining height */
+    overflow-y: auto; /* Only the editor scrolls */
+    -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
+    z-index: 1;
+  }
+
+  #textEditor, .ProseMirror {
+    flex: 1;
+    height: auto;
+    border: none !important;
+    border-radius: 0 !important;
+    padding-top: 15px;
+    padding-bottom: 40px; /* Space for mobile keyboard padding */
+  }
+
+  /* 4. Toolbar Slider Logic */
   .toolbar-slider {
-    /* Enable Horizontal Scroll */
     overflow-x: auto !important;
     overflow-y: hidden !important; 
     -webkit-overflow-scrolling: touch;
-    
-    /* Scrollbar Styling */
+    padding-bottom: 4px; 
+    display: flex;
+    align-items: center;
     scrollbar-width: thin; 
-    scrollbar-color: #6366f1 transparent;
-    padding-bottom: 6px; 
+    scrollbar-color: var(--accent1) transparent;
   }
 
-  /* Webkit Scrollbar */
   .toolbar-slider::-webkit-scrollbar {
     height: 3px;
     display: block;
   }
-  .toolbar-slider::-webkit-scrollbar-track {
-    background: transparent;
-  }
   .toolbar-slider::-webkit-scrollbar-thumb {
-    background: #6366f1;
+    background: var(--accent1);
     border-radius: 10px;
   }
 
-  /* FIX DROPDOWNS ON MOBILE: Force Fixed Positioning */
+  .tools-dropdown {
+    margin-left: 16px;
+  }
+
+  /* 5. Mobile Sidebars (Drawers) - Corrected Overlay & Visibility */
+  .sidebar, .editor-right {
+    position: fixed;
+    top: 50px; /* Below Header */
+    bottom: 0;
+    height: calc(100dvh - 50px);
+    background: #ffffff;
+    z-index: 1005; /* Above toolbar, below header */
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.3s;
+    visibility: hidden; /* Prevents ghost-clicking when closed */
+  }
+
+  .sidebar {
+    left: 0;
+    width: 280px;
+    transform: translateX(-100%);
+    box-shadow: 10px 0 25px rgba(0,0,0,0.1);
+    border-right: none;
+    display: flex;
+  }
+
+  .editor-right {
+    right: 0;
+    width: 300px;
+    transform: translateX(100%);
+    box-shadow: -10px 0 25px rgba(0,0,0,0.1);
+    border-left: none;
+  }
+
+  .sidebar.active, .editor-right.active {
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  .sidebar .sb-head {
+    display: none; /* Hide logo inside the drawer */
+  }
+
+  /* 6. Fixed Dropdowns on Mobile */
   .tools-dropdown-content, 
   .dropdown-menu,
   #editorModeDropdownPlain,
   #editorModeDropdownRich {
     position: fixed !important;
-    
-    /* CHANGED: Increased from 60px to 100px to sit BELOW the toolbar buttons */
-    top: 100px !important; 
-    
-    right: 10px !important; /* Anchor to right side */
+    top: 95px !important; /* Header(50) + Toolbar(approx 45) */
+    right: 10px !important; 
     left: auto !important;
-    margin-top: 0 !important;
-    max-height: calc(100vh - 110px); /* Prevent cutting off at bottom */
+    max-height: calc(100dvh - 110px);
     overflow-y: auto;
-    z-index: 10005 !important;
+    z-index: 10020 !important;
     box-shadow: 0 10px 25px rgba(0,0,0,0.25);
-    border: 1px solid #e2e8f0;
   }
 }
 
@@ -2709,6 +2799,7 @@ html, body, #app {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
 }
+
 /* =================================================================
    MOBILE RESPONSIVENESS (Max Width 768px)
    ================================================================= */
@@ -2832,10 +2923,7 @@ html, body, #app {
     height: calc(100vh - 50px); 
   }
 
-  .editor-container {
-    padding: 0;
-    width: 100%;
-  }
+
 
 
 
@@ -2843,4 +2931,96 @@ html, body, #app {
   .sidebar .sb-head {
     display: none;
   }
+}
+
+
+/* Global App Loader - Total Coverage */
+.app-loader {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: #ffffff; /* Solid white - nothing peeks through */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999; /* Higher than any sidebar, modal, or toolbar */
+  transition: opacity 0.2s ease-in-out;
+}
+
+/* Ensure nothing else is clickable while loading */
+.app-loader:not(.hidden) {
+  pointer-events: all;
+}
+
+.app-loader.hidden {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden; /* Extra safety to prevent ghosting */
+}
+
+/* Spinner and text styling */
+.loader-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.spinner-circle {
+  width: 50px;
+  height: 50px;
+  border: 4px solid #f1f5f9;
+  border-top: 4px solid var(--accent1);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+#loaderMessage {
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+  letter-spacing: -0.01em;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+
+/* Local Editor Loader */
+.editor-loader {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.85); /* Slightly transparent */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 100; /* Higher than toolbar and editors */
+  gap: 12px;
+  color: var(--accent1);
+  font-weight: 500;
+  backdrop-filter: blur(2px); /* Optional: makes it look modern */
+}
+
+.editor-loader.hidden {
+  display: none;
+}
+
+/* Reusing the spinner animation from your global loader */
+.editor-loader .spinner-circle {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e2e8f0;
+  border-top: 3px solid var(--accent1);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
