@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>Secure Shared Note | KryptNote</title>
+    <title>Secure Shared Note | ShardNote</title>
 
     <!-- Favicon -->
     <link rel="icon" type="image/png" href="/favicon/favicon-96x96.png" sizes="96x96" />
@@ -532,7 +532,7 @@
                     <path d="M19.003 7.503L14.505 3h-8.5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-11.5zm-5-2l2.5 2.5h-2.5v-2.5z" fill="currentColor"/>
                     <path d="M8 11h8v2H8zm0 4h5v2H8z" fill="white"/>
                 </svg>
-                <div class="logo-text">Krypt<span>Note</span></div>
+                <div class="logo-text">Shard<span>Note</span></div>
             </a>
             
             <!-- Navigation Links -->
@@ -849,7 +849,7 @@
             const a = document.createElement('a');
             const date = new Date().toISOString().slice(0, 10);
             a.href = url;
-            a.download = `kryptnote-shared-${date}.txt`;
+            a.download = `Shardnote-shared-${date}.txt`;
             a.click();
             URL.revokeObjectURL(url);
         });
