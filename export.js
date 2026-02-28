@@ -194,7 +194,7 @@ function createEncryptedBackupHtml(exportData) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KryptNote Encrypted Backup</title>
+    <title>ShardNote Encrypted Backup</title>
     <style>
         body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f8fafc; color: #1e293b; }
         .container { background: white; border-radius: 12px; padding: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border: 1px solid #e2e8f0; }
@@ -224,7 +224,7 @@ function createEncryptedBackupHtml(exportData) {
 </head>
 <body>
     <div class="container">
-        <h1>KryptNote Encrypted Backup</h1>
+        <h1>ShardNote Encrypted Backup</h1>
         <div class="info-box"><strong>🔒 Encrypted Backup File</strong><p>Decryption happens locally in your browser using your password.</p></div>
         <div class="warning-box"><strong>⚠️ Notice</strong><p>Created: ${exportedDate}</p></div>
         <div class="stats">
@@ -302,7 +302,7 @@ export function setupExport(pb, derivedKey, showToast) {
         const blob = new Blob([createEncryptedBackupHtml(exportData)], { type: 'text/html' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `KryptNote_Backup_${new Date().toISOString().slice(0,10)}.html`;
+        a.download = `ShardNote_Backup_${new Date().toISOString().slice(0,10)}.html`;
         a.click();
         URL.revokeObjectURL(a.href); 
         showToast('Backup downloaded successfully!');
