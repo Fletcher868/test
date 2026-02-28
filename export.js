@@ -30,6 +30,24 @@ function createEncryptedBackupHtml(exportData) {
         }[m]));
     };
 
+    // --- NEW: Decrypt a packed name (used for encrypted file names) ---
+    async function decryptPacked(packed, key) {
+        try {
+            const obj = JSON.parse(packed);
+            if (obj.i && obj.a && obj.c) {
+                const plainBuffer = await decryptBlobRaw({
+                    iv: b64ToArray(obj.i),
+                    authTag: b64ToArray(obj.a),
+                    ciphertext: b64ToArray(obj.c)
+                }, key);
+                return DEC.decode(plainBuffer);
+            }
+        } catch (e) {
+            // ignore – fall back to raw packed string
+        }
+        return packed; // fallback for old plaintext names or parsing failure
+    }
+
     // 1. Derive MASTER KEY (MK) from Password
     async function deriveMasterKey(password, salt) {
       const baseKey = await crypto.subtle.importKey(
@@ -124,12 +142,14 @@ function createEncryptedBackupHtml(exportData) {
                 } catch (e) {
                     plaintext = '[ERROR: Failed to decrypt this note.]'; 
                 }
+
+                // --- FIX: Decrypt the note name using the same data key ---
+                const displayName = await decryptPacked(file.name, dataKey);
                 
-                // --- FIX: Escape Title and Content to prevent rendering HTML tags ---
                 notesHtml += \`
                     <div class="note-card">
                         <div class="note-header">
-                            <span class="note-title">\${escapeHTML(file.name)}</span>
+                            <span class="note-title">\${escapeHTML(displayName)}</span>
                             <span class="note-date">\${new Date(file.updated).toLocaleDateString()} \${new Date(file.updated).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                         </div>
                         <pre class="note-content">\${escapeHTML(plaintext) || '[Empty Note]'}</pre>
