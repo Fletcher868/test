@@ -213,6 +213,21 @@
     <div class="spinner-circle"></div>
     <span>Decrypting Note...</span>
   </div>
+  <!-- Empty State Overlay -->
+<div id="emptyState" class="empty-state-overlay hidden">
+  <div class="empty-state-content">
+    <div class="empty-icon-circle">
+      <svg id="emptyIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <!-- SVG content will be injected by JS -->
+      </svg>
+    </div>
+    <h3 id="emptyTitle">No Note Selected</h3>
+    <p id="emptyMessage">Select a note from the sidebar or create a new one to get started.</p>
+    <button id="emptyStateBtn" class="st-btn-primary">
+      Create New Note
+    </button>
+  </div>
+</div>
 <!-- === MOBILE HEADER (Visible only on < 768px) === -->
 <div class="mobile-header">
   <!-- Menu Button -->
@@ -281,16 +296,6 @@
             <span class="btn-text">Cut</span>
           </button>
 
-          <!-- Paste -->
-          <button id="pasteBtn" class="rich-btn-item" title="Paste">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M20 8.25V18C20 21 18.21 22 16 22H8C5.79 22 4 21 4 18V8.25C4 5 5.79 4.25 8 4.25C8 4.87 8.24997 5.43 8.65997 5.84C9.06997 6.25 9.63 6.5 10.25 6.5H13.75C14.99 6.5 16 5.49 16 4.25C18.21 4.25 20 5 20 8.25Z" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M16 4.25C16 5.49 14.99 6.5 13.75 6.5H10.25C9.63 6.5 9.06997 6.25 8.65997 5.84C8.24997 5.43 8 4.87 8 4.25C8 3.01 9.01 2 10.25 2H13.75C14.37 2 14.93 2.25 15.34 2.66C15.75 3.07 16 3.63 16 4.25Z" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M8 13H12" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M8 17H16" stroke="#111827" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <span class="btn-text">Paste</span>
-          </button>
         </div>
 
         <!-- GROUP 3: Editing Tools -->
@@ -311,10 +316,11 @@
           
         <!-- Tools Dropdown (Kept separate or grouped) -->
         <div class="tools-dropdown">
-          <button id="toolsMenuBtn" class="rich-btn-item" style="border-radius: 8px;">
-            <svg class="btn-icon"><use href="#icon-tools"/></svg>
-            <span class="btn-text">Tools</span>
-          </button>
+         <button id="toolsMenuBtn" class="rich-btn-item" style="border-radius: 8px;">
+          <svg class="btn-icon"><use href="#icon-tools"/></svg>
+          <span class="btn-text">Tools</span>
+          <svg class="btn-icon" style="margin-left:4px; width:12px;"><use href="#icon-chevron-down"/></svg>
+        </button>
 <div id="toolsDropdown" class="tools-dropdown-content hidden">
             <button id="tool_remove_duplicates" class="tool-vertical-btn">
               <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -339,40 +345,35 @@
         </div>
 
 <!-- EDITOR MODE SWITCHER (Plain Toolbar) -->
+<!-- EDITOR MODE SWITCHER -->
 <div class="tools-dropdown ml-auto">
   <!-- Trigger -->
-  <button id="editorModeTriggerPlain" class="rich-btn-item" style="border-radius: 8px; gap: 6px; min-width: 120px; justify-content: space-between;">
-    <span class="current-mode-label">Plain Text</span>
-    <svg class="btn-icon"><use href="#icon-chevron-down"/></svg>
+  <button id="editorModeTriggerPlain" class="rich-btn-item" style="border-radius: 8px; gap: 8px; min-width: 145px; justify-content: flex-start;">
+    <!-- NEW: Dynamic Icon Container -->
+    <svg class="btn-icon mode-icon-trigger"><use href="#icon-text-plain"/></svg>
+    <span class="current-mode-label" style="flex: 1; text-align: left;">Plain Text</span>
+    <svg class="btn-icon" style="margin: 0; opacity: 0.5;"><use href="#icon-chevron-down"/></svg>
   </button>
   
   <!-- The Dropdown Menu -->
-    <div id="editorModeDropdownPlain" class="tools-dropdown-content hidden">
+  <div id="editorModeDropdownPlain" class="tools-dropdown-content hidden">
     
     <!-- OPTION 1: PLAIN TEXT -->
     <button class="tool-vertical-btn mode-option" data-mode="plain">
-      <!-- Left Icon: Text -->
-      <svg class="btn-icon"><use href="#icon-text"/></svg>
+      <svg class="btn-icon"><use href="#icon-text-plain"/></svg>
       <span>Plain Text</span>
-      <!-- Right Icon: Checkmark -->
       <svg class="mode-check-icon"><use href="#icon-check"/></svg>
     </button>
 
     <!-- OPTION 2: SUPER EDITOR -->
     <button class="tool-vertical-btn mode-option" data-mode="rich">
       <div style="display:flex; align-items:center; gap:10px; flex:1;">
-        <!-- Left Icon: Sparkles -->
-        <svg class="btn-icon"><use href="#icon-sparkles"/></svg>
+        <svg class="btn-icon" style="color: #d97706;"><use href="#icon-text-rich"/></svg>
         <span>Super Editor</span>
-        
-        <!-- Lock Icon (Hidden via CSS if Premium) -->
-        <svg class="lock-icon"><use href="#icon-lock"/></svg>
+        <svg class="lock-icon" style="width:12px; height:12px; opacity:0.6;"><use href="#icon-lock"/></svg>
       </div>
-      
-      <!-- Right Icon: Checkmark -->
       <svg class="mode-check-icon"><use href="#icon-check"/></svg>
     </button>
-
   </div>
 </div>
 
