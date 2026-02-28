@@ -139,9 +139,10 @@
             margin: 0 auto;
             padding: 0 1.5rem;
         }
-.btn-cta span {
-    color: white !important;
-}
+        .btn-cta span {
+            color: white !important;
+        }
+
         /* Improved New Note Button */
         .btn-cta {
             background: linear-gradient(135deg, #3b82f6, #2563eb);
@@ -154,7 +155,6 @@
             display: flex; 
             align-items: center; 
             gap: 8px;
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
             transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             border: 1px solid rgba(255, 255, 255, 0.2);
             position: relative;
@@ -174,7 +174,6 @@
 
         .btn-cta:hover {
             transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
         }
 
         .btn-cta:hover::before {
@@ -196,6 +195,48 @@
             gap: 24px;
         }
 
+        /* --- New header styles (from export.js) --- */
+        h1 {
+            color: #8b5cf6;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 15px;
+            font-size: 1.8rem;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .stat-box {
+            background: #f8fafc;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid #e2e8f0;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #6366f1;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #64748b;
+            text-transform: uppercase;
+        }
+        
+
+        /* ------------------------------------------- */
+
         /* Viewer Card */
         .viewer-card {
             background: var(--bg-card);
@@ -213,59 +254,81 @@
             border-color: var(--border-focus);
         }
 
-        /* Editor Area */
+        /* Editor Area – same white background as the card */
         .editor-area {
+            background: #f1f5f9;
             padding: 0;
-            background: #ffffff;
             position: relative;
             min-height: 300px;
         }
 
-        /* Text Area */
+        /* Text area wrapper – no extra background, matches editor-area */
         .text-area-wrapper {
-            padding: 32px;
-            position: relative;
+            padding: 0;
+            position: relative;   /* Critical for absolute positioning of loading/placeholder */
+            min-height: 300px;    /* Ensures the area has height even when empty */
+            background: transparent;
         }
 
-        #content {
+        /* Shared style for both plain and rich content – matches export's .note-content */
+        .note-content,
+        .note-content .ProseMirror {
             white-space: pre-wrap;
-            word-wrap: break-word;
-            font-family: 'Inter', system-ui, sans-serif;
-            font-size: 15px;
-            line-height: 1.7;
-            color: var(--text-main);
-            min-height: 200px;
-            width: 100%;
-            background: transparent;
-            border: none;
-            outline: none;
-            resize: none;
-            caret-color: var(--primary);
-            padding: 0;
+            font-family: 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            padding: 20px 24px;
+            background: #f1f5f9;
+            border-radius: 8px;
+            overflow-x: auto;
+            color: #1e293b;
             margin: 0;
-            display: none;
+            outline: none;
+        }
+
+        /* For rich content, we want the default font but keep the background/padding */
+        .note-content.rich-text,
+        .note-content.rich-text .ProseMirror {
+            font-family: 'Inter', system-ui, sans-serif;
+        }
+
+        /* Plain text inside contentBox gets the monospace */
+        #content.note-content.plain-text {
+            font-family: 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
         }
 
         /* Placeholder when content is loading */
         .text-placeholder {
             position: absolute;
-            top: 32px;
-            left: 32px;
+            top: 24px;
+            left: 24px;
             color: var(--text-placeholder);
-            font-size: 15px;
+            font-size: 14px;
             pointer-events: none;
             font-style: italic;
+            z-index: 5; /* Below loading overlay when active */
+        }
+        #content.note-content {
+            position: relative;
+            z-index: 1;
+            display: none; /* Will be set to block by JS when ready */
+        }
+        #content.note-content[style*="display: block"] ~ .text-placeholder {
+            display: none;
         }
 
         /* Loading State */
         .loading-state {
-            position: absolute; 
-            inset: 0;
-            display: flex; 
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
             flex-direction: column;
-            align-items: center; 
+            align-items: center;
             justify-content: center;
-            gap: 16px; 
+            gap: 16px;
             color: var(--text-muted);
             background: rgba(255, 255, 255, 0.95);
             z-index: 10;
@@ -415,8 +478,9 @@
                 margin: 100px auto 24px;
             }
             
-            .text-area-wrapper {
-                padding: 24px;
+            .note-content,
+            .note-content .ProseMirror {
+                padding: 16px;
             }
             
             .action-bar {
@@ -431,6 +495,30 @@
                 display: none !important;
             }
         }
+        /* Info box styles (copied from export.js) */
+.info-box {
+    background: #f0f9ff;
+    border-left: 4px solid #3b82f6;
+    padding: 15px;
+    border-radius: 0 8px 8px 0;
+    margin: 0; /* Remove default margin for side-by-side layout */
+}
+
+/* Container to place boxes side by side */
+.info-row {
+    display: flex;
+    margin: 20px 0;
+}
+
+/* Ensure the second box uses the warning style? (Optional – if you want the right box to be warning style, replace class) */
+/* For consistency, both use info-box. If you prefer the second one to be warning, add .warning-box as below: */
+.warning-box {
+    background: #fef3c7;
+    border-left: 4px solid #f59e0b;
+    padding: 15px;
+    border-radius: 0 8px 8px 0;
+    margin: 0;
+}
     </style>
 </head>
 <body>
@@ -470,12 +558,27 @@
     <!-- Main Container -->
     <div class="content-container">
         
+        <!-- Info row: two boxes side by side, styled like export.js -->
+        <div class="info-row">
+            <div class="info-box" style="flex: 1;">
+                <strong>📅 Created</strong>
+                <p id="createdDate">Loading...</p>
+            </div>
+            <div class="info-box" style="flex: 1; margin-left: 15px;">
+                <strong>🔐 Encryption</strong>
+                <p>AES-256</p>
+            </div>
+        </div>
+
+        <!-- NEW: File Name Header -->
+        <h1 id="noteTitle" class="info-box" style="margin: 0; font-size: 1.75rem; font-weight: 700; text-align: center;"></h1>
+
         <!-- Viewer Card -->
         <main class="viewer-card">
             
-            <!-- Editor Area -->
+            <!-- Editor Area (white background, matches card) -->
             <div class="editor-area">
-                <!-- Text Area -->
+                <!-- Text Area Wrapper (transparent, so same as editor-area) -->
                 <div class="text-area-wrapper">
                     <!-- Loading State -->
                     <div id="loading" class="loading-state">
@@ -534,188 +637,231 @@
 
     </div>
 
-    <!-- JavaScript Logic (Keep your existing JS here) -->
-<script type="module">
-    import { PB_URL } from './config.js'; 
-    import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.es.mjs';
-    import { importKeyFromUrl, decryptBlob, b64ToArray } from './crypto.js';
-    
-    // TipTap Imports for Rich Text Rendering
-    import { Editor } from 'https://esm.sh/@tiptap/core@2.2.4';
-    import StarterKit from 'https://esm.sh/@tiptap/starter-kit@2.2.4';
-    import TextStyle from 'https://esm.sh/@tiptap/extension-text-style@2.2.4';
-    import { Color } from 'https://esm.sh/@tiptap/extension-color@2.2.4';
-    import Link from 'https://esm.sh/@tiptap/extension-link@2.2.4';
-    import Image from 'https://esm.sh/@tiptap/extension-image@2.2.4';
-    import TextAlign from 'https://esm.sh/@tiptap/extension-text-align@2.2.4';
-    const pb = new PocketBase(PB_URL);
-
-    // UI Elements
-    const errorBox = document.getElementById('error');
-    const errorTitle = document.getElementById('errorTitle');
-    const errorMsg = document.getElementById('errorMsg');
-    
-    const contentBox = document.getElementById('content');
-    const loadingBox = document.getElementById('loading');
-    const metaBox = document.getElementById('meta');
-    const footer = document.getElementById('footer');
-    const placeholder = document.getElementById('placeholder');
-    
-    const copyBtn = document.getElementById('copyBtn');
-    const downloadBtn = document.getElementById('downloadBtn');
-    const rawBtn = document.getElementById('rawBtn');
-
-    let decryptedContent = "";
-    let tiptapViewer = null;
-
-    function showError(title, message) {
-        console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-        loadingBox.style.display = 'none';
-        contentBox.style.display = 'none';
-        placeholder.style.display = 'none';
-        footer.style.display = 'none';
+    <!-- JavaScript Logic -->
+    <script type="module">
+        import { PB_URL } from './config.js'; 
+        import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.es.mjs';
+        import { importKeyFromUrl, decryptBlob, b64ToArray } from './crypto.js';
         
-        errorTitle.textContent = title;
-        errorMsg.textContent = message;
-        errorBox.style.display = 'block';
-    }
+        // TipTap Imports for Rich Text Rendering
+        import { Editor } from 'https://esm.sh/@tiptap/core@2.2.4';
+        import StarterKit from 'https://esm.sh/@tiptap/starter-kit@2.2.4';
+        import TextStyle from 'https://esm.sh/@tiptap/extension-text-style@2.2.4';
+        import { Color } from 'https://esm.sh/@tiptap/extension-color@2.2.4';
+        import Link from 'https://esm.sh/@tiptap/extension-link@2.2.4';
+        import Image from 'https://esm.sh/@tiptap/extension-image@2.2.4';
+        import TextAlign from 'https://esm.sh/@tiptap/extension-text-align@2.2.4';
+        const pb = new PocketBase(PB_URL);
 
-    function showSuccess(content) {
-        console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-        loadingBox.style.display = 'none';
-        placeholder.style.display = 'none';
-        errorBox.style.display = 'none';
+        // UI Elements
+        const errorBox = document.getElementById('error');
+        const errorTitle = document.getElementById('errorTitle');
+        const errorMsg = document.getElementById('errorMsg');
         
-        footer.style.display = 'flex';
-        contentBox.style.display = 'block';
+        const contentBox = document.getElementById('content');
+        const loadingBox = document.getElementById('loading');
+        const metaBox = document.getElementById('meta');
+        const footer = document.getElementById('footer');
+        const placeholder = document.getElementById('placeholder');
+        
+        const copyBtn = document.getElementById('copyBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const rawBtn = document.getElementById('rawBtn');
 
-        try {
-            const json = JSON.parse(content);
-            if (json && json.type === 'doc') {
-                // Initialize Rich Text Viewer
-                tiptapViewer = new Editor({
-                    element: contentBox,
-                    extensions: [
-                        StarterKit,
-                        TextStyle,
-                        Color,
-                        Link.configure({ openOnClick: true }),
-                        Image,
-                        TextAlign.configure({ types: ['heading', 'paragraph'] }),
-                    ],
-                    content: json,
-                    editable: false,
-                });
-                return;
-            }
-        } catch (e) {
-            // Not JSON or parsing failed, fallback to plain text
-        }
+        // New elements for stats and title
+        const statsContainer = document.getElementById('statsContainer');
+        const createdDateSpan = document.getElementById('createdDate');
+        const titleEl = document.getElementById('noteTitle'); // NEW
 
-        // Plain Text Fallback
-        contentBox.textContent = content;
-        contentBox.style.whiteSpace = 'pre-wrap';
-    }
+        let decryptedContent = "";
+        let tiptapViewer = null;
 
-    async function loadSharedNote() {
-        console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-        const timeout = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("Timeout")), 8000)
-        );
-
-        try {
-            const params = new URLSearchParams(window.location.search);
-            const id = params.get('id');
-            const hash = window.location.hash.substring(1);
-            const keyStr = new URLSearchParams(hash).get('key');
-
-            if (!id || !keyStr) throw new Error("Invalid link parameters");
-
-            const record = await Promise.race([
-                pb.collection('shared_notes').getOne(id),
-                timeout
-            ]);
-
-            const key = await importKeyFromUrl(keyStr);
-            decryptedContent = await decryptBlob({
-                iv: b64ToArray(record.iv),
-                authTag: b64ToArray(record.authTag),
-                ciphertext: b64ToArray(record.encryptedBlob)
-            }, key);
-
-            showSuccess(decryptedContent);
-
-            if (record.expires) {
-                const exp = new Date(record.expires);
-                const now = new Date();
-                if (now > exp) throw new Error("Expired");
-                
-                const dateStr = exp.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-                const timeStr = exp.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-                metaBox.textContent = `Expires: ${dateStr} at ${timeStr}`;
-            } else {
-                metaBox.textContent = "Does not expire";
-            }
-
-        } catch (err) {
-            console.error(err);
-            if (err.message === "Timeout") {
-                showError("Connection Timeout", "The server took too long to respond.");
-            } else if (err.status === 404) {
-                showError("Note Not Found", "This note does not exist or has been deleted.");
-            } else if (err.message === "Expired") {
-                showError("Link Expired", "This shared link has expired.");
-            } else {
-                showError("Decryption Failed", "Invalid key or corrupted data.");
-            }
-        }
-    }
-
-    // --- Action Handlers ---
-
-    copyBtn.addEventListener('click', async () => {
-        console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-        try {
-            // If Rich Text, we might want the plain text version
-            const textToCopy = tiptapViewer ? tiptapViewer.getText() : decryptedContent;
-            await navigator.clipboard.writeText(textToCopy);
+        function showError(title, message) {
+            loadingBox.style.display = 'none';
+            contentBox.style.display = 'none';
+            placeholder.style.display = 'none';
+            footer.style.display = 'none';
+            if (statsContainer) statsContainer.style.display = 'none'; // Hide stats on error
             
-            const originalHtml = copyBtn.innerHTML;
-            copyBtn.classList.add('copied');
-            copyBtn.innerHTML = `<i class="ri-check-line"></i><span>Copied!</span>`;
-
-            setTimeout(() => {
-                copyBtn.classList.remove('copied');
-                copyBtn.innerHTML = originalHtml;
-            }, 2000);
-        } catch (err) {
-            console.error("Copy failed", err);
+            errorTitle.textContent = title;
+            errorMsg.textContent = message;
+            errorBox.style.display = 'block';
         }
-    });
 
-    downloadBtn.addEventListener('click', () => {
-        console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-        if (!decryptedContent) return;
-        const textToDownload = tiptapViewer ? tiptapViewer.getText() : decryptedContent;
-        const blob = new Blob([textToDownload], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        const date = new Date().toISOString().slice(0, 10);
-        a.href = url;
-        a.download = `kryptnote-shared-${date}.txt`;
-        a.click();
-        URL.revokeObjectURL(url);
-    });
+        function showSuccess(content, title) {
+            loadingBox.style.display = 'none';
+            placeholder.style.display = 'none';
+            errorBox.style.display = 'none';
+            
+            footer.style.display = 'flex';
+            contentBox.style.display = 'block';
+            if (statsContainer) statsContainer.style.display = 'grid';
 
-    rawBtn.addEventListener('click', () => {
-        console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-        if (!decryptedContent) return;
-        const blob = new Blob([decryptedContent], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        window.open(url, '_blank');
-    });
+            // Set Title
+            if (titleEl) {
+                titleEl.textContent = title || "Shared Note";
+                titleEl.style.display = 'block';
+            }
 
-    loadSharedNote();
-</script>
+            // Apply base styling
+            contentBox.classList.add('note-content');
+
+            try {
+                const json = JSON.parse(content);
+                if (json && json.type === 'doc') {
+                    // Rich Text: add class for non-monospace font
+                    contentBox.classList.add('rich-text');
+                    
+                    // Initialize Rich Text Viewer
+                    tiptapViewer = new Editor({
+                        element: contentBox,
+                        extensions: [
+                            StarterKit,
+                            TextStyle,
+                            Color,
+                            Link.configure({ openOnClick: true }),
+                            Image,
+                            TextAlign.configure({ types: ['heading', 'paragraph'] }),
+                        ],
+                        content: json,
+                        editable: false,
+                    });
+                    return;
+                }
+            } catch (e) {
+                // Not JSON or parsing failed, fallback to plain text
+            }
+
+            // Plain Text: add class for monospace
+            contentBox.classList.add('plain-text');
+            contentBox.textContent = content;
+            contentBox.style.whiteSpace = 'pre-wrap';
+        }
+
+        async function loadSharedNote() {
+            const timeout = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error("Timeout")), 8000)
+            );
+
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const id = params.get('id');
+                const hash = window.location.hash.substring(1);
+                const keyStr = new URLSearchParams(hash).get('key');
+
+                if (!id || !keyStr) throw new Error("Invalid link parameters");
+
+                const record = await Promise.race([
+                    pb.collection('shared_notes').getOne(id),
+                    timeout
+                ]);
+
+                // --- Set the creation date in the stats box ---
+                if (record.created) {
+                    const created = new Date(record.created).toLocaleString('en-GB', {
+                        day: '2-digit', month: 'short', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit'
+                    });
+                    createdDateSpan.textContent = created;
+                } else {
+                    createdDateSpan.textContent = 'Unknown';
+                }
+
+                const key = await importKeyFromUrl(keyStr);
+                const decryptedRaw = await decryptBlob({
+                    iv: b64ToArray(record.iv),
+                    authTag: b64ToArray(record.authTag),
+                    ciphertext: b64ToArray(record.encryptedBlob)
+                }, key);
+
+                // --- Payload Unwrapping Logic ---
+                let finalContent = decryptedRaw;
+                let finalTitle = "";
+
+                try {
+                    // Try to parse the new wrapper format: { title, content }
+                    const payload = JSON.parse(decryptedRaw);
+                    
+                    if (payload && typeof payload === 'object' && 'title' in payload && 'content' in payload) {
+                        finalTitle = payload.title;
+                        finalContent = payload.content;
+                    } 
+                    // Fallback: If it's a TipTap doc, payload.type will be 'doc', treat entire thing as content
+                } catch (e) {
+                    // Not JSON (Old plain text format), use decryptedRaw as content
+                }
+                // --- End Unwrapping ---
+
+                showSuccess(finalContent, finalTitle);
+
+                if (record.expires) {
+                    const exp = new Date(record.expires);
+                    const now = new Date();
+                    if (now > exp) throw new Error("Expired");
+                    
+                    const dateStr = exp.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+                    const timeStr = exp.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+                    metaBox.textContent = `Expires: ${dateStr} at ${timeStr}`;
+                } else {
+                    metaBox.textContent = "Does not expire";
+                }
+
+            } catch (err) {
+                console.error(err);
+                if (err.message === "Timeout") {
+                    showError("Connection Timeout", "The server took too long to respond.");
+                } else if (err.status === 404) {
+                    showError("Note Not Found", "This note does not exist or has been deleted.");
+                } else if (err.message === "Expired") {
+                    showError("Link Expired", "This shared link has expired.");
+                } else {
+                    showError("Decryption Failed", "Invalid key or corrupted data.");
+                }
+            }
+        }
+
+        // --- Action Handlers ---
+
+        copyBtn.addEventListener('click', async () => {
+            try {
+                // If Rich Text, we might want the plain text version
+                const textToCopy = tiptapViewer ? tiptapViewer.getText() : decryptedContent;
+                await navigator.clipboard.writeText(textToCopy);
+                
+                const originalHtml = copyBtn.innerHTML;
+                copyBtn.classList.add('copied');
+                copyBtn.innerHTML = `<i class="ri-check-line"></i><span>Copied!</span>`;
+
+                setTimeout(() => {
+                    copyBtn.classList.remove('copied');
+                    copyBtn.innerHTML = originalHtml;
+                }, 2000);
+            } catch (err) {
+                console.error("Copy failed", err);
+            }
+        });
+
+        downloadBtn.addEventListener('click', () => {
+            if (!decryptedContent) return;
+            const textToDownload = tiptapViewer ? tiptapViewer.getText() : decryptedContent;
+            const blob = new Blob([textToDownload], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const date = new Date().toISOString().slice(0, 10);
+            a.href = url;
+            a.download = `kryptnote-shared-${date}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        rawBtn.addEventListener('click', () => {
+            if (!decryptedContent) return;
+            const blob = new Blob([decryptedContent], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            window.open(url, '_blank');
+        });
+
+        loadSharedNote();
+    </script>
 </body>
 </html>
