@@ -22,10 +22,10 @@ const DEFAULT_CATEGORY_IDS = {
     TRASH: 'trash'
 };
 // NEW: Guest storage key and structure
-const GUEST_STORAGE_KEY = 'kryptNoteLocalData';
+const GUEST_STORAGE_KEY = 'ShardNoteLocalData';
 let tiptapEditor = null;
 const SESSION_ID = crypto.randomUUID();
-let isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; // Load preference
+let isRichMode = localStorage.getItem('ShardNote_editorMode') === 'rich'; // Load preference
 let previewMode = false;        
 let previewVersion = null;      
 // Auto-save
@@ -41,7 +41,7 @@ let originalContent = '';
 let isSavingVersion = false;
 // ANTI-ABUSE LIMITS
 const MAX_FILENAME_LENGTH = 100;    
-let isCategoriesExpanded = localStorage.getItem('kryptNote_categoriesExpanded') !== 'false';
+let isCategoriesExpanded = localStorage.getItem('ShardNote_categoriesExpanded') !== 'false';
 let finalizeUIUpdateTimeout = null;
 let isFinalizingUI = false;
 let versionHistoryController = null;
@@ -520,7 +520,7 @@ function logout() {
 
   // 2. FORCE UI RESET TO PLAIN MODE
   isRichMode = false;           // Reset global flag
-  localStorage.setItem('kryptNote_editorMode', 'plain'); // Reset preference
+  localStorage.setItem('ShardNote_editorMode', 'plain'); // Reset preference
   destroyTiptap();              // Kill TipTap instance
   
   // 3. RESET STATE
@@ -1279,7 +1279,7 @@ function renderSidebarCategories() {
   categoriesHeader.addEventListener('click', (e) => {
     if (!e.target.closest('.new-note-btn-small')) {
       isCategoriesExpanded = !isCategoriesExpanded;
-      localStorage.setItem('kryptNote_categoriesExpanded', isCategoriesExpanded.toString());
+      localStorage.setItem('ShardNote_categoriesExpanded', isCategoriesExpanded.toString());
       renderSidebarCategories();
       renderSidebarNotes(); 
     }
@@ -1792,7 +1792,7 @@ function loadActiveToEditor() {
     if (f.editor) {
       isRichMode = (f.editor === 'rich');
     } else {
-      isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; 
+      isRichMode = localStorage.getItem('ShardNote_editorMode') === 'rich'; 
     }
   } else {
     isRichMode = false; // Forced for Guests/Free
@@ -3069,7 +3069,7 @@ function updateProfileState() {
 function updateVersionFooter() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // 1. Check if user previously dismissed the footer
-  if (localStorage.getItem('kryptNote_dismissFooter') === 'true') {
+  if (localStorage.getItem('ShardNote_dismissFooter') === 'true') {
     return;
   }
 
@@ -3123,7 +3123,7 @@ function updateVersionFooter() {
     if (footer) footer.remove();
     
     // Save preference so it doesn't appear again on reload
-    localStorage.setItem('kryptNote_dismissFooter', 'true');
+    localStorage.setItem('ShardNote_dismissFooter', 'true');
   });
 }
 
@@ -3328,7 +3328,7 @@ function updateEditorModeUI() {
     btn.classList.toggle('selected', (isRichMode && mode === 'rich') || (!isRichMode && mode === 'plain'));
   });
 
-  localStorage.setItem('kryptNote_editorMode', isRichMode ? 'rich' : 'plain');
+  localStorage.setItem('ShardNote_editorMode', isRichMode ? 'rich' : 'plain');
   
   if (isUserPremium()) {
     document.body.classList.add('is-premium');
