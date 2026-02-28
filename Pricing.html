@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pricing - KryptNote</title>
+    <title>Pricing - ShardNote</title>
     
     <!-- Favicon -->
     <link rel="icon" type="image/png" href="/favicon/favicon-96x96.png" sizes="96x96" />
@@ -302,12 +302,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     toggle.addEventListener('change', () => {
         if (toggle.checked) {
-            priceDisplay.textContent = '$84';
+            priceDisplay.textContent = '$49.99';
             periodDisplay.textContent = '/ year';
             monthlyLabel.classList.remove('active');
             yearlyLabel.classList.add('active');
         } else {
-            priceDisplay.textContent = '$9'; 
+            priceDisplay.textContent = '$4.99'; 
             periodDisplay.textContent = '/ month';
             yearlyLabel.classList.remove('active');
             monthlyLabel.classList.add('active');
@@ -326,7 +326,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     <path d="M19.003 7.503L14.505 3h-8.5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-11.5zm-5-2l2.5 2.5h-2.5v-2.5z" fill="currentColor"/>
                     <path d="M8 11h8v2H8zm0 4h5v2H8z" fill="white"/>
                 </svg>
-                <div class="logo-text">Krypt<span>Note</span></div>
+                <div class="logo-text">Shard<span>Note</span></div>
             </a>
             
             <div class="nav-links hidden-mobile items-center">
@@ -383,7 +383,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 <button class="btn btn-outline" onclick="window.location.href='index.html'">Get Started Free</button>
             </div>
 
-            <!-- Pro Plan -->
+            <!-- Pro Plan (updated with super rich editor and no ads) -->
             <div class="card pro">
                 <div class="popular-tag">Most Popular</div>
                 <div>
@@ -391,14 +391,18 @@ document.addEventListener("DOMContentLoaded", () => {
                     <p style="color:var(--text-muted); font-size:0.9rem;">Power features for serious organizers.</p>
                 </div>
                 <div style="margin: 1.5rem 0;">
-                    <span class="price">$9</span>
+                    <!-- Price set to monthly $4.99 (toggle changes to $49.99 yearly) -->
+                    <span class="price">$4.99</span>
                     <span class="period">/ month</span>
                 </div>
                 <ul class="features">
-                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> <strong>Everything in Free</strong></li>
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>Everything in Free</li>
                     <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Unlimited version history</li>
-                    <!-- Updated Feature -->
-                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> <strong>Unlimited Custom Categories</strong></li>
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>Unlimited Custom Categories</li>
+                    <!-- NEW: Super rich editor feature -->
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>Super rich editor(Markdown, formatting)</li>
+                    <!-- NEW: No ads feature -->
+                    <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Ad-free experience</li>
                     <li><svg class="check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Priority Support</li>
                 </ul>
                 
@@ -412,7 +416,7 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
     </section>
 
-    <!-- Comparison Table (Updated Content) -->
+    <!-- Comparison Table (Updated with Editor & Ads rows) -->
     <section class="container">
         <h2 class="text-center" style="margin-bottom: 2.5rem; color: var(--text-main);">Compare Features</h2>
         <div class="table-container">
@@ -439,6 +443,18 @@ document.addEventListener("DOMContentLoaded", () => {
                         <td>Custom Categories</td>
                         <td class="col-center" style="color:#94a3b8">Default Only</td>
                         <td class="col-center" style="color:#3b82f6">Unlimited</td>
+                    </tr>
+                    <!-- NEW: Editor comparison -->
+                    <tr>
+                        <td>Editor</td>
+                        <td class="col-center">Basic</td>
+                        <td class="col-center" style="color:#3b82f6">Super Rich (Markdown, formatting)</td>
+                    </tr>
+                    <!-- NEW: Ads comparison -->
+                    <tr>
+                        <td>Ads</td>
+                        <td class="col-center">Supported</td>
+                        <td class="col-center" style="color:#3b82f6">No Ads</td>
                     </tr>
                 </tbody>
             </table>
@@ -469,9 +485,9 @@ document.addEventListener("DOMContentLoaded", () => {
     <footer>
         <div class="container">
             <div style="display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 700; color: var(--text-main); margin-bottom: 1rem;">
-                KryptNote
+                ShardNote
             </div>
-            <p class="copyright">© 2026 KryptNote.</p>
+            <p class="copyright">© 2026 ShardNote.</p>
         </div>
     </footer>
 
@@ -484,118 +500,109 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
     </div>
 
-    <!-- PayPal SDK -->
-    <script src="https://www.paypal.com/sdk/js?client-id=AZ1FwPWxMIw_G1FmfV6ERfmMGXNWgLW9oY5zNeOgUtuz4zd2BgYrb62uWn7F3uPslGTtv31-yY5GNVBG&vault=true&intent=subscription"></script>
-    
-    <!-- Integration Script -->
+<!-- Integration Script -->
     <script type="module">
+        // 1. Import all variables
+        import { PB_URL, PAYPAL_CLIENT_ID, PLAN_MONTHLY, PLAN_YEARLY } from './config.js';
         import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.es.mjs';
 
-        const PB_URL = 'https://repeatedly-pleasant-elk.ngrok-free.app/'; 
         const pb = new PocketBase(PB_URL);
-
         const container = document.getElementById('paypal-button-container');
         const loginBtn = document.getElementById('login-redirect-btn');
         const billingToggle = document.getElementById('billing-toggle');
         const overlay = document.getElementById('processing-overlay');
 
-        // --- PLAN IDS ---
-        const PLAN_MONTHLY = 'P-13C81424AE992050NNEW6Q4Y'; 
-        const PLAN_YEARLY  = 'P-8EL806812V1740904NEXUFOI'; 
+        // --- DYNAMIC PAYPAL LOADER ---
+        function loadPayPalScript() {
+            return new Promise((resolve, reject) => {
+                if (window.paypal) {
+                    resolve();
+                    return;
+                }
+                const script = document.createElement('script');
+                // Construct the URL using the imported Client ID
+                script.src = `https://www.paypal.com/sdk/js?client-id=${PAYPAL_CLIENT_ID}&vault=true&intent=subscription`;
+                script.onload = () => resolve();
+                script.onerror = () => reject(new Error('PayPal SDK failed to load.'));
+                document.head.appendChild(script);
+            });
+        }
 
+        // --- UI HELPERS ---
         function setProcessing(show, title, text) {
-            if(show) {
+            if (show) {
                 overlay.classList.remove('hidden');
-                if(title) document.getElementById('process-title').textContent = title;
-                if(text) document.getElementById('process-text').innerHTML = text;
+                if (title) document.getElementById('process-title').textContent = title;
+                if (text) document.getElementById('process-text').innerHTML = text;
             } else {
                 overlay.classList.add('hidden');
             }
         }
 
-        // --- NEW POLLING FUNCTION ---
         async function waitForUpgrade(userId, oldExpiryStr) {
             let attempts = 0;
-            const maxAttempts = 20; // Wait up to 40 seconds
-            
-            // Convert old date to timestamp (0 if null/empty)
+            const maxAttempts = 20;
             const oldTime = oldExpiryStr ? new Date(oldExpiryStr).getTime() : 0;
-
-            console.log(`⏳ Waiting for date to change from: ${oldExpiryStr || 'None'}`);
+            
+            console.log(`⏳ Waiting for upgrade...`);
 
             const interval = setInterval(async () => {
                 attempts++;
                 try {
-                    // Fetch fresh user data
                     const user = await pb.collection('users').getOne(userId, { requestKey: null });
-                    
-                    // Convert new date to timestamp
                     const newTime = user.plan_expires ? new Date(user.plan_expires).getTime() : 0;
-
-                    console.log(`   Attempt ${attempts}: Current Expiry in DB = ${user.plan_expires}`);
 
                     if (newTime > oldTime) {
                         clearInterval(interval);
-                        
                         setProcessing(true, "Upgrade Complete!", "Redirecting you back to your notes...");
-                        setTimeout(() => {
-                            window.location.href = 'index.html?upgrade_success=true';
-                        }, 1500);
-                        
+                        setTimeout(() => window.location.href = 'index.html?upgrade_success=true', 1500);
                     } else if (attempts >= maxAttempts) {
                         clearInterval(interval);
-                        setProcessing(true, "Payment Received", "PayPal accepted the payment, but our system is still syncing.<br>Check your profile in a few minutes.");
-                        setTimeout(() => {
-                            window.location.href = 'index.html';
-                        }, 4000);
+                        setProcessing(true, "Payment Received", "Processing takes longer than usual.<br>Check your profile shortly.");
+                        setTimeout(() => window.location.href = 'index.html', 4000);
                     }
-                } catch (err) {
-                    console.error("Polling error:", err);
-                }
-            }, 2000); 
+                } catch (err) { console.error("Polling error:", err); }
+            }, 2000);
         }
 
-        if (!pb.authStore.isValid) {
-            container.style.display = 'none';
-            loginBtn.style.display = 'block';
-            loginBtn.onclick = () => { window.location.href = 'index.html'; };
-        } else {
-            const currentUserId = pb.authStore.model.id;
-            if (window.paypal) {
-                initPayPal(currentUserId);
+        // --- MAIN LOGIC ---
+        async function init() {
+            if (!pb.authStore.isValid) {
+                // Not logged in -> Show Login Button
+                container.style.display = 'none';
+                loginBtn.style.display = 'block';
+                loginBtn.onclick = () => { window.location.href = 'index.html'; };
             } else {
-                const checkPayPal = setInterval(() => {
-                    if (window.paypal) {
-                        clearInterval(checkPayPal);
-                        initPayPal(currentUserId);
-                    }
-                }, 100);
+                // Logged in -> Load PayPal SDK then Render
+                try {
+                    await loadPayPalScript(); // Wait for script to inject
+                    initPayPalButtons(pb.authStore.model.id);
+                } catch (e) {
+                    console.error(e);
+                    container.innerHTML = '<p style="color:red; text-align:center;">Failed to load payment system.</p>';
+                }
             }
         }
 
-        function initPayPal(userId) {
+        function initPayPalButtons(userId) {
             container.innerHTML = '';
-
+            
             paypal.Buttons({
-                style: {
-                    shape: 'rect', color: 'gold', layout: 'vertical', label: 'subscribe', height: 48
-                },
+                style: { shape: 'rect', color: 'gold', layout: 'vertical', label: 'subscribe', height: 48 },
                 createSubscription: function(data, actions) {
                     const isYearly = billingToggle.checked;
                     const selectedPlanId = isYearly ? PLAN_YEARLY : PLAN_MONTHLY;
                     return actions.subscription.create({
                         plan_id: selectedPlanId,
-                        custom_id: userId 
+                        custom_id: userId
                     });
                 },
                 onApprove: async function(data) {
                     setProcessing(true);
                     try {
                         const currentUser = await pb.collection('users').getOne(userId);
-                        const oldExpiry = currentUser.plan_expires;
-                        waitForUpgrade(userId, oldExpiry);
+                        waitForUpgrade(userId, currentUser.plan_expires);
                     } catch (err) {
-                        console.error("Could not fetch user snapshot", err);
                         waitForUpgrade(userId, null);
                     }
                 },
@@ -607,17 +614,18 @@ document.addEventListener("DOMContentLoaded", () => {
             }).render('#paypal-button-container');
         }
 
-            const menuBtn = document.querySelector('.mobile-menu-btn');
-    const navLinks = document.querySelector('.nav-links');
+        // Run Initialization
+        init();
 
-    if (menuBtn && navLinks) {
-        menuBtn.addEventListener('click', () => {
-            // Toggle the class that applies the mobile styles
-            navLinks.classList.toggle('mobile-open');
-            // Toggle the utility class that hides it
-            navLinks.classList.toggle('hidden-mobile');
-        });
-    }
+        // Mobile Menu Logic
+        const menuBtn = document.querySelector('.mobile-menu-btn');
+        const navLinks = document.querySelector('.nav-links');
+        if (menuBtn && navLinks) {
+            menuBtn.addEventListener('click', () => {
+                navLinks.classList.toggle('mobile-open');
+                navLinks.classList.toggle('hidden-mobile');
+            });
+        }
     </script>
 </body>
 </html>
