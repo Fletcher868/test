@@ -713,9 +713,6 @@ async function createDefaultCategories() {
 
 
 
-/**
- * Sets the active category, finds the first note in it, and selects it.
- */
 async function selectCategory(categoryIdentifier, shouldSelectFile = true) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   state.activeCategoryId = categoryIdentifier;
@@ -732,31 +729,19 @@ async function selectCategory(categoryIdentifier, shouldSelectFile = true) {
   }
     
   const notesInCategory = state.files
-      .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier) 
-      .sort((a, b) => new Date(b.updated) - new Date(a.updated));
+      .filter(f => f.categoryId === pbCategoryId || f.categoryId === localCategoryIdentifier);
 
   if (shouldSelectFile && notesInCategory.length > 0) {
-      // Logic flows into selectFile, which will trigger finalizeUIUpdate() once decryption is done
       await selectFile(notesInCategory[0].id);
   } else {
-      // No notes in category: Clear state and trigger UI update manually here
+      // FIX: Reset activeId and trigger the Empty State Overlay
       state.activeId = null;
-      loadActiveToEditor();
+      loadActiveToEditor(); 
       updateSidebarInfo(null);
-      const vList = document.getElementById('versionList');
-      if (vList) vList.innerHTML = '<li class="muted">No note selected.</li>';
-      
       finalizeUIUpdate();
   }
 }
-function saveGuestDataClean() {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  const cleanFiles = state.files.map(f => {
-    const { _isSaving, _isQueued, _loadingPromise, _waitStarted, ...rest } = f;
-    return rest;
-  });
-  guestStorage.saveData({ categories: state.categories, files: cleanFiles });
-}
+
 
 async function createFile() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
@@ -1734,49 +1719,96 @@ function loadActiveToEditor() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
   const f = state.files.find(x => x.id === state.activeId);
+  const emptyOverlay = document.getElementById('emptyState');
+  const isPremium = isUserPremium(); 
   
+  // ==========================================================
+  // 1. HANDLE EMPTY STATE (No note selected / Empty Category)
+  // ==========================================================
   if (!f) {
     destroyTiptap(); 
-    const textarea = document.getElementById('textEditor');
-    if (textarea) {
-      textarea.value = '';
-      textarea.disabled = true;
-      textarea.placeholder = "Select or create a note to start writing...";
+    setToolbarVisibility(false); // Hide toolbar entirely
+    
+    if (emptyOverlay) {
+        const isTrash = state.activeCategoryId === DEFAULT_CATEGORY_IDS.TRASH;
+        const title = document.getElementById('emptyTitle');
+        const msg = document.getElementById('emptyMessage');
+        const btn = document.getElementById('emptyStateBtn');
+        const icon = document.getElementById('emptyIcon');
+
+        if (isTrash) {
+            title.textContent = "Your Trash is Empty";
+            msg.textContent = "Notes you delete will appear here. You can restore them or clear the trash permanently.";
+            btn.textContent = "Go to Work Notes";
+            // Trash Icon
+            icon.innerHTML = '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>';
+            btn.onclick = () => selectCategory(DEFAULT_CATEGORY_IDS.WORK);
+        } else {
+            // Find current category name for the message
+            const cat = state.categories.find(c => c.localId === state.activeCategoryId || c.id === state.activeCategoryId);
+            const catName = cat ? cat.name : "Category";
+            
+            title.textContent = `${catName} is Empty`;
+            msg.textContent = "There are no notes in this category. Create one to get started!";
+            btn.textContent = "Create New Note";
+            // Plus/Document Icon
+            icon.innerHTML = '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line>';
+            btn.onclick = () => createFile();
+        }
+        emptyOverlay.classList.remove('hidden');
     }
-    isRichMode = false;
-    applyEditorMode();
-    updateEditorModeUI();
+
+    const textarea = document.getElementById('textEditor');
+    if (textarea) textarea.value = '';
     originalContent = '';
     return;
   }
 
+  // ==========================================================
+  // 2. NOTE SELECTED: Clean UI and Setup Mode
+  // ==========================================================
+  if (emptyOverlay) emptyOverlay.classList.add('hidden');
+  setToolbarVisibility(true);
+
   const newContent = f.content !== null ? f.content : '';
   const isContentRich = f.editor === 'rich' || (newContent && newContent.trim().startsWith('{"type":"doc"'));
-  const isPremium = isUserPremium();
   const isError = f._hasFetchError === true;
 
-  // Handle Locked State for Free Users
+  // A. LOCKED CONTENT CHECK (Premium content for Free user)
   if (isContentRich && !isPremium && !isError) {
       originalContent = newContent; 
       const lockedVersion = {
-          id: f.id, content: newContent, created: f.updated, editor: 'rich', _cachedPreview: f._cachedPreview
+          id: f.id, 
+          content: newContent, 
+          created: f.updated, 
+          editor: 'rich', 
+          _cachedPreview: f._cachedPreview
       };
-      enterPreviewMode(lockedVersion, true);
+      enterPreviewMode(lockedVersion, true); // true = shows "Upgrade" banner
       return; 
   }
 
-  // Set Mode
+  // B. DETERMINE EDITOR MODE
   if (isPremium) {
-    isRichMode = f.editor ? (f.editor === 'rich') : (localStorage.getItem('kryptNote_editorMode') === 'rich');
+    if (f.editor) {
+      isRichMode = (f.editor === 'rich');
+    } else {
+      isRichMode = localStorage.getItem('kryptNote_editorMode') === 'rich'; 
+    }
   } else {
-    isRichMode = false;
+    isRichMode = false; // Forced for Guests/Free
   }
   
   applyEditorMode(); 
   updateEditorModeUI();
 
+  // ==========================================================
+  // 3. LOAD CONTENT INTO SPECIFIC EDITOR
+  // ==========================================================
   if (isRichMode) {
     ensureTiptap(); 
+    
+    // Disable update events during content injection to prevent save loop
     const originalOnUpdate = tiptapEditor.options.onUpdate;
     tiptapEditor.options.onUpdate = undefined;
     tiptapEditor.setOptions({ editable: !isError }); 
@@ -1788,10 +1820,12 @@ function loadActiveToEditor() {
         try {
           tiptapEditor.commands.setContent(JSON.parse(newContent));
         } catch (e) {
+          // Fallback if rich-flagged content is actually plain text
           tiptapEditor.commands.setContent(newContent); 
         }
       }
     } finally {
+      // Re-enable update events
       setTimeout(() => { if(tiptapEditor) tiptapEditor.options.onUpdate = originalOnUpdate; }, 100);
     }
   } else {
@@ -1800,7 +1834,6 @@ function loadActiveToEditor() {
     if (textarea) {
       textarea.value = newContent;
       textarea.disabled = isError; 
-      // Simplified placeholders since Decryption is handled by the spinner
       textarea.placeholder = isError ? "Connection error. Click note to retry." : "Write your note...";
     }
   }
@@ -2886,13 +2919,19 @@ window.addEventListener('beforeunload', async (event) => {
     await saveVersionIfChanged();
   }
 });
-// Toolbar Slider
-
 
 // Toolbar Buttons
 ['undo','redo'].forEach(id => document.getElementById(id+'Btn')?.addEventListener('click', () => document.execCommand(id)));
-document.getElementById('copyBtn')?.addEventListener('click', () => { const el = document.activeElement; if (el?.tagName === 'TEXTAREA' || el?.tagName === 'INPUT') el.select(); document.execCommand('copy'); });
-['cut','paste'].forEach(id => document.getElementById(id+'Btn')?.addEventListener('click', () => document.execCommand(id)));
+
+document.getElementById('copyBtn')?.addEventListener('click', () => { 
+  const el = document.activeElement; 
+  if (el?.tagName === 'TEXTAREA' || el?.tagName === 'INPUT') el.select(); 
+  document.execCommand('copy'); 
+});
+
+// REMOVED 'paste', kept 'cut'
+document.getElementById('cutBtn')?.addEventListener('click', () => document.execCommand('cut'));
+
 document.getElementById('selectAllBtn')?.addEventListener('click', () => {
   document.getElementById('textEditor')?.select();
 });
@@ -3269,35 +3308,29 @@ if (shareModal) {
 
 function updateEditorModeUI() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  // 1. Switch the main editor wrappers
+  
   applyEditorMode(); 
 
-  // 2. Update the Toolbar Button Labels (BOTH buttons)
   const labelText = isRichMode ? "Super Editor" : "Plain Text";
+  const iconHref = isRichMode ? "#icon-text-rich" : "#icon-text-plain";
+
+  // 1. Update Labels
   document.querySelectorAll('.current-mode-label').forEach(el => el.textContent = labelText);
 
-  // 3. STRICT CHECKMARK UPDATE
-  const allOptions = document.querySelectorAll('.mode-option');
-  
-  // Step A: Reset ALL options first (Fixes "Both Selected" bug)
-  allOptions.forEach(btn => btn.classList.remove('selected'));
-
-  // Step B: Select ONLY the correct ones based on current state
-  allOptions.forEach(btn => {
-    const mode = btn.getAttribute('data-mode');
-    
-    if (isRichMode && mode === 'rich') {
-        btn.classList.add('selected');
-    } 
-    else if (!isRichMode && mode === 'plain') {
-        btn.classList.add('selected');
-    }
+  // 2. NEW: Update Trigger Icons
+  document.querySelectorAll('.mode-icon-trigger use').forEach(el => {
+      el.setAttribute('href', iconHref);
   });
 
-  // 4. Save preference
+  // 3. Update Checkmarks in dropdown
+  const allOptions = document.querySelectorAll('.mode-option');
+  allOptions.forEach(btn => {
+    const mode = btn.getAttribute('data-mode');
+    btn.classList.toggle('selected', (isRichMode && mode === 'rich') || (!isRichMode && mode === 'plain'));
+  });
+
   localStorage.setItem('kryptNote_editorMode', isRichMode ? 'rich' : 'plain');
   
-  // 5. Toggle Premium Body Class (for styling locks)
   if (isUserPremium()) {
     document.body.classList.add('is-premium');
   } else {
