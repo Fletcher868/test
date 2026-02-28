@@ -536,6 +536,7 @@
 
     <!-- JavaScript Logic (Keep your existing JS here) -->
 <script type="module">
+    import { PB_URL } from './config.js'; 
     import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.es.mjs';
     import { importKeyFromUrl, decryptBlob, b64ToArray } from './crypto.js';
     
@@ -547,8 +548,6 @@
     import Link from 'https://esm.sh/@tiptap/extension-link@2.2.4';
     import Image from 'https://esm.sh/@tiptap/extension-image@2.2.4';
     import TextAlign from 'https://esm.sh/@tiptap/extension-text-align@2.2.4';
-
-    const PB_URL = 'https://repeatedly-pleasant-elk.ngrok-free.app/';
     const pb = new PocketBase(PB_URL);
 
     // UI Elements
