@@ -158,6 +158,18 @@ const svgSprite = `
   <path d="M19 3v4"/>
   <path d="M21 5h-4"/>
 </symbol>
+<symbol id="icon-text-plain" viewBox="0 0 24 24">
+  <line x1="4" y1="6" x2="20" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <line x1="4" y1="18" x2="14" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+</symbol>
+
+// Icon for Super Editor (Styled 'A' with a sparkle)
+<symbol id="icon-text-rich" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 20h4l1.5-4.5h5L16 20h4" />
+  <path d="M10.5 12.5L13 5l2.5 7.5" />
+  <path d="M19 3l.5 2.5L22 6l-2.5.5L19 9l-.5-2.5L16 6l2.5-.5L19 3z" fill="currentColor" stroke="none" />
+</symbol>
 </svg>
 `;
 document.body.insertAdjacentHTML('afterbegin', svgSprite);
