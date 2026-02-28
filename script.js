@@ -15,7 +15,7 @@ import {
   encryptBlob, decryptBlob, randomSalt, arrayToB64, b64ToArray ,
   generateShareKey, exportKeyToUrl
 } from './crypto.js';
-
+import { PB_URL } from './config.js';
 // NEW: PocketBase default category IDs for new user initialization
 const DEFAULT_CATEGORY_IDS = {
     WORK: 'work',
@@ -33,7 +33,6 @@ let saveTimeout = null;
 let originalBeforePreview = ''; 
 let activeVersionController = null; // Track the current version fetch
 
-const PB_URL = 'https://pam-unhideous-chastenedly.ngrok-free.dev/';
 let pb = null, 
     // UPDATE: Added categories and set default active category
     state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK }, 
@@ -3597,7 +3596,17 @@ document.getElementById('generateShareBtn')?.addEventListener('click', async () 
 
         // 2. Generate Key & Encrypt
         const shareKey = await generateShareKey();
-        const { ciphertext, iv, authTag } = await encryptBlob(file.content, shareKey);
+        
+        // --- CHANGE START: Wrap title and content ---
+        // We package the title and content together so share.html can display both
+        const payload = JSON.stringify({
+            title: file.name,
+            content: file.content
+        });
+        
+        // Encrypt the payload instead of just file.content
+        const { ciphertext, iv, authTag } = await encryptBlob(payload, shareKey);
+        // --- CHANGE END ---
 
         // 3. Handle Expiration Logic
         const expirationValue = document.getElementById('shareExpiration').value;
