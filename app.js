@@ -22,10 +22,10 @@ const DEFAULT_CATEGORY_IDS = {
     TRASH: 'trash'
 };
 // NEW: Guest storage key and structure
-const GUEST_STORAGE_KEY = 'ShardNoteLocalData';
+const GUEST_STORAGE_KEY = 'VeroNoteLocalData';
 let tiptapEditor = null;
 const SESSION_ID = crypto.randomUUID();
-let isRichMode = localStorage.getItem('ShardNote_editorMode') === 'rich'; // Load preference
+let isRichMode = localStorage.getItem('VeroNote_editorMode') === 'rich'; // Load preference
 let previewMode = false;        
 let previewVersion = null;      
 // Auto-save
@@ -41,7 +41,7 @@ let originalContent = '';
 let isSavingVersion = false;
 // ANTI-ABUSE LIMITS
 const MAX_FILENAME_LENGTH = 100;    
-let isCategoriesExpanded = localStorage.getItem('ShardNote_categoriesExpanded') !== 'false';
+let isCategoriesExpanded = localStorage.getItem('VeroNote_categoriesExpanded') !== 'false';
 let finalizeUIUpdateTimeout = null;
 let isFinalizingUI = false;
 let versionHistoryController = null;
@@ -61,13 +61,34 @@ let isProcessingQueue = false;
 // ===================================================================
 const guestStorage = {
   saveData(data) {
-    localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(data));
+    console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+    
+    // Create a clean copy without UI state flags
+    const cleanFiles = data.files.map(f => {
+        const cleanFile = { ...f };
+        // Delete all internal properties starting with underscore
+        Object.keys(cleanFile).forEach(key => {
+            if (key.startsWith('_')) delete cleanFile[key];
+        });
+        return cleanFile;
+    });
+
+    const dataToSave = {
+        categories: data.categories,
+        files: cleanFiles
+    };
+
+    try {
+        localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(dataToSave));
+    } catch (e) {
+        // Rethrow so performActualSave can catch it
+        throw e;
+    }
   },
   loadData() {
     const data = localStorage.getItem(GUEST_STORAGE_KEY);
     return data ? JSON.parse(data) : null;
   },
-  // CRITICAL: Guest mode categories use the hardcoded string as their ID
   initData() {
     return {
       categories: [
@@ -287,7 +308,7 @@ document.getElementById('closeRichPreview')?.addEventListener('click', () => {
   document.getElementById('richPreviewModal').classList.add('hidden');
 });
 document.getElementById('upgradeFromPreviewBtn')?.addEventListener('click', () => {
-  window.location.href = 'Pricing.html';
+  window.location.href = 'pricing.html';
 });
 
 async function initPocketBase() {
@@ -520,7 +541,7 @@ function logout() {
 
   // 2. FORCE UI RESET TO PLAIN MODE
   isRichMode = false;           // Reset global flag
-  localStorage.setItem('ShardNote_editorMode', 'plain'); // Reset preference
+  localStorage.setItem('VeroNote_editorMode', 'plain'); // Reset preference
   destroyTiptap();              // Kill TipTap instance
   
   // 3. RESET STATE
@@ -1279,7 +1300,7 @@ function renderSidebarCategories() {
   categoriesHeader.addEventListener('click', (e) => {
     if (!e.target.closest('.new-note-btn-small')) {
       isCategoriesExpanded = !isCategoriesExpanded;
-      localStorage.setItem('ShardNote_categoriesExpanded', isCategoriesExpanded.toString());
+      localStorage.setItem('VeroNote_categoriesExpanded', isCategoriesExpanded.toString());
       renderSidebarCategories();
       renderSidebarNotes(); 
     }
@@ -1792,7 +1813,7 @@ function loadActiveToEditor() {
     if (f.editor) {
       isRichMode = (f.editor === 'rich');
     } else {
-      isRichMode = localStorage.getItem('ShardNote_editorMode') === 'rich'; 
+      isRichMode = localStorage.getItem('VeroNote_editorMode') === 'rich'; 
     }
   } else {
     isRichMode = false; // Forced for Guests/Free
@@ -2618,7 +2639,7 @@ function createPreviewBanner(date, isLocked = false) {
     
     // Wire up the Upgrade button
     banner.querySelector('#upgradeLockBtn').onclick = () => {
-       window.location.href = 'Pricing.html'; 
+       window.location.href = 'pricing.html'; 
     };
 
   } else {
@@ -3069,7 +3090,7 @@ function updateProfileState() {
 function updateVersionFooter() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   // 1. Check if user previously dismissed the footer
-  if (localStorage.getItem('ShardNote_dismissFooter') === 'true') {
+  if (localStorage.getItem('VeroNote_dismissFooter') === 'true') {
     return;
   }
 
@@ -3094,14 +3115,14 @@ function updateVersionFooter() {
     footerContent = `
       <div class="sign-in-text">Sign in to keep the last 7 days</div>
       <div class="pro-text">
-        <a href="Pricing.html" style="color:var(--accent1);text-decoration:none;">Go Pro</a> for unlimited versions
+        <a href="pricing.html" style="color:var(--accent1);text-decoration:none;">Go Pro</a> for unlimited versions
       </div>
     `;
   }
   else {
     footerContent = `
       <div class="pro-text">
-        <a href="Pricing.html" style="color:var(--accent1);text-decoration:none;">Upgrade</a> to restore all previous versions.
+        <a href="pricing.html" style="color:var(--accent1);text-decoration:none;">Upgrade</a> to restore all previous versions.
       </div>
     `;
   }
@@ -3123,7 +3144,7 @@ function updateVersionFooter() {
     if (footer) footer.remove();
     
     // Save preference so it doesn't appear again on reload
-    localStorage.setItem('ShardNote_dismissFooter', 'true');
+    localStorage.setItem('VeroNote_dismissFooter', 'true');
   });
 }
 
@@ -3249,7 +3270,7 @@ if (cancelUpgradeBtn) cancelUpgradeBtn.addEventListener('click', hideUpgradeModa
 
 if (goToPricingBtn) {
     goToPricingBtn.addEventListener('click', () => {
-        window.location.href = 'Pricing.html';
+        window.location.href = 'pricing.html';
     });
 }
 
@@ -3328,7 +3349,7 @@ function updateEditorModeUI() {
     btn.classList.toggle('selected', (isRichMode && mode === 'rich') || (!isRichMode && mode === 'plain'));
   });
 
-  localStorage.setItem('ShardNote_editorMode', isRichMode ? 'rich' : 'plain');
+  localStorage.setItem('VeroNote_editorMode', isRichMode ? 'rich' : 'plain');
   
   if (isUserPremium()) {
     document.body.classList.add('is-premium');
