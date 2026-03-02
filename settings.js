@@ -77,7 +77,7 @@ export function initSettings(pb, state, derivedKey) {
         stPlanExpiry.textContent = 'Unlock all premium features';
         stPlanCard.classList.remove('pro');
         stUpgradeBtn.style.display = 'block';
-        stUpgradeBtn.onclick = () => window.location.href = 'Pricing.html';
+        stUpgradeBtn.onclick = () => window.location.href = 'pricing.html';
       }
 
     } else {
