@@ -32,7 +32,7 @@ let previewVersion = null;
 let saveTimeout = null;
 let originalBeforePreview = ''; 
 let activeVersionController = null; // Track the current version fetch
-
+const activeSaveControllers = new Map();
 let pb = null, 
     // UPDATE: Added categories and set default active category
     state = { files: [], activeId: null, categories: [], activeCategoryId: DEFAULT_CATEGORY_IDS.WORK }, 
@@ -41,7 +41,6 @@ let originalContent = '';
 let isSavingVersion = false;
 // ANTI-ABUSE LIMITS
 const MAX_FILENAME_LENGTH = 100;    
-let isCategoriesExpanded = localStorage.getItem('VeroNote_categoriesExpanded') !== 'false';
 let finalizeUIUpdateTimeout = null;
 let isFinalizingUI = false;
 let versionHistoryController = null;
@@ -56,6 +55,8 @@ const sharedDateFormatter = new Intl.DateTimeFormat('default', {
 });
 let saveQueue = [];
 let isProcessingQueue = false;
+let searchAbortController = null; // To cancel search if user types again
+const BATCH_SIZE = 5; // Process 5 notes at a time (Save RAM)
 // ===================================================================
 // 1. GUEST STORAGE BACKEND (localStorage)
 // ===================================================================
@@ -315,13 +316,21 @@ async function initPocketBase() {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   setupMobileUI(); 
 
-  // 1. Initial Start (Message update)
+  // 1. Initial Start
   toggleAppLoading(true, "Loading Secure Environment...");
 
   pb = new PocketBase(PB_URL);
   setupEditorSwitching();
 
   if (pb.authStore.isValid) {
+    // === NEW: RESTORE KEY FROM PERSISTENT STORAGE ===
+    // If the key exists in localStorage but not sessionStorage (e.g., new tab), restore it.
+    const persistentKey = localStorage.getItem('dataKey');
+    if (persistentKey && !sessionStorage.getItem('dataKey')) {
+        sessionStorage.setItem('dataKey', persistentKey);
+    }
+    // ================================================
+
     try {
       await pb.collection('users').authRefresh();
       memoizedIsPremium = null; 
@@ -387,9 +396,10 @@ async function restoreEncryptionKeyAndLoad() {
         ciphertext: b64ToArray(wrappedJson.ct)
     }, masterKey);
 
-    // Save derived key to session so they don't have to enter password again this session
+    // Save derived key to session AND localStorage for persistence
     const dkStr = await exportKeyToString(derivedKey);
     storeDataKeyInSession(dkStr);
+    localStorage.setItem('dataKey', dkStr); // <--- NEW: Persist key
 
     // 4. Update Profile and Start Loading
     updateProfileState(); // Fix "Guest User" immediately after password entry
@@ -436,6 +446,8 @@ async function login(email, password) {
 
     const dkStr = await exportKeyToString(derivedKey);
     storeDataKeyInSession(dkStr);
+    localStorage.setItem('dataKey', dkStr); // <--- NEW: Persist key
+    
     localStorage.removeItem(GUEST_STORAGE_KEY); 
 
     // Sync files
@@ -537,6 +549,7 @@ function logout() {
   // 1. CLEAR AUTH & KEYS
   pb.authStore.clear();
   sessionStorage.removeItem('dataKey');
+  localStorage.removeItem('dataKey'); // <--- NEW: Clear persistent key
   derivedKey = null;
 
   // 2. FORCE UI RESET TO PLAIN MODE
@@ -825,17 +838,17 @@ async function createFile() {
 }
 
 async function createFileOnServer(tempId, name, targetCategoryId) {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   try {
     const activeCatObj = state.categories.find(c => c.id === targetCategoryId || c.localId === targetCategoryId);
     const pbCategoryId = activeCatObj?.id;
 
-    // Encrypt both content and name
     const encryptedName = await packEncrypt(name, derivedKey);
+    const encryptedPreview = await packEncrypt('[Empty note]', derivedKey); // <--- ADD THIS
     const { ciphertext, iv, authTag } = await encryptBlob('', derivedKey);
 
     const result = await pb.collection('files').create({
-      name: encryptedName, // ENCRYPTED
+      name: encryptedName,
+      preview: encryptedPreview, // <--- ADD THIS
       user: pb.authStore.model.id,
       category: pbCategoryId,
       iv: arrayToB64(iv),
@@ -859,32 +872,55 @@ async function createFileOnServer(tempId, name, targetCategoryId) {
   }
 }
 
-async function performActualSave(file) {
+async function performActualSave(file, signal) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  if (pb.authStore.isValid && derivedKey) {
-    const editorMode = file.editor || (isRichMode ? 'rich' : 'plain');
-    
-    // Encrypt Name and Content
-    const encryptedName = await packEncrypt(file.name, derivedKey);
-    const { ciphertext, iv, authTag } = await encryptBlob(file.content, derivedKey);
-    
-    const categoryRecord = state.categories.find(c => c.localId === file.categoryId || c.id === file.categoryId);
-    const pbCategoryId = categoryRecord?.id || file.categoryId;
+  
+  const snapshotContent = file.content;
+  const snapshotName = file.name;
 
-    await pb.collection('files').update(file.id, {
-      name: encryptedName, // ENCRYPTED
-      category: pbCategoryId, 
-      iv: arrayToB64(iv),
-      authTag: arrayToB64(authTag),
-      encryptedBlob: arrayToB64(ciphertext),
-      editor: editorMode, 
-      lastEditor: SESSION_ID 
-    });
-  } else if (!pb.authStore.isValid) {
-    guestStorage.saveData({ categories: state.categories, files: state.files });
-  }
+  const saveTask = (async () => {
+    if (pb.authStore.isValid && derivedKey) {
+      // Step 1: Metadata Prep
+      const encryptedName = await packEncrypt(snapshotName, derivedKey);
+      const previewText = getPreviewText(snapshotContent);
+      const encryptedPreview = await packEncrypt(previewText, derivedKey);
+
+      if (signal.aborted) throw new Error("AbortError");
+
+      // Step 2: Encrypt Blob (CPU)
+      const { ciphertext, iv, authTag } = await encryptBlob(snapshotContent, derivedKey);
+      
+      if (signal.aborted) throw new Error("AbortError");
+
+      const categoryRecord = state.categories.find(c => c.localId === file.categoryId || c.id === file.categoryId);
+      const pbCategoryId = categoryRecord?.id || file.categoryId;
+
+      // Step 3: API Update
+      await pb.collection('files').update(file.id, {
+        name: encryptedName,
+        preview: encryptedPreview,
+        category: pbCategoryId, 
+        iv: arrayToB64(iv),
+        authTag: arrayToB64(authTag),
+        encryptedBlob: arrayToB64(ciphertext),
+        editor: file.editor || (isRichMode ? 'rich' : 'plain'), 
+        lastEditor: SESSION_ID 
+      }, {
+        signal: signal,
+        requestKey: file.id
+      });
+    } else if (!pb.authStore.isValid) {
+      guestStorage.saveData({ categories: state.categories, files: state.files });
+    }
+  })();
+
+  const abortTask = new Promise((_, reject) => {
+    if (signal.aborted) reject(new Error("AbortError"));
+    signal.addEventListener('abort', () => reject(new Error("AbortError")), { once: true });
+  });
+
+  return Promise.race([saveTask, abortTask]);
 }
-
 
 
 async function createCategory(name) {
@@ -926,22 +962,25 @@ async function createCategory(name) {
 async function saveFile(file) {
   console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
   
-  // 1. Interaction timestamp (already in handleAutoSave, but good for safety)
   file._localSortTime = Date.now();
 
-  // 2. Add to queue if not already there
-  if (!saveQueue.includes(file.id)) {
+  // Abort any existing task for this specific file
+  if (activeSaveControllers.has(file.id)) {
+    activeSaveControllers.get(file.id).abort();
+  }
+
+  const controller = new AbortController();
+  activeSaveControllers.set(file.id, controller);
+
+  // Add to queue if not already waiting (ignore if it's currently at index 0 saving)
+  if (saveQueue.indexOf(file.id) <= 0) {
     saveQueue.push(file.id);
   }
   
-  // 3. Set flags
   file._isQueued = true;
-  file._saveError = false;
-
-  // 4. Update UI (Priority: Saving > Queued)
   updateFilePreviewDOM(file.id, file._isSaving ? "Saving..." : "Queued");
 
-  // 5. Start Processor
+  // Safety: Restart processing if it somehow stopped
   if (!isProcessingQueue) {
     processSaveQueue();
   }
@@ -952,66 +991,78 @@ async function processSaveQueue() {
   if (isProcessingQueue) return;
   isProcessingQueue = true;
 
-  while (saveQueue.length > 0) {
-    const currentId = saveQueue[0];
-    const file = state.files.find(f => f.id === currentId);
+  try {
+    while (saveQueue.length > 0) {
+      const currentId = saveQueue[0];
 
-    if (!file) {
-      saveQueue.shift();
-      continue;
-    }
-
-    // Handle Temp ID creation wait
-    if (file.id.startsWith('temp_')) {
-      if (!file._waitStarted) file._waitStarted = Date.now();
-      if (Date.now() - file._waitStarted > 10000) {
-        file._saveError = true;
-        file._isQueued = false;
+      // DRAIN: Skip this entry if a newer version of the same ID is waiting further down
+      if (saveQueue.lastIndexOf(currentId) > 0) {
         saveQueue.shift();
         continue;
       }
-      await new Promise(r => setTimeout(r, 1000));
-      continue; 
-    }
 
-    // --- START SAVE TASK ---
-    file._isSaving = true;
-    updateFilePreviewDOM(file.id, "Saving...");
+      const file = state.files.find(f => f.id === currentId);
+      let controller = activeSaveControllers.get(currentId);
 
-    try {
-      await performActualSave(file);
-      file._saveError = false;
-    } catch (e) {
-      console.error("Critical save failure:", e);
-      file._saveError = true;
-    } finally {
-      file._isSaving = false;
-      
-      // Remove the task we just finished
-      saveQueue.shift(); 
+      // If for some reason the controller is missing, create one to avoid skipping/sticking
+      if (!controller) {
+        controller = new AbortController();
+        activeSaveControllers.set(currentId, controller);
+      }
 
-      // CHECK: Is this note still in the queue for a follow-up save?
-      const stillQueued = saveQueue.includes(file.id);
-      file._isQueued = stillQueued;
+      if (!file) {
+        saveQueue.shift();
+        continue;
+      }
 
-      if (!stillQueued) {
-        // No more saves pending for this note: Restore preview
-        const rawText = file._cachedPreview || getPreviewText(file.content);
-        const display = rawText.split('\n')[0].substring(0, 35);
-        updateFilePreviewDOM(
-          file.id, 
-          file._saveError ? "Save Failed" : (display || "[Empty note]"), 
-          file._saveError
-        );
-      } else {
-        // It is still in queue, next iteration of "while" will pick it up.
-        // We keep the text as "Saving..." or "Queued" via updateFilePreviewDOM
-        updateFilePreviewDOM(file.id, "Queued");
+      // If it's a temp ID (not yet synced to DB), wait slightly and retry
+      if (file.id.startsWith('temp_')) {
+        await new Promise(r => setTimeout(r, 250));
+        // If it's still temp, we just loop again. 
+        // If it changed to a real ID via createFileOnServer, the next loop picks it up.
+        continue; 
+      }
+
+      file._isSaving = true;
+      updateFilePreviewDOM(file.id, "Saving...");
+
+      try {
+        await performActualSave(file, controller.signal);
+        file._saveError = false;
+      } catch (e) {
+        // Handle Aborts (Same Note or Cross-Note switching)
+        if (e.name === 'AbortError' || e.message === 'AbortError' || e.isAbort) {
+          console.log("Save Task Aborted:", currentId);
+        } else {
+          console.error("Save Task Failed:", e);
+          file._saveError = true;
+        }
+      } finally {
+        file._isSaving = false;
+        saveQueue.shift(); // Always remove from queue
+        
+        // Remove controller only if it's the one we just finished
+        if (activeSaveControllers.get(currentId) === controller) {
+          activeSaveControllers.delete(currentId);
+        }
+
+        // Check if a new save request arrived while we were processing
+        file._isQueued = saveQueue.includes(file.id);
+
+        if (!file._isQueued) {
+          const rawText = file._cachedPreview || getPreviewText(file.content);
+          const display = rawText.split('\n')[0].substring(0, 35);
+          updateFilePreviewDOM(file.id, file._saveError ? "Save Failed" : (display || "[Empty note]"), file._saveError);
+        }
       }
     }
+  } catch (globalError) {
+    console.error("Fatal Queue Error:", globalError);
+  } finally {
+    isProcessingQueue = false;
+    // If something added to the queue while we were crashing, restart
+    if (saveQueue.length > 0) processSaveQueue();
   }
-
-  isProcessingQueue = false;
 }
 
 
@@ -1271,7 +1322,8 @@ function renderSidebarCategories() {
 
   // 1. HEADER
   const categoriesHeader = document.createElement('div');
-  categoriesHeader.className = 'notes-header-row category-toggle-header';
+  // Removed 'category-toggle-header' as it's no longer a toggle
+  categoriesHeader.className = 'notes-header-row'; 
 
   const title = document.createElement('span');
   title.className = 'categories-title';
@@ -1282,101 +1334,206 @@ function renderSidebarCategories() {
   addFolderBtn.textContent = '+';
   addFolderBtn.title = 'New category';
 
-  if (isCategoriesExpanded) {
-    addFolderBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (!isUserPremium()) {
-          showUpgradeModal();
-          return;
-      }
-      const name = prompt('New category name:');
-      if (name?.trim()) createCategory(name);
-    });
-  } else {
-    addFolderBtn.style.visibility = 'hidden';
-    addFolderBtn.style.pointerEvents = 'none';
-  }
-
-  categoriesHeader.addEventListener('click', (e) => {
-    if (!e.target.closest('.new-note-btn-small')) {
-      isCategoriesExpanded = !isCategoriesExpanded;
-      localStorage.setItem('VeroNote_categoriesExpanded', isCategoriesExpanded.toString());
-      renderSidebarCategories();
-      renderSidebarNotes(); 
+  // Always allow adding categories (premium check still applies)
+  addFolderBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!isUserPremium()) {
+        showUpgradeModal();
+        return;
     }
+    const name = prompt('New category name:');
+    if (name?.trim()) createCategory(name);
   });
 
   categoriesHeader.appendChild(title);
   categoriesHeader.appendChild(addFolderBtn);
   catContainer.appendChild(categoriesHeader);
 
-  // 2. FOLDERS LIST
-  if (isCategoriesExpanded) {
-    const foldersSection = document.createElement('div');
-    foldersSection.className = 'folders-section';
+  // 2. FOLDERS LIST (Always Visible)
+  const foldersSection = document.createElement('div');
+  foldersSection.className = 'folders-section';
 
-    const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH;
-    const workIdentifier = DEFAULT_CATEGORY_IDS.WORK; 
+  const trashIdentifier = DEFAULT_CATEGORY_IDS.TRASH;
+  const workIdentifier = DEFAULT_CATEGORY_IDS.WORK; 
 
-    // Calculate Counts
-    const categoryMap = state.files.reduce((acc, file) => {
-        const catId = file.categoryId;
-        acc[catId] = (acc[catId] || 0) + 1;
-        return acc;
-    }, {});
-    
-    const getNoteCount = (cat) => {
-        const pbId = cat.id;
-        const localId = cat.localId;
-        let count = categoryMap[pbId] || 0;
-        if (localId && localId !== pbId) {
-            count += categoryMap[localId] || 0;
-        }
-        return count;
-    };
-    
-    // Sort Categories
-    const trashCategory = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
-    let sortedCategories = state.categories
-        .filter(c => c.localId !== trashIdentifier && (pb.authStore.isValid ? c.id !== trashCategory?.id : c.id !== trashIdentifier))
-        .filter((category, index, self) => index === self.findIndex((c) => c.id === category.id))
-        .sort((a,b) => a.sortOrder - b.sortOrder);
-    
-    if (trashCategory) sortedCategories.push(trashCategory);
-    
-    sortedCategories.forEach(c => {
-        const identifier = c.localId || c.id;
-        const isActive = identifier === state.activeCategoryId;
-        const isTrash = identifier === trashIdentifier;
-        const isWork = identifier === workIdentifier; 
-        const isDeletable = !isTrash && !isWork; 
-        
-        const folderItem = createFolderItem(c.name, identifier, isActive, c.iconName, getNoteCount(c), isDeletable, isTrash);
-        
-        // === BUG FIX: Use 'mousedown' here too ===
-        folderItem.addEventListener('mousedown', async e => {
-            if (e.target.closest('.more-btn')) return; 
-            
-            // Save current note before switching category views
-            if (state.activeId) {
-                await saveVersionIfChanged();
-            }
+  // Calculate Counts
+  const categoryMap = state.files.reduce((acc, file) => {
+      const catId = file.categoryId;
+      acc[catId] = (acc[catId] || 0) + 1;
+      return acc;
+  }, {});
+  
+  const getNoteCount = (cat) => {
+      const pbId = cat.id;
+      const localId = cat.localId;
+      let count = categoryMap[pbId] || 0;
+      if (localId && localId !== pbId) {
+          count += categoryMap[localId] || 0;
+      }
+      return count;
+  };
+  
+  // Sort Categories
+  const trashCategory = state.categories.find(c => c.localId === trashIdentifier || c.id === trashIdentifier);
+  let sortedCategories = state.categories
+      .filter(c => c.localId !== trashIdentifier && (pb.authStore.isValid ? c.id !== trashCategory?.id : c.id !== trashIdentifier))
+      .filter((category, index, self) => index === self.findIndex((c) => c.id === category.id))
+      .sort((a,b) => a.sortOrder - b.sortOrder);
+  
+  if (trashCategory) sortedCategories.push(trashCategory);
+  
+  sortedCategories.forEach(c => {
+      const identifier = c.localId || c.id;
+      const isActive = identifier === state.activeCategoryId;
+      const isTrash = identifier === trashIdentifier;
+      const isWork = identifier === workIdentifier; 
+      const isDeletable = !isTrash && !isWork; 
+      
+      const folderItem = createFolderItem(c.name, identifier, isActive, c.iconName, getNoteCount(c), isDeletable, isTrash);
+      
+      folderItem.addEventListener('mousedown', async e => {
+          if (e.target.closest('.more-btn')) return; 
+          
+          if (state.activeId) {
+              await saveVersionIfChanged();
+          }
 
-            selectCategory(identifier);
-            renderSidebarCategories();
-            renderSidebarNotes();
-        });
-        foldersSection.appendChild(folderItem);
-    });
+          selectCategory(identifier);
+          renderSidebarCategories();
+          renderSidebarNotes();
+      });
+      foldersSection.appendChild(folderItem);
+  });
 
-    catContainer.appendChild(foldersSection);
-    
-    const divider = document.createElement('div');
-    divider.className = 'folders-divider'; 
-    catContainer.appendChild(divider);
-  }
+  catContainer.appendChild(foldersSection);
+  
+  const divider = document.createElement('div');
+  divider.className = 'folders-divider'; 
+  catContainer.appendChild(divider);
 }
 
+function renderSidebarNotes() {
+  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
+  const { noteContainer } = ensureSidebarStructure();
+  if (!noteContainer) return;
+
+  noteContainer.innerHTML = '';
+
+  const activeCategory = state.categories.find(c => c.localId === state.activeCategoryId || c.id === state.activeCategoryId);
+  const notesHeader = document.createElement('div');
+  notesHeader.className = 'notes-header-row';
+  
+  const notesTitle = document.createElement('span');
+  notesTitle.className = 'categories-title';
+  
+  // Title Logic: "Your Notes" for Work, "[Category] Notes" for others
+  let titleText = 'Your Notes'; 
+  if (activeCategory) {
+      if (activeCategory.localId !== DEFAULT_CATEGORY_IDS.WORK && activeCategory.id !== DEFAULT_CATEGORY_IDS.WORK) {
+          titleText = `${activeCategory.name} Notes`;
+      }
+  }
+  notesTitle.textContent = titleText;
+
+  const newNoteBtnSmall = document.createElement('button');
+  newNoteBtnSmall.className = 'new-note-btn-small';
+  newNoteBtnSmall.textContent = '+';
+  newNoteBtnSmall.addEventListener('click', (e) => { e.stopPropagation(); createFile(); });
+
+  notesHeader.appendChild(notesTitle);
+  notesHeader.appendChild(newNoteBtnSmall);
+  noteContainer.appendChild(notesHeader);
+  
+  const filteredFiles = state.files
+    .filter(f => f.categoryId === (activeCategory?.id || state.activeCategoryId) || f.categoryId === activeCategory?.localId)
+    .sort((a, b) => (b._localSortTime || 0) - (a._localSortTime || 0));
+
+  filteredFiles.forEach(f => {
+    const d = document.createElement('div');
+    d.className = 'file-item' + (f.id === state.activeId ? ' active' : '');
+    d.dataset.id = f.id;
+
+    let previewText = '';
+    let isError = false;
+    let isStatus = false;
+
+    // --- REFINED PREVIEW LOGIC ---
+    
+    // 1. Highest Priority: Critical Save/Error Status
+    if (f._saveError) {
+        previewText = 'Save Failed';
+        isError = true;
+    }
+    else if (f._isSaving) {
+        previewText = 'Saving...';
+        isStatus = true;
+    }
+    else if (f._isQueued) {
+        previewText = 'Queued';
+        isStatus = true;
+    }
+    // 2. Active Operation: If the user clicked the note and it's currently decrypting
+    else if (f._loadingPromise) {
+        previewText = 'Decrypting...';
+        isStatus = true;
+    }
+    // 3. Instant Metadata: Show cached preview if we aren't currently "busy"
+    else if (f._cachedPreview) {
+        const rawText = f._cachedPreview;
+        const firstLine = rawText.split('\n')[0];
+        previewText = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
+    }
+    // 4. Fallback: For notes that are neither loaded nor have metadata yet
+    else if (!f._isLoaded) {
+        previewText = 'Click to load preview...';
+    } 
+    else {
+        previewText = '[Empty note]';
+    }
+    // ----------------------------
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'file-content';
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'file-name';
+    nameSpan.textContent = f.name || 'Untitled';
+
+    const previewSpan = document.createElement('span');
+    previewSpan.className = 'file-preview';
+    previewSpan.textContent = previewText;
+
+    if (isError) {
+        previewSpan.style.color = '#ef4444';
+        previewSpan.style.fontWeight = '600';
+    } else if (isStatus) {
+        previewSpan.style.color = 'var(--accent1)';
+    }
+
+    contentDiv.appendChild(nameSpan);
+    contentDiv.appendChild(previewSpan);
+
+    const moreBtn = document.createElement('button');
+    moreBtn.className = 'more-btn';
+    moreBtn.textContent = '⋯';
+
+    d.appendChild(contentDiv);
+    d.appendChild(moreBtn);
+
+    d.addEventListener('mousedown', async e => {
+      if (e.target.closest('.more-btn')) return;
+      if (state.activeId && state.activeId !== f.id) await saveVersionIfChanged(); 
+      selectFile(f.id);
+    });
+
+    moreBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      showFileMenu(moreBtn, f.id, f.name);
+    });
+
+    noteContainer.appendChild(d);
+  });
+}
 
 /**
  * MASTER WRAPPER: Renders everything.
@@ -2567,27 +2724,45 @@ async function selectFile(id) {
   const file = state.files.find(f => f.id === id);
   if (!file) return;
 
+  // 1. Update Active ID immediately
   state.activeId = id;
+
+  // 2. Update Sidebar Selection immediately
   document.querySelectorAll('.file-item').forEach(el => {
       el.classList.toggle('active', el.dataset.id === id);
   });
 
-  if (!file._isLoaded && !file.id.startsWith('temp_')) {
-      // toggleEditorLoading will now check if Global Loader is visible
-      toggleEditorLoading(true);
+  // 3. FAST PATH: If already loaded, show it immediately and stop
+  if (file._isLoaded || file.id.startsWith('temp_')) {
+      toggleEditorLoading(false); // Hide spinner if it was on from a previous click
+      loadActiveToEditor();
+      updateSidebarInfo(file);
+      finalizeUIUpdate();
+      return; // Exit here so we don't trigger the await logic below
+  }
+
+  // 4. SLOW PATH: Note needs decryption
+  toggleEditorLoading(true);
+  
+  try {
+      // Start loading but don't block the UI for already loaded notes
+      await loadNoteDetails(id);
       
-      try {
-          await loadNoteDetails(id);
-      } finally {
+      // 5. GUARD: After the await, check if this note is STILL the one the user wants
+      // If the user clicked Note B while Note A was decrypting, state.activeId will be B.
+      if (state.activeId !== id) return;
+
+      loadActiveToEditor();
+      updateSidebarInfo(file);
+      finalizeUIUpdate();
+  } finally {
+      // 6. Only hide the spinner if the note we just finished is still the active one
+      // or if the current active note is already loaded.
+      const currentActive = state.files.find(f => f.id === state.activeId);
+      if (state.activeId === id || (currentActive && currentActive._isLoaded)) {
           toggleEditorLoading(false);
       }
   }
-
-  if (state.activeId !== id) return;
-
-  loadActiveToEditor();
-  updateSidebarInfo(file);
-  finalizeUIUpdate();
 }
 
 function updateFilePreviewDOM(fileId, text, isError = false) {
@@ -3024,7 +3199,29 @@ document.getElementById('dock_replace_all_btn')?.addEventListener('click', () =>
 });
 
 
+// Open Search Modal
+document.getElementById('openSearchBtn')?.addEventListener('click', () => {
+    document.getElementById('searchModal').classList.remove('hidden');
+    document.getElementById('globalSearchInput').focus();
+});
 
+// Close Search Modal
+document.getElementById('closeSearchBtn')?.addEventListener('click', () => {
+    if (searchAbortController) searchAbortController.abort(); // Stop processing
+    document.getElementById('searchModal').classList.add('hidden');
+});
+
+// Handle Typing (with Debounce)
+let searchTimeout;
+document.getElementById('globalSearchInput')?.addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    const query = e.target.value;
+    
+    // Wait 500ms after user stops typing to start the heavy process
+    searchTimeout = setTimeout(() => {
+        performDeepSearch(query);
+    }, 500);
+});
 
 const pBtn = document.getElementById('profileBtn'), pDrop = document.getElementById('profileDropdown'),
   mDef = document.getElementById('menuDefault'), mLog = document.getElementById('menuLoggedIn'),
@@ -3762,7 +3959,8 @@ async function getNoteMetadata() {
     return await pb.collection('files').getFullList({
       filter: `user = "${pb.authStore.model.id}"`,
       sort: '-updated',
-      fields: 'id,name,updated,created,category,editor' // Added editor field
+      // ADD 'preview' to the fields list below:
+      fields: 'id,name,preview,updated,created,category,editor' 
     });
   } catch (e) {
     console.error("Failed to load note metadata", e);
@@ -3779,13 +3977,12 @@ async function loadNoteDetails(noteId) {
   const file = state.files.find(f => f.id === noteId);
   
   if (!file) return null;
-  // If loaded or local temp file, return
   if (file._isLoaded || file.id.startsWith('temp_')) return file;
   if (!pb.authStore.isValid || !derivedKey) return file;
 
-  // Reuse existing promise
   if (file._loadingPromise) return file._loadingPromise;
 
+  // 1. Create the promise
   file._loadingPromise = (async () => {
       try {
         const r = await pb.collection('files').getOne(noteId);
@@ -3799,27 +3996,26 @@ async function loadNoteDetails(noteId) {
         }
 
         file.content = plaintext;
-        file._isLoaded = true; // Mark as success
-        file._hasFetchError = false; // Clear error flag
+        file._isLoaded = true;
+        file._hasFetchError = false;
         file._cachedPreview = getPreviewText(plaintext);
         
         return file;
       } catch (e) {
         if (!e.isAbort) {
-            console.error("Failed to load note content", e);
-            file.content = "[Error: Could not load content]";
-            
-            // === FIX START ===
-            file._hasFetchError = true; // Flag for Editor UI to disable typing
-            file._isLoaded = false;     // Critical: Keeps it "unloaded" so clicking again triggers a retry
-            // === FIX END ===
+            file._hasFetchError = true;
+            file._isLoaded = false;
         }
         return file;
       } finally {
+        // 3. Clear promise and refresh UI when DONE
         file._loadingPromise = null;
-        if(state.activeId !== noteId) finalizeUIUpdate();
+        finalizeUIUpdate();
       }
   })();
+
+  // 2. IMMEDIATE REFRESH: This makes "Decrypting..." appear in the sidebar
+  finalizeUIUpdate();
 
   return file._loadingPromise;
 }
@@ -3853,20 +4049,22 @@ async function loadUserFiles() {
       const records = await getNoteMetadata();
       const decryptedFiles = [];
       
-      for (let r of records) {
-        decryptedFiles.push({
-          id: r.id, 
-          name: await packDecrypt(r.name, derivedKey), 
-          content: null, 
-          created: r.created, 
-          updated: r.updated, 
-          _localSortTime: new Date(r.updated).getTime(),
-          categoryId: r.category,
-          editor: r.editor || 'plain',
-          _isLoaded: false, 
-          _cachedPreview: null 
-        });
-      }
+      // Inside loadUserFiles function, find the loop over records:
+for (let r of records) {
+  decryptedFiles.push({
+    id: r.id, 
+    name: await packDecrypt(r.name, derivedKey), 
+    content: null, 
+    created: r.created, 
+    updated: r.updated, 
+    _localSortTime: new Date(r.updated).getTime(),
+    categoryId: r.category,
+    editor: r.editor || 'plain',
+    _isLoaded: false, 
+    // CHANGE THIS LINE:
+    _cachedPreview: r.preview ? await packDecrypt(r.preview, derivedKey) : null 
+  });
+}
       state.files = decryptedFiles;
 
     } catch (e) { 
@@ -3975,110 +4173,177 @@ function ensureTiptap() {
   // 3. Ensure buttons are wired up (Safe to call multiple times due to internal guard)
   setupTiptapButtons();
 }
-function renderSidebarNotes() {
-  console.error('[EXECUTING]', new Error().stack.split('\n')[1].trim().split(' ')[1]);
-  const { noteContainer } = ensureSidebarStructure();
-  if (!noteContainer) return;
 
-  noteContainer.innerHTML = '';
-
-  const activeCategory = state.categories.find(c => c.localId === state.activeCategoryId || c.id === state.activeCategoryId);
-  const notesHeader = document.createElement('div');
-  notesHeader.className = 'notes-header-row' + (isCategoriesExpanded ? '' : ' notes-header-collapsed');
-  
-  const notesTitle = document.createElement('span');
-  notesTitle.className = 'categories-title';
-  notesTitle.textContent = activeCategory ? `${activeCategory.name} Notes` : 'Your Notes'; 
-
-  const newNoteBtnSmall = document.createElement('button');
-  newNoteBtnSmall.className = 'new-note-btn-small';
-  newNoteBtnSmall.textContent = '+';
-  newNoteBtnSmall.addEventListener('click', (e) => { e.stopPropagation(); createFile(); });
-
-  notesHeader.appendChild(notesTitle);
-  notesHeader.appendChild(newNoteBtnSmall);
-  noteContainer.appendChild(notesHeader);
-  
-  const filteredFiles = state.files
-    .filter(f => f.categoryId === (activeCategory?.id || state.activeCategoryId) || f.categoryId === activeCategory?.localId)
-    .sort((a, b) => (b._localSortTime || 0) - (a._localSortTime || 0));
-
-  filteredFiles.forEach(f => {
-    const d = document.createElement('div');
-    d.className = 'file-item' + (f.id === state.activeId ? ' active' : '');
-    d.dataset.id = f.id;
-
-    let previewText = '';
-    let isError = false;
-    let isStatus = false;
-
-    // --- PRIORITY LOGIC FIXED ---
-    if (!f._isLoaded) {
-        previewText = f._loadingPromise ? 'Decrypting...' : 'Click to load...';
-    } 
-    else if (f._saveError) {
-        previewText = 'Save Failed';
-        isError = true;
-    }
-    // Check SAVING before QUEUED to prevent flip-flopping on the same note
-    else if (f._isSaving) {
-        previewText = 'Saving...';
-        isStatus = true;
-    }
-    else if (f._isQueued) {
-        previewText = 'Queued';
-        isStatus = true;
-    }
-    else {
-        const rawText = f._cachedPreview || getPreviewText(f.content?.trim() || '');
-        if (!rawText) previewText = '[Empty note]';
-        else {
-            const firstLine = rawText.split('\n')[0];
-            previewText = firstLine.length > 35 ? firstLine.substring(0, 35) + '...' : firstLine;
-        }
-    }
-
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'file-content';
+// Helper: Extracts pure text from TipTap JSON structure
+function getSearchableText(rawContent) {
+    if (!rawContent) return "";
     
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'file-name';
-    nameSpan.textContent = f.name || 'Untitled';
-
-    const previewSpan = document.createElement('span');
-    previewSpan.className = 'file-preview';
-    previewSpan.textContent = previewText;
-
-    if (isError) {
-        previewSpan.style.color = '#ef4444';
-        previewSpan.style.fontWeight = '600';
-    } else if (isStatus) {
-        previewSpan.style.color = 'var(--accent1)';
+    // 1. Check if it looks like JSON
+    const trimmed = rawContent.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+        return rawContent; // It's already plain text
     }
 
-    contentDiv.appendChild(nameSpan);
-    contentDiv.appendChild(previewSpan);
+    try {
+        const json = JSON.parse(rawContent);
+        
+        // 2. Recursive function to find all "text" nodes
+        let text = "";
+        const traverse = (node) => {
+            if (node.type === 'text' && node.text) {
+                text += node.text + " ";
+            }
+            if (node.content && Array.isArray(node.content)) {
+                node.content.forEach(child => traverse(child));
+            }
+        };
 
-    const moreBtn = document.createElement('button');
-    moreBtn.className = 'more-btn';
-    moreBtn.textContent = '⋯';
+        // 3. Start traversal if it's a TipTap doc
+        if (json.type === 'doc') {
+            traverse(json);
+            return text.trim(); 
+        }
+        
+        return rawContent; // Fallback if valid JSON but not TipTap
+    } catch (e) {
+        return rawContent; // Fallback if JSON parse fails
+    }
+}
 
-    d.appendChild(contentDiv);
-    d.appendChild(moreBtn);
+async function performDeepSearch(query) {
+  const resultsList = document.getElementById('searchResultsList');
+  const progressBar = document.getElementById('searchProgressBar');
+  const progressContainer = document.getElementById('searchProgressBarContainer');
+  const statusText = document.getElementById('searchStatusText');
 
-    d.addEventListener('mousedown', async e => {
-      if (e.target.closest('.more-btn')) return;
-      if (state.activeId && state.activeId !== f.id) await saveVersionIfChanged(); 
-      selectFile(f.id);
+  // 1. Reset UI
+  resultsList.innerHTML = '';
+  progressContainer.style.display = 'block';
+  progressBar.style.width = '0%';
+  
+  if (!query || query.trim().length < 2) {
+      statusText.textContent = "Type at least 2 characters";
+      return;
+  }
+
+  // 2. Abort previous search
+  if (searchAbortController) searchAbortController.abort();
+  searchAbortController = new AbortController();
+  const signal = searchAbortController.signal;
+
+  const files = state.files; // Use existing metadata list
+  const total = files.length;
+  let processed = 0;
+  let matchesFound = 0;
+  const lowerQuery = query.toLowerCase();
+
+  statusText.textContent = `Searching ${total} notes...`;
+
+  // 3. Helper: Process a single file
+const checkFile = async (file) => {
+      if (signal.aborted) return;
+
+      let rawContent = "";
+
+      // 1. Load Content (Ram or Fetch)
+      if (file._isLoaded && file.content) {
+          rawContent = file.content;
+      } else {
+          try {
+             const r = await pb.collection('files').getOne(file.id, { signal });
+             rawContent = await decryptBlob(
+                { 
+                  iv: b64ToArray(r.iv), 
+                  authTag: b64ToArray(r.authTag), 
+                  ciphertext: b64ToArray(r.encryptedBlob) 
+                }, 
+                derivedKey
+             );
+          } catch (e) { return; }
+      }
+
+      // 2. CLEAN THE CONTENT (Fixes the JSON issue)
+      const cleanText = getSearchableText(rawContent);
+
+      // 3. Check for Match using Clean Text
+      if (cleanText.toLowerCase().includes(lowerQuery)) {
+          matchesFound++;
+          // Pass 'cleanText' to the renderer, NOT 'rawContent'
+          renderSearchResult(file, cleanText, query);
+      }
+
+      // 4. Memory Cleanup
+      if (!file._isLoaded) {
+          rawContent = null; 
+      }
+  };
+
+  // 6. The Conveyor Belt (Batch Processing)
+  // We process 'BATCH_SIZE' notes in parallel, then wait, then next batch.
+  for (let i = 0; i < total; i += BATCH_SIZE) {
+      if (signal.aborted) break;
+
+      const batch = files.slice(i, i + BATCH_SIZE);
+      
+      // Run batch in parallel
+      await Promise.all(batch.map(f => checkFile(f)));
+
+      // Update UI
+      processed += batch.length;
+      const pct = Math.min((processed / total) * 100, 100);
+      progressBar.style.width = `${pct}%`;
+      statusText.textContent = `Found ${matchesFound} matches (${Math.round(pct)}% scanned)`;
+
+      // Small pause to let UI breathe (prevents freezing)
+      await new Promise(r => setTimeout(r, 10)); 
+  }
+
+  if (!signal.aborted) {
+      statusText.textContent = `Search complete. ${matchesFound} matches found.`;
+      if (matchesFound === 0) {
+          resultsList.innerHTML = '<div class="empty-search-state">No matches found.</div>';
+      }
+  }
+}
+function renderSearchResult(file, content, query) {
+    const list = document.getElementById('searchResultsList');
+    
+    // Create snippet (Find query, take 50 chars before and after)
+    const lowerContent = content.toLowerCase();
+    const idx = lowerContent.indexOf(query.toLowerCase());
+    let snippet = "";
+    
+    if (idx !== -1) {
+        const start = Math.max(0, idx - 40);
+        const end = Math.min(content.length, idx + query.length + 40);
+        snippet = content.substring(start, end);
+        
+        // Highlight logic
+        const regex = new RegExp(`(${query})`, 'gi');
+        snippet = snippet.replace(regex, '<span class="search-highlight">$1</span>');
+    } else {
+        snippet = content.substring(0, 80);
+    }
+
+    const div = document.createElement('div');
+    div.className = 'search-result-item';
+    div.innerHTML = `
+        <div class="search-result-title">${file.name}</div>
+        <div class="search-result-snippet">...${snippet}...</div>
+        <div style="font-size:11px; color:#94a3b8; margin-top:5px;">
+            ${formatDate(file.updated)}
+        </div>
+    `;
+
+    // Click behavior
+    div.addEventListener('click', () => {
+        // Close modal
+        document.getElementById('searchModal').classList.add('hidden');
+        // Load note into main editor
+        selectFile(file.id);
     });
 
-    moreBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      showFileMenu(moreBtn, f.id, f.name);
-    });
-
-    noteContainer.appendChild(d);
-  });
+    list.appendChild(div);
 }
 
 // Init
