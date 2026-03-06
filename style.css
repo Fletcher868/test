@@ -12,7 +12,7 @@
   --toolbar-bg: #f9fafb;
   --toolbar-hover: rgba(99, 102, 241, 0.08);
   --toolbar-active: rgba(99, 102, 241, 0.15);
-  font-family: 'Inter', system-ui, Arial, sans-serif;
+  font-family: 'Cantarell', system-ui, -apple-system, sans-serif;
 }
 
 /* Reset */
@@ -25,6 +25,37 @@ html, body, #app {
   overflow: hidden;
 }
 
+/* ================================================
+   SELF-HOSTED FONTS: Cantarell (Latin)
+   ================================================ */
+
+/* Variable Font - contains all weights (Thin to Extra Bold) */
+@font-face {
+  font-display: swap;
+  font-family: 'Cantarell';
+  font-style: normal;
+  font-weight: 100 800;  /* This range covers all weights */
+  src: url('./fonts/Cantarell-VF.woff2') format('woff2-variations');
+}
+
+/* Fallback for older browsers */
+@supports not (font-variation-settings: normal) {
+  @font-face {
+    font-family: 'Cantarell';
+    font-style: normal;
+    font-weight: 400;
+    src: url('./fonts/Cantarell-VF.woff2') format('woff2');
+  }
+}
+
+/* Liberation Sans Bold (700) */
+@font-face {
+  font-display: swap;
+  font-family: 'Liberation Sans';
+  font-style: normal;
+  font-weight: 700;
+  src: url('./fonts/liberationsans-bold-webfont.woff2') format('woff2');
+}
 /* ================================================
    MAIN APP LAYOUT
    ================================================ */
@@ -70,7 +101,8 @@ html, body, #app {
 }
 
 .logo-text {
-  font-family: 'Inter', sans-serif;
+  font-family: 'Liberation Sans', sans-serif;
+  margin-top: 2px;
   font-size: 26px; /* Visual height match */
   line-height: 1;
   font-weight: 800;
@@ -157,7 +189,7 @@ html, body, #app {
 }
 
 .file-name {
-  font-weight: 500;
+  font-weight: 400;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -192,7 +224,7 @@ html, body, #app {
 
 .file-item.active .file-preview {
   color: #374151;
-  font-weight: 500;
+  font-weight: 400;
   opacity: 1;
 }
 
@@ -1037,7 +1069,7 @@ html, body, #app {
 }
 .detail-row span {
   color: #1e293b;
-  font-weight: 500;
+  font-weight: 400;
   word-break: break-word;
   overflow-wrap: anywhere;
   text-align: left;
@@ -1698,7 +1730,7 @@ html, body, #app {
 
 .folder-item.active {
   background: rgba(99, 102, 241, 0.15);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .folder-item.active .folder-icon {
@@ -1785,11 +1817,11 @@ html, body, #app {
 .categories-title {
   flex: 1;
   color: var(--accent1); /* Uses Indigo */
-  font-weight: 600; /* Less heavy */
+  font-weight: 700; /* Less heavy */
   opacity: 0.95;
   letter-spacing: 0.5px; /* Wider spacing */
   transition: all 0.3s ease;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'Cantarell', system-ui, -apple-system, sans-serif;
   font-size: 15px;          
   text-transform: none;
 }
@@ -1943,7 +1975,7 @@ html, body, #app {
   border-radius: 10px;
   padding: 24px 32px; /* Slightly more padding for document feel */
   
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: system-ui, -apple-system, sans-serif;
   font-size: 16px;
   line-height: 1.75;
   color: #334155; /* Slate 700 */
